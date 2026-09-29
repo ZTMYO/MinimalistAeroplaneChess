@@ -1,7 +1,3 @@
-/**
- * 飞行棋服务器管理面板
- */
-
 import '../css/admin.css';
 
 class AdminPanel {
@@ -263,30 +259,7 @@ class AdminPanel {
         }).join('');
     }
 
-    formatPlayerId(playerId) {
-        return playerId.replace('player_', '');
-    }
 
-    formatTime(timestamp) {
-        const date = new Date(timestamp);
-        const now = Date.now();
-        const diff = now - date.getTime();
-
-        if (diff < 60000) {
-            return '刚刚';
-        } else if (diff < 3600000) {
-            return `${Math.floor(diff / 60000)}分钟前`;
-        } else if (diff < 86400000) {
-            return `${Math.floor(diff / 3600000)}小时前`;
-        } else {
-            return date.toLocaleString('zh-CN', {
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        }
-    }
 
     formatDuration(timestamp) {
         const now = Date.now();
@@ -319,14 +292,6 @@ class AdminPanel {
         return stateMap[room.gameState] || room.gameState;
     }
 
-    getPhaseText(phase) {
-        const phaseMap = {
-            'waiting': '等待',
-            'rolling': '掷骰子',
-            'selecting': '选择棋子'
-        };
-        return phaseMap[phase] || phase;
-    }
 
     setServerStatus(status) {
         const statusEl = document.getElementById('serverStatus');

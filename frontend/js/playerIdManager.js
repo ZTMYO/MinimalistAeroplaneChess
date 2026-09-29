@@ -1,7 +1,3 @@
-/**
- * 玩家ID管理器
- * 负责生成和管理持久化的玩家唯一标识符
- */
 class PlayerIdManager {
     constructor() {
         this.playerId = null;
@@ -50,17 +46,6 @@ class PlayerIdManager {
         return this.playerId;
     }
 
-    /**
-     * 重新生成玩家ID（用于重置身份）
-     * @returns {string} 新的玩家ID
-     */
-    regeneratePlayerId() {
-        const newPlayerId = this.generatePlayerId();
-        localStorage.setItem('aeroplaneChess_playerId', newPlayerId);
-        this.playerId = newPlayerId;
-        console.log('重新生成玩家ID:', newPlayerId);
-        return newPlayerId;
-    }
 
     /**
      * 清除玩家ID
@@ -71,13 +56,6 @@ class PlayerIdManager {
         console.log('玩家ID已清除');
     }
 
-    /**
-     * 检查是否有有效的玩家ID
-     * @returns {boolean} 是否有有效的玩家ID
-     */
-    hasValidPlayerId() {
-        return !!(this.playerId && this.playerId.length > 0);
-    }
 
     /**
      * 保存玩家昵称到本地存储
@@ -110,14 +88,6 @@ class PlayerIdManager {
         console.log('昵称已清除');
     }
 
-    /**
-     * 清除所有玩家数据（ID和昵称）
-     */
-    clearAll() {
-        this.clearPlayerId();
-        this.clearNickname();
-        console.log('所有玩家数据已清除');
-    }
 }
 
 // 创建全局实例

@@ -1,20 +1,19 @@
-// 事件处理模块 - 负责所有用户交互事件的处理
 import { gameState } from './gameState.js';
 import { dice } from './dice.js';
 import { uiUpdater } from './uiUpdater.js';
 import { activePlayerManager } from './activePlayerManager.js';
 import { playerNameManager } from './playerNameManager.js';
 import { gameInfo } from './gameInfo.js';
-import { botController } from './botController.js';
 import { progressDisplay } from './progressDisplay.js';
 import { aiTakeoverManager } from './aiTakeoverManager.js';
+import { aiTurnTrigger } from './aiTurnTrigger.js';
 import { sanitizeUserText } from './contentModeration.js';
+import { debugSetDice, debugMoveChess, debugSetEnergy } from './debugTools.js';
 
 class EventHandler {
     constructor() {
         // 初始化事件处理器
         this.gameInstance = null; // 将在main.js中设置
-        this.pendingPause = false; // 延迟暂停标志
         this.pauseDebounceTime = 1000; // 防抖时间（1秒）
         this.lastPauseClickTime = 0; // 上次点击暂停的时间
         this.hiddenSkillIcons = {}; // 记录被隐藏的道具图标状态
@@ -178,13 +177,13 @@ class EventHandler {
             // 检查是否在传送门模式，如果是则取消传送门
             if (window.gameInstance && window.gameInstance.isTeleportMode) {
                 console.log('[传送门] 用户点击骰子，取消传送门模式');
-                window.gameInstance.isTeleportMode = false;
+                // 统一走 exitTeleportMode：本机恢复骰子图标，联机时同时通知其他客户端收起，
+                // 并把撤销同步给服务端（否则刷新后传送门图标会被权威快照又点亮）
+                window.gameInstance.chessPiece?.exitTeleportMode({ notifyServer: true });
                 // 重置游戏阶段为rolling
                 gameState.setGamePhase('rolling');
                 gameState.setDiceValue(0);
-                // 恢复骰子图标
                 if (window.gameInstance.skillManager) {
-                    window.gameInstance.skillManager.restoreDiceIcon();
                     window.gameInstance.skillManager.showNotification('已取消传送门');
                 }
                 return;
@@ -207,32 +206,9 @@ class EventHandler {
             if (isOnlineMultiplayer && this.gameInstance && this.gameInstance.multiplayerGameManager) {
                 const localPlayerId = this.gameInstance.multiplayerGameManager.getCurrentPlayerId();
                 const localPlayerNumber = this.gameInstance.multiplayerGameManager.getPlayerNumberByPlayerId(localPlayerId);
-                const isHost = this.gameInstance.multiplayerGameManager.isHost;
-
-                // 检查当前玩家是否被AI托管
-                const currentPlayerId = this.gameInstance.multiplayerGameManager.getPlayerIdByPlayerNumber(currentPlayer);
-                const currentPlayerData = this.gameInstance.multiplayerGameManager.players.get(currentPlayerId);
-                const isCurrentPlayerAITakeover = this.gameInstance.multiplayerGameManager.aiTakeoverPlayers?.has(currentPlayerId) ||
-                    currentPlayerData?.isAITakeover || false;
-
-                // 如果是AI电脑玩家，只有房主可以操作
-                if (isBotPlayer) {
-                    if (!isHost) {
-                        return;
-                    }
-                }
-                // 如果当前玩家被AI托管
-                else if (isCurrentPlayerAITakeover) {
-                    // 判断是否是自己的回合
-                    const isLocalPlayerTurn = currentPlayer === localPlayerNumber;
-
-                    if (!isLocalPlayerTurn && !isHost) {
-                        // 其他玩家的回合且该玩家被AI托管，只有房主可以代理
-                        return;
-                    }
-                }
-                // 如果是真实玩家，必须是本地玩家才能操作
-                else if (currentPlayer !== localPlayerNumber) {
+                // 只能动自己回合的棋子/骰子：机器人、托管与超时都由服务端出手，
+                // 房主不再替别人代理
+                if (currentPlayer !== localPlayerNumber) {
                     return;
                 }
             }
@@ -374,25 +350,10 @@ class EventHandler {
         return rankings;
     }
 
-    // 处理调试骰子点击
+    // 处理调试骰子点击：走 debugTools，改的是引擎/服务端的权威棋面
     async handleDebugDiceClick(value) {
-        try {
-            const gamePhase = gameState.getGamePhase();
-            const isRolling = gameState.getIsRolling();
-
-            // 检查是否可以掷骰子
-            if (gamePhase !== 'rolling' || isRolling) {
-                return;
-            }
-
-            // 执行调试掷骰子
-            await dice.debugRollDice(value);
-
-            // 更新UI
-            uiUpdater.updateUI();
-        } catch (error) {
-            console.error('处理调试骰子点击时出错:', error);
-        }
+        if (gameState.getGamePhase() !== 'rolling' || gameState.getIsRolling()) return;
+        await debugSetDice(value);
     }
 
     // 处理调试移动棋子点击
@@ -411,31 +372,12 @@ class EventHandler {
 
             console.log(`调试移动: 玩家${selectedPlayer} 棋子${selectedChessIndex + 1} ${direction > 0 ? `前进${direction}格` : `后退${Math.abs(direction)}格`}`);
 
-            // 调用棋子的调试移动方法
-            if (this.gameInstance && this.gameInstance.chessPiece) {
-                this.gameInstance.chessPiece.debugMoveChessOneStep(selectedPlayer, selectedChessIndex, direction);
-            }
-
-            // 更新UI
-            uiUpdater.updateUI();
+            debugMoveChess(selectedPlayer, selectedChessIndex, direction);
         } catch (error) {
             console.error('处理调试移动点击时出错:', error);
         }
     }
 
-    // 处理调试完成棋子点击
-    handleDebugFinishClick() {
-        try {
-            if (this.gameInstance && this.gameInstance.debugFinishChess) {
-                this.gameInstance.debugFinishChess();
-            } else if (this.gameInstance && this.gameInstance.chessPiece) {
-                this.gameInstance.chessPiece.debugFinishChess();
-            }
-            uiUpdater.updateUI();
-        } catch (error) {
-            console.error('处理调试完成点击时出错:', error);
-        }
-    }
 
     // 设置指定数值的积分
     async handleSetEnergyClick(amount) {
@@ -457,13 +399,7 @@ class EventHandler {
             }
             const selectedPlayer = parseInt(selectedPlayerInput.value);
 
-            // 设置指定积分
-            energyManager.setEnergy(selectedPlayer, amount);
-
-            // 在线模式下同步积分变化
-            if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-                window.gameInstance.multiplayerGameManager.syncEnergyChange(selectedPlayer, amount, amount);
-            }
+            debugSetEnergy(selectedPlayer, amount);
 
         } catch (error) {
             console.error('处理设置积分调试时出错:', error);
@@ -498,8 +434,9 @@ class EventHandler {
                 return;
             }
 
-            // 检查游戏阶段
-            if (gamePhase !== 'selecting') {
+            // 检查游戏阶段。传送门是本地占位出来的选子态（阶段可能被快照冲回 rolling），
+            // onChessClick 会优先认传送门模式，这里同样放行
+            if (gamePhase !== 'selecting' && !window.gameInstance?.isTeleportMode) {
                 return;
             }
 
@@ -507,32 +444,9 @@ class EventHandler {
             if (isOnlineMultiplayer && this.gameInstance && this.gameInstance.multiplayerGameManager) {
                 const localPlayerId = this.gameInstance.multiplayerGameManager.getCurrentPlayerId();
                 const localPlayerNumber = this.gameInstance.multiplayerGameManager.getPlayerNumberByPlayerId(localPlayerId);
-                const isHost = this.gameInstance.multiplayerGameManager.isHost;
-
-                // 检查当前玩家是否被AI托管
-                const currentPlayerId = this.gameInstance.multiplayerGameManager.getPlayerIdByPlayerNumber(currentPlayer);
-                const currentPlayerData = this.gameInstance.multiplayerGameManager.players.get(currentPlayerId);
-                const isCurrentPlayerAITakeover = this.gameInstance.multiplayerGameManager.aiTakeoverPlayers?.has(currentPlayerId) ||
-                    currentPlayerData?.isAITakeover || false;
-
-                // 如果是AI电脑玩家，只有房主可以操作
-                if (isBotPlayer) {
-                    if (!isHost) {
-                        return;
-                    }
-                }
-                // 如果当前玩家被AI托管
-                else if (isCurrentPlayerAITakeover) {
-                    // 判断是否是自己的回合
-                    const isLocalPlayerTurn = currentPlayer === localPlayerNumber;
-
-                    if (!isLocalPlayerTurn && !isHost) {
-                        // 其他玩家的回合且该玩家被AI托管，只有房主可以代理
-                        return;
-                    }
-                }
-                // 如果是真实玩家，必须是本地玩家才能操作
-                else if (currentPlayer !== localPlayerNumber) {
+                // 只能动自己回合的棋子/骰子：机器人、托管与超时都由服务端出手，
+                // 房主不再替别人代理
+                if (currentPlayer !== localPlayerNumber) {
                     return;
                 }
             }
@@ -655,10 +569,11 @@ class EventHandler {
                     // ignore
                 }
                 
-                // 仅关闭连接并清理UI，不再调用导致重新渲染或重定向报错的破坏性销毁
+                // 对局 WebSocket 是裸连接，只有标准 close()；先禁用重连，避免关连接后又自动拉起一条
                 try {
+                    multiplayerGameManager.disableReconnect = true;
                     if (multiplayerGameManager.wsClient) {
-                        multiplayerGameManager.wsClient.disconnect();
+                        multiplayerGameManager.wsClient.close();
                     }
                 } catch (e) {
                     // ignore
@@ -688,17 +603,13 @@ class EventHandler {
         try {
             // 动态导入audioManager
             import('./audioManager.js').then(({ audioManager }) => {
-                const toggleBtn = document.getElementById('toggleAudio');
-                if (!toggleBtn) return;
-
-                if (audioManager.isEnabled) {
-                    audioManager.mute();
-                    toggleBtn.textContent = '开启音效';
-                } else {
-                    audioManager.unmute();
+                const nextEnabled = !audioManager.isEnabled;
+                audioManager.setEnabled(nextEnabled);
+                if (nextEnabled) {
                     audioManager.playMoveSound();
-                    toggleBtn.textContent = '关闭音效';
                 }
+                // 联机模式下把开关同步给服务端，作为刷新/重连的恢复来源
+                window.multiplayerGameManager?.syncAudioEnabled?.(nextEnabled);
             }).catch(error => {
                 console.error('导入audioManager时出错:', error);
             });
@@ -744,82 +655,76 @@ class EventHandler {
             }
             this.lastPauseClickTime = currentTime;
 
-            // 防抖：如果已经有待处理的暂停操作，忽略后续点击
-            if (this.pendingPause) {
-                return;
-            }
-
-            // 如果正在掷骰子，不允许暂停
-            if (gameState.getIsRolling()) {
-                // 设置一个标志，等待掷骰子完成后再暂停
-                this.pendingPause = true;
-                // 更新按钮状态为等待中
-                this.updatePauseButtonForPending();
-                return;
-            }
-
-            // 如果游戏已经暂停，直接恢复
+            // 暂停/恢复都在点击当刻生效。挂起「等安全时机」的旧做法在联机下
+            // 等不到回调，按钮会永远停在「等待暂停...」，而 AI 照常操作
             if (gameState.getIsPaused()) {
                 this.resumeGame();
-                return;
-            }
-
-            // 请求安全暂停
-            const canPauseImmediately = gameState.requestSafePause();
-
-            if (canPauseImmediately) {
-                // 可以立即暂停
-                this.pauseGame();
+            } else if (window.gameInstance?.skillManager?.isItemSettling?.()) {
+                this.deferPauseForItemSettlement();
             } else {
-                // 需要等待棋子移动或AI决策完成
-                console.log('棋子正在移动或AI正在决策，等待完成后暂停');
-                this.updatePauseButtonForPending();
+                this.pauseGame();
             }
         } catch (error) {
             console.error('处理暂停点击时出错:', error);
         }
     }
 
+    /**
+     * 道具结算演出（盲盒开盒、积分数值动画）收场后再落暂停：
+     * 否则「+N积分」会顶开暂停提示；盲盒的跳过回合也会被暂停挡在门外。
+     * 最多等 2.5 秒，绝不把暂停挂死
+     */
+    deferPauseForItemSettlement() {
+        if (this._pauseWaitTimer) return;
+        console.log('道具结算演出进行中，等它收场后再暂停');
+        const deadline = Date.now() + 2500;
+        this._pauseWaitTimer = setInterval(() => {
+            const settling = window.gameInstance?.skillManager?.isItemSettling?.();
+            if (settling && Date.now() < deadline) return;
+            clearInterval(this._pauseWaitTimer);
+            this._pauseWaitTimer = null;
+            if (!gameState.getIsPaused()) this.pauseGame();
+        }, 150);
+    }
+
     // 暂停游戏的具体逻辑
     pauseGame() {
-        // 重置防抖状态
-        this.pendingPause = false;
         gameState.setIsPaused(true);
+        // 阶段切到 paused：骰子/道具界面按暂停态渲染，恢复时再回到暂停前的阶段
+        if (window.gameInstance && typeof window.gameInstance.pauseGame === 'function') {
+            window.gameInstance.pauseGame();
+        }
         this.updatePauseButtonText();
-        
+
         if (uiUpdater && typeof uiUpdater.pauseThinkingProgressBar === 'function') {
             uiUpdater.pauseThinkingProgressBar();
         } else {
             uiUpdater.stopThinkingProgressBar();
         }
-        
+
         gameInfo.addGamePause();
 
-        // 联机模式下，立即停止所有AI操作和计时器
+        // 联机模式把暂停同步给服务端与其他玩家（服务端据此冻结看门狗）
         if (window.gameInstance && window.gameInstance.multiplayerGameManager &&
             window.gameInstance.multiplayerGameManager.isOnlineMode) {
-
-            // 停止botController的操作
-            if (window.botController) {
-                // 不禁用botController，只是确保当前操作被中断
-            }
-
-            // 停止aiTakeoverManager的操作
-            if (window.aiTakeoverManager) {
-                // 清除可能正在进行的延迟触发
-            }
-
-            // 同步暂停状态到其他玩家
             window.gameInstance.multiplayerGameManager.syncGamePause();
         }
     }
 
     // 恢复游戏的具体逻辑
     resumeGame() {
-        // 重置防抖状态
-        this.pendingPause = false;
-
         gameState.setIsPaused(false);
+
+        // 阶段还停在 paused 就恢复成暂停前的阶段（进度条在下面统一重启）；
+        // 暂停请求落在动画中途时阶段已经自己走对，不要覆盖
+        if (gameState.getGamePhase() === 'paused') {
+            const phaseBeforePause = gameState.gamePhaseBeforePause;
+            gameState.setGamePhase(phaseBeforePause && phaseBeforePause !== 'paused' ? phaseBeforePause : 'rolling');
+            if (uiUpdater && typeof uiUpdater.updateUI === 'function') {
+                uiUpdater.updateUI();
+            }
+        }
+
         this.updatePauseButtonText();
 
         // 在线多人模式下，通过syncGameResume同步，不在本地添加gameInfo
@@ -853,8 +758,6 @@ class EventHandler {
         }
 
         // 恢复游戏时，恢复到暂停前的状态，不切换玩家
-        console.log('游戏恢复，继续当前玩家的回合');
-
         // 重新启动思考计时器和进度条（仅在本地或房主端执行，非房主由 multiplayerGameManager 触发）
         if (currentPhase === 'rolling' || currentPhase === 'selecting' || currentPhase === 'moving') {
             if (uiUpdater && typeof uiUpdater.resumeThinkingProgressBar === 'function') {
@@ -924,21 +827,6 @@ class EventHandler {
         }
     }
 
-    // 更新暂停按钮为等待状态
-    updatePauseButtonForPending() {
-        const pauseBtn = document.getElementById('pauseGame');
-        if (pauseBtn) {
-            // 在本地多人模式下隐藏暂停按钮
-            if (gameState.getIsLocalMultiplayer()) {
-                pauseBtn.style.display = 'none';
-                return;
-            }
-
-            pauseBtn.textContent = '等待暂停...';
-            pauseBtn.disabled = true; // 禁用按钮防止重复点击
-        }
-    }
-
     // 移除所有事件监听器（清理用）
     removeEventListeners() {
         // 移除骰子事件
@@ -986,92 +874,11 @@ class EventHandler {
     }
 
     /**
-     * 检查当前玩家是否为bot，如果是则触发bot操作
+     * 检查当前玩家是否为bot，如果是则触发bot操作。
+     * 该不该出手、出手的延迟与退避重试都由 aiTurnTrigger 一份规则决定
      */
     triggerBotOperationIfNeeded() {
-        if (botController) {
-            const currentPlayer = window.gameState.getCurrentPlayer();
-            const isBot = botController.isCurrentPlayerBot();
-            
-            // 获取托管状态
-            const isAITakeover = window.gameState.getIsAITakeover();
-            let isCurrentPlayerAITakeover = false;
-            
-            if (window.gameState.isOnlineMultiplayer && window.multiplayerGameManager) {
-                const currentPlayerId = window.multiplayerGameManager.getPlayerIdByPlayerNumber(currentPlayer);
-                const currentPlayerData = window.multiplayerGameManager.players?.get(currentPlayerId);
-                isCurrentPlayerAITakeover = window.multiplayerGameManager.aiTakeoverPlayers?.has(currentPlayerId) || 
-                                          currentPlayerData?.isAITakeover || false;
-            }
-
-            if (isBot || isAITakeover || isCurrentPlayerAITakeover) {
-                // 联机模式下，非房主不触发AI操作（由房主统一触发并同步）
-                if (window.gameState.isOnlineMultiplayer && window.multiplayerGameManager && !window.multiplayerGameManager.isHost) {
-                    console.log(`[事件处理] 玩家${currentPlayer}是AI/托管，但当前不是房主，不触发本地操作`);
-                    return;
-                }
-                
-
-                // 如果bot正在处理操作，不再重复触发
-                if (botController.isProcessing) {
-                    console.log(`[事件处理] 玩家${currentPlayer}是AI/托管，但bot正在处理中，跳过`);
-                    return;
-                }
-
-                console.log(`[事件处理] 玩家${currentPlayer}需要AI操作，延迟触发botController`);
-                setTimeout(() => {
-                    botController.handleBotTurn();
-                }, 200); // 延迟200ms执行，让玩家看到状态变化
-            }
-        }
-    }
-
-    /**
-     * 处理延迟暂停逻辑，在掷骰子完成后执行暂停
-     */
-    handlePendingPause() {
-        if (this.pendingPause) {
-            this.pendingPause = false;
-
-            // 联机模式下使用带同步的暂停/恢复流程
-            if (window.gameInstance && window.gameInstance.multiplayerGameManager &&
-                window.gameInstance.multiplayerGameManager.isOnlineMode) {
-                if (gameState.getIsPaused()) {
-                    this.resumeGame();
-                } else {
-                    this.pauseGame();
-                }
-            } else {
-                // 单机模式：直接切换暂停状态
-                const isPaused = gameState.togglePause();
-                this.updatePauseButtonText();
-
-                if (isPaused) {
-                    uiUpdater.stopThinkingProgressBar();
-                    gameInfo.addGamePause();
-                }
-            }
-        }
-    }
-
-    /**
-     * 检查AI决策是否完成，完成后执行暂停
-     */
-    checkAIDecisionComplete() {
-        if (!this.pendingPause) {
-            return; // 如果不再需要暂停，停止检查
-        }
-
-        if (!gameState.getAIDecisionInProgress()) {
-            // AI决策已完成，执行暂停
-            console.log('AI决策完成，执行暂停');
-            this.handlePendingPause();
-        } else {
-            // AI决策仍在进行中，继续检查
-            setTimeout(() => {
-                this.checkAIDecisionComplete();
-            }, 100); // 每100ms检查一次
-        }
+        aiTurnTrigger.schedule();
     }
 
     // 设置聊天相关事件
@@ -1223,30 +1030,14 @@ class EventHandler {
             // 恢复被隐藏的道具图标，或检查新出现的道具图标
             let hasSkillIcon = false;
 
-            // 检查并恢复传送门图标
-            // 只有在当前玩家真正激活了传送门时才恢复显示
-            const isTeleportMode = this.gameInstance && this.gameInstance.isTeleportMode;
-            const isSelectingPhase = gameState && gameState.getGamePhase() === 'selecting';
-            if (teleportIcon && (this.hiddenSkillIcons.teleportIcon || teleportIcon.dataset.shouldShow === 'true')) {
-                // 只有在传送门模式且处于selecting阶段时才恢复传送门图标
-                if (isTeleportMode && isSelectingPhase) {
-                    teleportIcon.style.display = 'flex';
-                    delete teleportIcon.dataset.shouldShow;
-                    hasSkillIcon = true;
-                } else {
-                    // 否则清除标记，不恢复显示
-                    delete teleportIcon.dataset.shouldShow;
-                    // 如果传送门图标不应该显示，确保它被隐藏
-                    teleportIcon.style.display = 'none';
-                }
-            }
-
-            // 检查并恢复多面骰子（使用flex保持居中）
-            if (polyhedralDiceDisplay && (this.hiddenSkillIcons.polyhedralDiceDisplay || polyhedralDiceDisplay.dataset.shouldShow === 'true')) {
-                polyhedralDiceDisplay.style.display = 'flex';
-                delete polyhedralDiceDisplay.dataset.shouldShow;
-                hasSkillIcon = true;
-            }
+            // 传送门图标、多面骰子牌、选点面板交由 skillManager 按权威状态统一重画
+            const skillManager = this.gameInstance && this.gameInstance.skillManager;
+            skillManager?.refreshItemVisuals?.();
+            [teleportIcon, polyhedralDiceDisplay, diceSelectionPanel].forEach((element) => {
+                if (!element) return;
+                delete element.dataset.shouldShow;
+                if (window.getComputedStyle(element).display !== 'none') hasSkillIcon = true;
+            });
 
             // 检查并恢复盲盒图标
             if (mysteryBoxIcon && (this.hiddenSkillIcons.mysteryBoxIcon || mysteryBoxIcon.dataset.shouldShow === 'true')) {
@@ -1259,13 +1050,6 @@ class EventHandler {
             if (energyGainText && (this.hiddenSkillIcons.energyGainText || energyGainText.dataset.shouldShow === 'true')) {
                 energyGainText.style.display = 'flex';
                 delete energyGainText.dataset.shouldShow;
-                hasSkillIcon = true;
-            }
-
-            // 检查并恢复遥控骰子选择面板
-            if (diceSelectionPanel && (this.hiddenSkillIcons.diceSelectionPanel || diceSelectionPanel.dataset.shouldShow === 'true')) {
-                diceSelectionPanel.style.display = 'block';
-                delete diceSelectionPanel.dataset.shouldShow;
                 hasSkillIcon = true;
             }
 
@@ -1406,12 +1190,11 @@ class EventHandler {
                     });
                 } else if (window.multiplayerManager && window.multiplayerManager.wsClient && window.multiplayerManager.wsClient.isConnected) {
                     // 房间中的联机模式
-                    window.multiplayerManager.wsClient.send(JSON.stringify({
-                        type: 'chatMessage',
+                    window.multiplayerManager.wsClient.sendMessage('chatMessage', {
                         message: sanitizedMessage,
                         playerNumber: currentPlayer,
                         timestamp: Date.now()
-                    }));
+                    });
                 } else {
                     // 单机模式，直接显示消息
                     this.showChatMessage(message, currentPlayer);
@@ -1435,7 +1218,7 @@ class EventHandler {
     }
 
     // 显示聊天消息
-    showChatMessage(message, playerNumber = null, playerName = null, isSystemMessage = false) {
+    showChatMessage(message, playerNumber = null, playerName = null, isSystemMessage = false, isSpectatorMessage = false) {
         const chatMessageDisplay = document.getElementById('chatMessageDisplay');
         const chatMessageContent = document.getElementById('chatMessageContent');
 
@@ -1458,6 +1241,10 @@ class EventHandler {
         if (isSystemMessage) {
             // 系统消息：使用特殊样式，不显示玩家编号
             formattedMessage = `<span class="system-message-text">${message}</span>`;
+        } else if (isSpectatorMessage) {
+            // 观战者消息：没有玩家编号和配色，昵称固定灰色
+            const spectatorName = playerName || '游客';
+            formattedMessage = `<span class="spectator-text">${spectatorName}</span><span class="action-text">: </span><span class="chat-message-text">${message}</span>`;
         } else if (playerNumber) {
             // 优先使用服务器传递的playerName，否则使用本地playerNameManager
             const displayName = playerName ||
@@ -1498,57 +1285,7 @@ class EventHandler {
         });
     }
 
-    // 动态调整聊天消息容器宽度以刚好包裹文字
-    adjustChatMessageWidth(chatMessageContent) {
-        try {
-            // 先重置宽度为auto以获取自然宽度
-            chatMessageContent.style.width = 'auto';
-            
-            // 临时显示元素以测量宽度
-            const originalDisplay = chatMessageContent.style.display;
-            const originalVisibility = chatMessageContent.style.visibility;
-            
-            chatMessageContent.style.display = 'block';
-            chatMessageContent.style.visibility = 'hidden';
-            
-            // 强制重新计算布局
-            chatMessageContent.offsetHeight;
-            
-            // 获取内容的实际宽度
-            const contentWidth = chatMessageContent.scrollWidth;
-            
-            // 恢复原始显示状态
-            chatMessageContent.style.display = originalDisplay;
-            chatMessageContent.style.visibility = originalVisibility;
-            
-            // 设置宽度为内容宽度，但不超出最大宽度限制
-            const maxWidth = window.innerWidth * 0.8; // 80%的视口宽度
-            const finalWidth = Math.min(contentWidth + 40, maxWidth); // 加40px的padding缓冲
-            
-            chatMessageContent.style.width = `${finalWidth}px`;
-            
-            console.log(`聊天消息宽度已调整为: ${finalWidth}px (内容宽度: ${contentWidth}px)`);
-        } catch (error) {
-            console.warn('调整聊天消息宽度时出错:', error);
-            // 如果出错，回退到auto让CSS自然处理
-            chatMessageContent.style.width = 'auto';
-        }
-    }
 
-    // 隐藏聊天消息（用于新消息替换旧消息）
-    hideChatMessage() {
-        const chatMessageDisplay = document.getElementById('chatMessageDisplay');
-
-        if (this.chatMessageTimeout) {
-            clearTimeout(this.chatMessageTimeout);
-            this.chatMessageTimeout = null;
-        }
-
-        if (chatMessageDisplay) {
-            chatMessageDisplay.style.display = 'none';
-            chatMessageDisplay.classList.remove('fade-out');
-        }
-    }
 
 }
 

@@ -1,9 +1,3 @@
-/**
- * 多人联机管理器
- * 负责管理多人联机的UI交互和WebSocket通信
- */
-
-// 导入重连管理器
 import { reconnectManager } from './reconnectManager.js';
 import { nicknameGenerator } from './nicknameGenerator.js';
 
@@ -744,7 +738,7 @@ class MultiplayerManager {
     }
 
     appendRoomChatMessage(
-        { playerName, playerNumber = null, playerId = null, message = '', isSystem = false, timestamp = Date.now() },
+        { playerName, playerNumber = null, playerId = null, message = '', isSystem = false, isSpectator = false, timestamp = Date.now() },
         options = {}
     ) {
         const text = String(message || '').trim();
@@ -754,8 +748,13 @@ class MultiplayerManager {
             ? Number(playerNumber)
             : null;
 
-        const name = isSystem ? '系统' : this.getRoomChatPlayerName(playerName, normalizedPlayerNumber, playerId);
-        this.roomChatMessages.push({ name, message: text, playerNumber: normalizedPlayerNumber, isSystem, timestamp });
+        // 观战者没有席位配色，直接用服务端给的昵称
+        const name = isSystem
+            ? '系统'
+            : (isSpectator
+                ? String(playerName || '').trim() || '游客'
+                : this.getRoomChatPlayerName(playerName, normalizedPlayerNumber, playerId));
+        this.roomChatMessages.push({ name, message: text, playerNumber: normalizedPlayerNumber, isSystem, isSpectator, timestamp });
         if (this.roomChatMessages.length > this.roomChatMaxCount) {
             this.roomChatMessages = this.roomChatMessages.slice(-this.roomChatMaxCount);
         }
@@ -790,6 +789,8 @@ class MultiplayerManager {
             const safeText = this.escapeHtml(item.message);
             if (item.isSystem) {
                 row.innerHTML = `<span class="system-message-text">${safeText}</span>`;
+            } else if (item.isSpectator) {
+                row.innerHTML = `<span class="room-chat-name spectator-text">${safeName}:</span><span>${safeText}</span>`;
             } else {
                 const nameColorClass = this.getRoomChatNameColorClass(item.playerNumber);
                 row.innerHTML = `<span class="room-chat-name ${nameColorClass}">${safeName}:</span><span>${safeText}</span>`;
@@ -1101,10 +1102,6 @@ class MultiplayerManager {
         this.wsClient.onMessageType('kicked', (message) => {
             this.handleWebSocketMessage(message);
         });
-
-        this.wsClient.onMessageType('roomPanelMessage', (message) => {
-            this.handleWebSocketMessage(message);
-        });
     }
 
     requestReconnectInfo() {
@@ -1149,6 +1146,30 @@ class MultiplayerManager {
         this.wsClient.sendMessage('rejoinRoom', {
             roomCode: this.roomCode
         });
+    }
+
+    /**
+     * 房间设置 → 配置面板勾选状态。
+     * 建房、加入、重进房间、房主改设置都走这里，避免某条路径漏掉某个开关
+     * （之前重进房间就漏了欢乐/道具模式，回到房间看到的还是未勾选）
+     */
+    applyRoomSettingsToControls(settings) {
+        if (!settings) return;
+
+        const skillModeCheckbox = document.getElementById('skillModeCheckbox');
+        if (skillModeCheckbox && settings.skillMode !== undefined) {
+            skillModeCheckbox.checked = !!settings.skillMode;
+        }
+
+        const happyModeCheckbox = document.getElementById('happyModeCheckbox');
+        if (happyModeCheckbox && settings.happyMode !== undefined) {
+            happyModeCheckbox.checked = !!settings.happyMode;
+        }
+
+        const pieceCount = settings.pieceCount;
+        if (pieceCount !== undefined && typeof this.updatePieceCountDisplay === 'function') {
+            this.updatePieceCountDisplay(pieceCount);
+        }
     }
 
     handleWebSocketMessage(data) {
@@ -1315,18 +1336,8 @@ class MultiplayerManager {
                     // 保存房间号到重连管理器（房主也需要保存）
                     reconnectManager.updateRoomCode(this.roomCode);
 
-                    // 同步道具模式复选框状态
-                    const skillModeCheckbox = document.getElementById('skillModeCheckbox');
-                    if (skillModeCheckbox && roomData.settings) {
-                        skillModeCheckbox.checked = roomData.settings.skillMode || false;
-                        console.log('[配置] 创建房间时初始化道具模式:', roomData.settings.skillMode);
-                    }
-                    // 同步欢乐模式复选框状态
-                    const happyModeCheckbox = document.getElementById('happyModeCheckbox');
-                    if (happyModeCheckbox && roomData.settings) {
-                        happyModeCheckbox.checked = roomData.settings.happyMode || false;
-                        console.log('[配置] 创建房间时初始化欢乐模式:', roomData.settings.happyMode);
-                    }
+                    // 同步道具/欢乐模式复选框状态
+                    this.applyRoomSettingsToControls(roomData.settings);
                     this.updateRoomPrivacyToggleUI(!!roomData.isPrivate);
 
                     // 确保房主颜色选择器正确高亮
@@ -1490,18 +1501,8 @@ class MultiplayerManager {
                 this.isHost = this.currentPlayer ? this.currentPlayer.isHost : false;
                 console.log('当前玩家是否为房主:', this.isHost);
 
-                // 同步道具模式复选框状态
-                const skillModeCheckbox = document.getElementById('skillModeCheckbox');
-                if (skillModeCheckbox && data.room.settings) {
-                    skillModeCheckbox.checked = data.room.settings.skillMode || false;
-                    console.log('[配置] 加入房间时同步道具模式:', data.room.settings.skillMode);
-                }
-                // 同步欢乐模式复选框状态
-                const happyModeCheckbox = document.getElementById('happyModeCheckbox');
-                if (happyModeCheckbox && data.room.settings) {
-                    happyModeCheckbox.checked = data.room.settings.happyMode || false;
-                    console.log('[配置] 加入房间时同步欢乐模式:', data.room.settings.happyMode);
-                }
+                // 同步道具/欢乐模式复选框状态
+                this.applyRoomSettingsToControls(data.room.settings);
 
                 // 恢复棋子个数显示
                 if (data.room.settings && data.room.settings.pieceCount) {
@@ -1851,6 +1852,10 @@ class MultiplayerManager {
                                 // 同时更新准备状态
                                 this.playerReadyStatus.set(player.id, player.isReady || false);
                             });
+                            // 换座会改动本人的座位编号，本人对象需以服务端座位为准
+                            const self = this.currentPlayer ? this.players.get(this.currentPlayer.id) : null;
+                            if (self) this.currentPlayer = self;
+                            this.updateEmojiPreview();
                         }
                     }
 
@@ -1918,6 +1923,9 @@ class MultiplayerManager {
 
                     this.updatePlayerDisplay();
                     this.updateRoomInfo();
+
+                    // 把服务端的房间设置回填到配置面板（重进房间最容易漏的一步）
+                    this.applyRoomSettingsToControls(data.room.settings);
 
                     // 重建离线玩家倒计时
                     for (const [, p] of this.players) {
@@ -2083,7 +2091,8 @@ class MultiplayerManager {
                     playerNumber: data.playerNumber,
                     playerId: data.playerId,
                     message: data.message,
-                    isSystem: data.playerNumber == null
+                    isSystem: data.playerNumber == null && !data.isSpectatorMessage,
+                    isSpectator: !!data.isSpectatorMessage
                 }, {
                     markUnread: !isLocalMessage
                 });
@@ -2108,18 +2117,8 @@ class MultiplayerManager {
                     Object.assign(this.currentRoom.settings, data.settings);
                 }
 
-                // 更新道具模式复选框状态
-                const skillModeCheckbox = document.getElementById('skillModeCheckbox');
-                if (skillModeCheckbox && data.settings.skillMode !== undefined) {
-                    skillModeCheckbox.checked = data.settings.skillMode;
-                    console.log('[配置] 道具模式复选框已更新:', data.settings.skillMode);
-                }
-                // 更新欢乐模式复选框状态
-                const happyModeCheckbox = document.getElementById('happyModeCheckbox');
-                if (happyModeCheckbox && data.settings.happyMode !== undefined) {
-                    happyModeCheckbox.checked = data.settings.happyMode;
-                    console.log('[配置] 欢乐模式复选框已更新:', data.settings.happyMode);
-                }
+                // 更新道具/欢乐模式复选框状态
+                this.applyRoomSettingsToControls(data.settings);
 
                 // 更新房间信息显示（包括游戏配置）
                 this.updateRoomInfo();
@@ -2361,234 +2360,6 @@ class MultiplayerManager {
             console.error('加入观战失败:', error);
         }
     }
-
-    // 显示加入房间模态框
-    showJoinRoomModal() {
-        console.log('显示加入房间模态框');
-
-        const modal = document.getElementById('joinRoomModal');
-        if (modal) {
-            modal.style.display = 'flex';
-            // 清空之前的输入和错误信息
-            this.clearRoomCodeInputs();
-            this.focusFirstInput();
-            this.hideJoinRoomError();
-            console.log('加入房间模态框已显示');
-        } else {
-            console.error('找不到加入房间模态框元素');
-        }
-    }
-
-    // 隐藏加入房间模态框
-    hideJoinRoomModal() {
-        document.getElementById('joinRoomModal').style.display = 'none';
-    }
-
-    // 清空房间号输入框
-    clearRoomCodeInputs() {
-        console.log('清空房间号输入框');
-        const inputs = document.querySelectorAll('.room-code-digit-input');
-        inputs.forEach(input => {
-            input.value = '';
-            input.classList.remove('filled', 'error');
-        });
-    }
-
-    // 聚焦第一个输入框
-    focusFirstInput() {
-        const firstInput = document.querySelector('.room-code-digit-input[data-index="0"]');
-        if (firstInput) {
-            firstInput.focus();
-        }
-    }
-
-    // 获取房间号
-    getRoomCode() {
-        const inputs = document.querySelectorAll('.room-code-digit-input');
-        let roomCode = '';
-        inputs.forEach(input => {
-            roomCode += input.value.toUpperCase();
-        });
-        return roomCode;
-    }
-
-    // 加入房间
-    async joinRoom() {
-        const roomCode = this.getRoomCode();
-
-        if (!roomCode || (roomCode.length !== 4 || !/^[A-Z]{4}$/.test(roomCode))) {
-            this.showJoinRoomError('加入房间失败，请检查房间号');
-            this.clearRoomCodeInputs();
-            this.focusFirstInput();
-            return;
-        }
-
-        // 清除之前的错误信息
-        this.hideJoinRoomError();
-
-        const connected = await this.connectToServer();
-        if (!connected) {
-            this.showJoinRoomError('连接服务器失败');
-            // 连接失败时也清空输入框
-            this.clearRoomCodeInputs();
-            this.focusFirstInput();
-            return;
-        }
-
-        try {
-            const emoji = this.selectedEmoji || 'smile';
-
-            // 获取保存的昵称或使用输入框中的昵称
-            let nickname = '';
-            if (window.playerIdManager) {
-                nickname = window.playerIdManager.getSavedNickname() || '';
-            }
-
-            // 如果没有保存的昵称，从输入框获取
-            if (!nickname) {
-                const nicknameInput = document.getElementById('multiplayerPlayerUsername');
-                nickname = nicknameInput ? nicknameInput.value.trim() : '';
-            }
-
-            // 将最终使用的昵称保存到本地存储，确保同一浏览器下跨局/重连昵称一致
-            if (window.playerIdManager) {
-                window.playerIdManager.saveNickname(nickname);
-            }
-
-            console.log('发送加入房间请求:', { roomCode, emoji, nickname });
-
-            // 保存房间号到重连管理器
-            reconnectManager.updateRoomCode(roomCode);
-
-            // 发送加入房间请求，等待服务器响应
-            this.wsClient.sendMessage('join_room', {
-                roomCode,
-                nickname,
-                emoji
-            });
-
-        } catch (error) {
-            console.error('加入房间失败:', error);
-            this.showJoinRoomError('加入房间失败，请检查房间号');
-            // 出现异常时也清空输入框
-            this.clearRoomCodeInputs();
-            this.focusFirstInput();
-        }
-    }
-
-    // 显示加入房间错误
-    showJoinRoomError(message) {
-        const errorDiv = document.getElementById('joinRoomError');
-        errorDiv.querySelector('.error-message').textContent = message;
-        errorDiv.style.display = 'block';
-    }
-
-    // 隐藏加入房间错误
-    hideJoinRoomError() {
-        document.getElementById('joinRoomError').style.display = 'none';
-    }
-
-    // 显示输入框错误状态
-    showInputError() {
-        const inputs = document.querySelectorAll('.room-code-digit-input');
-        inputs.forEach(input => {
-            input.classList.add('error');
-        });
-    }
-
-    // 初始化房间号输入框事件
-    initRoomCodeInputs() {
-        const inputs = document.querySelectorAll('.room-code-digit-input');
-
-        inputs.forEach((input, index) => {
-            // 输入事件
-            input.addEventListener('input', (e) => {
-                const value = e.target.value.toUpperCase();
-
-                // 只允许字母
-                if (!/^[A-Z]?$/.test(value)) {
-                    e.target.value = '';
-                    return;
-                }
-
-                e.target.value = value;
-
-                // 更新样式
-                if (value) {
-                    e.target.classList.add('filled');
-                    // 自动跳转到下一个输入框
-                    if (index < inputs.length - 1) {
-                        inputs[index + 1].focus();
-                    }
-                } else {
-                    e.target.classList.remove('filled');
-                }
-
-            });
-
-            // 键盘事件
-            input.addEventListener('keydown', (e) => {
-                // 退格键处理
-                if (e.key === 'Backspace') {
-                    if (!e.target.value && index > 0) {
-                        // 如果当前输入框为空，跳转到前一个输入框
-                        inputs[index - 1].focus();
-                        inputs[index - 1].value = '';
-                        inputs[index - 1].classList.remove('filled');
-                    }
-                }
-
-                // 左右箭头键导航
-                if (e.key === 'ArrowLeft' && index > 0) {
-                    inputs[index - 1].focus();
-                }
-                if (e.key === 'ArrowRight' && index < inputs.length - 1) {
-                    inputs[index + 1].focus();
-                }
-
-                // 回车键提交
-                if (e.key === 'Enter') {
-                    this.joinRoom();
-                }
-            });
-
-            // 粘贴事件
-            input.addEventListener('paste', (e) => {
-                e.preventDefault();
-                const pastedText = (e.clipboardData || window.clipboardData).getData('text').toUpperCase();
-
-                // 只处理4位字母的粘贴
-                if (/^[A-Z]{4}$/.test(pastedText)) {
-                    // 清空所有输入框
-                    inputs.forEach(inp => {
-                        inp.value = '';
-                        inp.classList.remove('filled');
-                    });
-
-                    // 填充粘贴的内容
-                    for (let i = 0; i < 4; i++) {
-                        inputs[i].value = pastedText[i];
-                        inputs[i].classList.add('filled');
-                    }
-
-                    // 将光标移动到最后一个输入框的末尾
-                    const lastInput = inputs[3];
-                    lastInput.focus();
-                    // 设置光标位置到末尾，而不是选中文本
-                    setTimeout(() => {
-                        lastInput.setSelectionRange(1, 1);
-                    }, 0);
-
-                }
-            });
-
-            // 焦点事件 - 移除自动选中功能
-            input.addEventListener('focus', () => {
-                // 不再自动选中文本，让用户可以正常编辑
-            });
-        });
-    }
-
     // 显示房间配置页面（带加载状态）
     showRoomConfigWithLoading() {
         console.log('显示房间配置页面（带加载状态）');
@@ -2781,6 +2552,11 @@ class MultiplayerManager {
                 nickname = nicknameInput ? nicknameInput.value.trim() : '';
             }
 
+            // 将最终使用的昵称保存到本地存储，确保同一浏览器下跨局/重连昵称一致
+            if (window.playerIdManager) {
+                window.playerIdManager.saveNickname(nickname);
+            }
+
             console.log('发送加入房间请求:', { roomCode, emoji, nickname });
 
             // 保存房间号到重连管理器
@@ -2814,13 +2590,6 @@ class MultiplayerManager {
         document.getElementById('joinRoomError').style.display = 'none';
     }
 
-    // 显示输入框错误状态
-    showInputError() {
-        const inputs = document.querySelectorAll('.room-code-digit-input');
-        inputs.forEach(input => {
-            input.classList.add('error');
-        });
-    }
 
     // 初始化房间号输入框事件
     initRoomCodeInputs() {
@@ -3174,18 +2943,9 @@ class MultiplayerManager {
         }
     }
 
-    // 选择颜色
+    // 选择颜色：点击的座位若已被其他玩家占用，由服务端安排两人换座
     selectColor(playerNum) {
         if (!this.wsClient || !this.currentPlayer) return;
-
-        // 检查颜色是否已被其他真实玩家占用
-        const isOccupiedByPlayer = Array.from(this.players.values()).some(player =>
-            player.color === playerNum && player.id !== this.currentPlayer.id
-        );
-
-        if (isOccupiedByPlayer) {
-            return;
-        }
 
         // 检查颜色是否已被AI玩家占用
         const isOccupiedByAI = (this.currentRoom && this.currentRoom.settings && this.currentRoom.settings.aiPlayers)
@@ -3197,23 +2957,9 @@ class MultiplayerManager {
             return;
         }
 
-        // 先清除当前玩家在players Map中的旧颜色信息
-        if (this.players.has(this.currentPlayer.id)) {
-            const oldPlayer = this.players.get(this.currentPlayer.id);
-            // 创建新的玩家对象，避免引用问题
-            const updatedPlayer = { ...oldPlayer, color: playerNum };
-            this.players.set(this.currentPlayer.id, updatedPlayer);
-        }
-
-        // 更新当前玩家的颜色
-        this.currentPlayer.color = playerNum;
-
-        // 使用websocketClient的selectColor方法
+        // 座位归属由服务端裁决（可能伴随换座），本地不抢先改写，
+        // 否则界面上的座位会与真实回合顺序不一致
         this.wsClient.selectColor(playerNum);
-
-        // 立即更新显示以反映新的选择状态
-        this.updatePlayerDisplay();
-        this.showCurrentPlayerSettings();
     }
 
     // 显示当前玩家设置

@@ -662,7 +662,7 @@
                                                 <p>摇到点数<span class="dice-special">6</span>获额外1次投骰子机会。</p>
                                             </div>
                                             <div class="sub-content-item bonus-sub-item">
-                                                <p>单次回合连投3次<span class="dice-special">6</span>，该玩家所有棋子回基地，回合结束。</p>
+                                                <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家所有棋子回基地，回合结束。</p>
                                             </div>
 
                                         </div>
@@ -700,7 +700,7 @@
                                                 <p>多颗同色棋子叠在一格上时形成<span class="stack-text">[叠子]</span>。</p>
                                             </div>
                                             <div class="sub-content-item stack-sub-item">
-                                                <p>若行进时点数大于到前方<span class="stack-text">[叠子]</span>距离：先移动到<span
+                                                <p>若移动时点数大于到前方<span class="stack-text">[叠子]</span>距离：先移动到<span
                                                         class="stack-text">[叠子]</span>格，再回退多余点数的距离。</p>
                                             </div>
                                             <div class="sub-content-item stack-sub-item">
@@ -759,6 +759,76 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <div class="rule-section">
+                                    <h4>三、道具模式</h4>
+                                    <div class="rule-content">
+                                        <div class="mechanism-item energy-item">
+                                            <h5><span class="energy-value-text">积分</span></h5>
+                                            <div class="sub-content-item energy-sub-item">
+                                                <p>击败对手棋子可获得积分，单次得分 =（基础 <span class="energy-value-text">15</span> 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 <span class="energy-value-text">100</span>。</p>
+                                                <p>道具骰子造成的击败不计分。</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="mechanism-item props-item">
+                                            <h5><span class="skill-name-text">道具</span></h5>
+                                            <div class="sub-content-item props-sub-item">
+                                                <p><strong>1.盲盒</strong></p>
+                                                <p class="beat-detail">消耗 <span class="energy-value-text">15</span> 积分，随机获得 <span class="energy-value-text">0~40</span> 积分。</p>
+                                                <p class="beat-detail">开盒后本回合立即结束；自身积分 ≥ 40 时不可使用。</p>
+                                            </div>
+
+                                            <div class="sub-content-item props-sub-item">
+                                                <p><strong>2.传送门</strong></p>
+                                                <p class="beat-detail">消耗 <span class="energy-value-text">40</span> 积分，将己方一颗不在基地、也未到终点的棋子传送到随机空位上。</p>
+                                                <p class="beat-detail">传送后本回合结束，不触发 <span class="move-type-jump">[跳子]</span> 或 <span class="move-type-fly">[飞棋]</span>。</p>
+                                            </div>
+
+                                            <div class="sub-content-item props-sub-item">
+                                                <p><strong>3.多面骰子</strong></p>
+                                                <p class="beat-detail">消耗 <span class="energy-value-text">50</span> 积分，投掷 <span class="dice-special">1~12</span> 随机点数。</p>
+                                                <p class="beat-detail">不参与 <span class="consecutive-bonus">[连投奖励]</span>，也不计入 <span class="consecutive-bonus">[连投惩罚]</span>。</p>
+                                            </div>
+
+                                            <div class="sub-content-item props-sub-item">
+                                                <p><strong>4.遥控骰子</strong></p>
+                                                <p class="beat-detail">消耗 <span class="energy-value-text">70</span> 积分，可指定 <span class="dice-special">1~6</span> 任意点数。</p>
+                                                <p class="beat-detail">与多面骰子相同，不参与 <span class="consecutive-bonus">[连投奖励]</span>，也不计入 <span class="consecutive-bonus">[连投惩罚]</span>。</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="rule-section">
+                                    <h4>四、欢乐模式</h4>
+                                    <div class="rule-content">
+                                        <div class="mechanism-item beat-item">
+                                            <h5><span class="collision-bonus">欢乐模式</span></h5>
+                                            <div class="sub-content-item beat-sub-item">
+                                                <p><strong>1.终点无反弹</strong></p>
+                                                <p class="beat-detail">移动点数超过终点时不再回退，直接停在终点格。</p>
+                                            </div>
+
+                                            <div class="sub-content-item beat-sub-item">
+                                                <p><strong>2.叠子不阻挡</strong></p>
+                                                <p class="beat-detail">路径上的 <span class="stack-text">[叠子]</span> 不产生阻挡。</p>
+                                            </div>
+
+                                            <div class="sub-content-item beat-sub-item">
+                                                <p><strong>3.无连投惩罚</strong></p>
+                                                <p class="beat-detail">不会触发 <span class="consecutive-bonus">[连投惩罚]</span>，连投 3 次 <span class="dice-special">6</span> 后计数清零，照常获得连投。</p>
+                                            </div>
+
+                                            <div class="sub-content-item beat-sub-item">
+                                                <p><strong>4.<span class="collision-bonus">碰撞奖励</span></strong></p>
+                                                <p class="beat-detail">落在其他玩家的棋子上不触发 <span class="crash-text">[撞机]</span>，改为 <span class="collision-bonus">[碰撞奖励]</span>：每颗敌方棋子奖励 <span class="collision-bonus">2</span> 步。</p>
+                                                <p class="beat-detail">奖励可连锁触发，过程中的 <span class="move-type-jump">[跳子]</span>、<span class="move-type-fly">[飞棋]</span> 照常执行。</p>
+                                                <p class="beat-detail">道具模式下，<span class="collision-bonus">[碰撞奖励]</span>同时按每颗敌方棋子 <span class="energy-value-text">20</span> 分获得积分。</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -807,6 +877,7 @@
                             d="M95.2 600.8l361.4 337.4c15 14 34.8 21.8 55.4 21.8s40.4-7.8 55.4-21.8l361.4-337.4c60.8-56.6 95.2-136 95.2-219v-11.6c0-139.8-101-259-238.8-282-91.2-15.2-184 14.6-249.2 79.8l-24 24-24-24c-65.2-65.2-158-95-249.2-79.8C101 111.2 0 230.4 0 370.2v11.6c0 83 34.4 162.4 95.2 219z"
                             p-id="6362" fill="#f2687b"></path>
                     </svg></a> by <a href="https://github.com/ZTMYO/MinimalistAeroplaneChess" target="_blank">@ZTMYO</a></div>
+            <div class="footer-version">v1.0.0</div>
         </div>
     </div>
 
@@ -821,23 +892,22 @@
                 <div class="mode-rule-section">
                     <h3>道具模式</h3>
                     <ul>
-                        <li>击败对手棋子可获得积分，积分上限 100。</li>
+                        <li>击败对手棋子可获得积分，单次得分 =（基础 15 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 100。</li>
+                        <li>道具骰子造成的击败不计分。</li>
                         <li>消耗积分兑换道具，在投掷前使用：</li>
-                        <li class="sub-item">盲盒（15分）— 随机获得最多 40 积分，积分 ≥ 40 时不可用，使用后跳过回合</li>
-                        <li class="sub-item">传送门（40分）— 将棋子随机传送到地图上的空位置，可能前进或后退</li>
-                        <li class="sub-item">多面骰子（50分）— 投掷 1~12 随机点数</li>
-                        <li class="sub-item">遥控骰子（70分）— 指定 1~6 任意点数</li>
+                        <li class="sub-item">盲盒（15 分）— 随机获得 0~40 积分；开盒后本回合立即结束，自身积分 ≥ 40 时不可使用</li>
+                        <li class="sub-item">传送门（40 分）— 将己方一颗不在基地、也未到终点的棋子传送到随机空位上；传送后本回合结束，不触发跳子或飞棋</li>
+                        <li class="sub-item">多面骰子（50 分）— 投掷 1~12 随机点数；不参与连投奖励，也不计入连投惩罚</li>
+                        <li class="sub-item">遥控骰子（70 分）— 可指定 1~6 任意点数；与多面骰子相同，不参与连投奖励，也不计入连投惩罚</li>
                     </ul>
                 </div>
                 <div class="mode-rule-section">
                     <h3>欢乐模式</h3>
                     <ul>
-                        <li>无终点反弹 / 叠子反弹 — 超过终点直接胜利。</li>
-                        <li>无连投惩罚 — 连续 3 次 6 不触发棋子回起点。</li>
-                        <li>无撞机 — 棋子之间不发生碰撞。</li>
-                        <li>碰撞奖励 — 落在其他玩家棋子上奖励前进敌方棋子数×2步。</li>
-                        <li>奖励可连锁触发 — 奖励落地后再次踩到继续奖励，过程中触发跳子/飞棋正常执行。</li>
-                        <li>道具模式下碰撞奖励同时获得积分奖励。</li>
+                        <li>终点无反弹 — 移动点数超过终点时不再回退，直接停在终点格。</li>
+                        <li>叠子不阻挡 — 路径上的叠子不产生阻挡。</li>
+                        <li>无连投惩罚 — 不会触发连投惩罚，连投 3 次 6 后计数清零，照常获得连投。</li>
+                        <li>碰撞奖励 — 落在其他玩家的棋子上不触发撞机，改为碰撞奖励：每颗敌方棋子奖励 2 步；奖励可连锁触发，过程中的跳子、飞棋照常执行；道具模式下同时按每颗敌方棋子 20 分获得积分。</li>
                     </ul>
                 </div>
             </div>

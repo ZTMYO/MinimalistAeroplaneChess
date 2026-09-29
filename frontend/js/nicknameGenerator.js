@@ -70,18 +70,6 @@ export class NicknameGenerator {
         return `${fallbackSurname}${fallbackCore}`;
     }
 
-    generateMultiple(count) {
-        const nicknames = new Set();
-        let attempts = 0;
-        const maxAttempts = count * 10; // 防止无限循环
-
-        while (nicknames.size < count && attempts < maxAttempts) {
-            nicknames.add(this.generate());
-            attempts++;
-        }
-
-        return Array.from(nicknames);
-    }
     validateLength(nickname, maxLength = 4) {
         return nickname.length <= maxLength;
     }

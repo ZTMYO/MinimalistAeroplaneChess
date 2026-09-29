@@ -1,9 +1,5 @@
 import { playerIdManager } from './playerIdManager.js';
 
-/**
- * WebSocket客户端管理类
- * 负责处理与服务器的WebSocket连接和消息通信
- */
 export class WebSocketClient {
     constructor() {
         this.ws = null;
@@ -47,18 +43,6 @@ export class WebSocketClient {
         this.onMessage = this.onMessage.bind(this);
         this.onClose = this.onClose.bind(this);
         this.onError = this.onError.bind(this);
-    }
-
-    /**
-     * 获取或创建持久化的玩家ID
-     */
-    /**
-     * 重新获取玩家ID（用于重连时确保ID一致）
-     * @returns {string} 玩家ID
-     */
-    refreshPlayerId() {
-        this.playerId = playerIdManager.getPlayerId();
-        return this.playerId;
     }
 
     /**
@@ -135,10 +119,6 @@ export class WebSocketClient {
                 roomCode: this.roomCode
             };
 
-            // 只在关键操作时输出日志
-            if (['createRoom', 'joinRoom', 'startGame'].includes(type)) {
-                console.log('发送:', type);
-            }
             this.ws.send(JSON.stringify(message));
         } else {
             console.warn('WebSocket未连接，无法发送消息:', type, data);
@@ -154,13 +134,6 @@ export class WebSocketClient {
         this.messageHandlers.set(type, handler);
     }
 
-    /**
-     * 移除消息处理器
-     * @param {string} type - 消息类型
-     */
-    offMessageType(type) {
-        this.messageHandlers.delete(type);
-    }
 
     /**
      * 创建房间
@@ -278,17 +251,6 @@ export class WebSocketClient {
         this.sendMessage('startGame');
     }
 
-    /**
-     * 游戏中的操作消息
-     */
-    rollDice() {
-        this.sendMessage('roll_dice');
-    }
-
-    moveChess(chessIndex, targetPosition) {
-        this.sendMessage('move_chess', { chessIndex, targetPosition });
-    }
-
     // WebSocket事件处理器
     onOpen(event) {
         this.isConnected = true;
@@ -399,17 +361,6 @@ export class WebSocketClient {
         }, delay);
     }
 
-    /**
-     * 获取连接状态
-     */
-    getConnectionState() {
-        return {
-            isConnected: this.isConnected,
-            roomCode: this.roomCode,
-            playerId: this.playerId,
-            isHost: this.isHost
-        };
-    }
 
     /**
      * 生成随机房间号
@@ -563,6 +514,3 @@ export class WebSocketClient {
         }
     }
 }
-
-// 创建全局WebSocket客户端实例
-export const wsClient = new WebSocketClient();

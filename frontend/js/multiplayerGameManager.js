@@ -1,13 +1,38 @@
 /**
- * 多人游戏通讯管理器 - 处理游戏内的WebSocket连接和消息同步
+ * 多人游戏通讯管理器 —— 对局内的 WebSocket 连接与消息同步。
+ *
+ * 这里只该做两件事：把服务端消息翻译成对棋面/界面的动作，以及把玩家的意图发上去。
+ * 具体规则不在这里：棋面由快照驱动（去重见 snapshotGate.js，补帧与追赶见 _drainSnapshots），
+ * 事件表现交给 enginePlayback，AI 出手由服务端负责（backend/botDriver.cjs），身份判断读 aiPlayers.js。
+ * 新加逻辑前先想想它是否属于上面某一块，别让这个文件继续长。
  */
 
 import { reconnectManager } from './reconnectManager.js';
 import { activePlayerManager } from './activePlayerManager.js';
 import { playerIdManager } from './playerIdManager.js';
+import { engineAdapter } from './engineAdapter.js';
+import { enginePlayback } from './enginePlayback.js';
+import { SnapshotGate } from './snapshotGate.js';
+import { isAiDriven, isTakeoverPlayer } from './aiPlayers.js';
+import { energyManager } from './energyManager.js';
+import { DICE_SYMBOLS } from './utils.js';
+import { gameState } from './gameState.js';
+import { uiUpdater } from './uiUpdater.js';
+import { gameInfo } from './gameInfo.js';
 
-// 声明全局变量，这些变量在游戏运行时会被设置
-let gameState, uiUpdater, gameInfo;
+// 会驱动棋子位移动画的事件，用于在动画开播时统一进度条起点
+const MOVE_EVENT_TYPES = new Set(['launch', 'walk', 'jump', 'fly', 'finish', 'beat', 'collide', 'reset', 'teleport']);
+
+// 快照自愈心跳：服务端每次状态变更都会广播，这里只做低频兜底，捕捉极偶发的丢帧
+const SNAPSHOT_SELF_HEAL_INTERVAL_MS = 25000;
+const SNAPSHOT_RETRY_LIMIT = 3;
+
+// 联机连接保活：手机切网、系统休眠都会留下「socket 还在、其实已死」的半开连接，
+// 靠 ping/pong 才能发现，否则玩家会一直以为自己在房间里却收不到任何消息。
+const WS_PING_INTERVAL_MS = 15000;
+
+// 服务端已经没有这局/这间房（重启、被清理）：重连与自愈都救不回来，直接回主页
+const SCENE_GONE_ERRORS = ['游戏会话不存在', '房间不存在'];
 
 class MultiplayerGameManager {
     constructor() {
@@ -32,6 +57,29 @@ class MultiplayerGameManager {
 
         // 跟踪玩家连接状态，避免重复处理断开和重连事件
         this._playerConnectionStatus = new Map(); // playerId -> isConnected
+
+        this._pendingUIRefresh = null; // 骰子闪烁期间被推迟的 UI 刷新
+        this._localRollIssued = false; // 本机是否已自行发起并播放了本次投掷动画
+
+        this._snapshotGate = new SnapshotGate(); // 快照水位：去重旧帧、换会话归零
+        this._snapshotRetryCount = 0; // 快照应用连续失败次数
+        this._catchUpMode = false; // 应用期间又收到新帧 → 本地落后，后续帧定格追赶
+        this._serverThinkingWindow = null; // 已经采纳过的服务端思考窗起点，换了就是新阶段
+        this._snapshotSelfHealStarted = false;
+        this._visibilityHandler = null;
+        this._snapshotHeartbeat = null;
+
+        this._wsHeartbeat = null;
+        this._wsAlive = true; // 上一轮心跳是否收到 pong，false 表示连接已半死
+    }
+
+    /**
+     * 标记本机已发起投掷动画。
+     * 用于区分「自己摇的骰子」与「别处同步来的骰子」：
+     * 后者点数虽归属本机，本地却没有动画在播，快照到达时需要补播闪烁。
+     */
+    markLocalRollIssued() {
+        this._localRollIssued = true;
     }
 
     stopDiceFlashing() {
@@ -47,6 +95,7 @@ class MultiplayerGameManager {
         const diceDisplay = document.getElementById('diceDisplay');
         if (diceDisplay) {
             diceDisplay.classList.remove('dice-waiting', 'dice-flashing');
+
         }
     }
 
@@ -55,6 +104,12 @@ class MultiplayerGameManager {
         const existing = this.players.get(player.id) || {};
         
         this.players.set(player.id, { ...existing, ...player });
+
+        // 玩家列表是表情的唯一来源，每次合并都顺手贴回头像，
+        // 免得换人/重连/改表情后头像空着
+        if (player.color && player.emoji) {
+            window.gameInstance?.updatePlayerEmoji?.(player.color, player.emoji);
+        }
     }
 
     _mergePlayersFromPayload(data) {
@@ -100,11 +155,45 @@ class MultiplayerGameManager {
     }
 
     _safeUpdateUI() {
+        // 本地掷骰动画进行中：整个 UI 刷新都要让路，否则 updateUI 内部的
+        // updateDiceDisplay 会把 dice-flashing 摘掉，闪烁就没了
+        const diceDisplay = document.getElementById('diceDisplay');
+        if (diceDisplay && diceDisplay.classList.contains('dice-flashing')) {
+            // 直接丢弃会让这次快照带来的可移动高亮、回合信息整段失效。
+            // 掷骰者本地没有其他补刷点（远端玩家在应用快照前就已停闪，故不受影响），
+            // 于是表现为「只有自己看不到自己的可移动高亮」。这里等闪烁收尾后重放一次。
+            if (this._pendingUIRefresh) clearTimeout(this._pendingUIRefresh);
+            this._pendingUIRefresh = setTimeout(() => {
+                this._pendingUIRefresh = null;
+                this._safeUpdateUI();
+            }, 150);
+            return;
+        }
+        // 骰子外观完全由快照投影后的 gameState 推导，不再沿用历史掷骰者，
+        // 否则回合已推进时会把骰子染成上家的点数与颜色
         try {
             uiUpdater?.updateUI?.();
         } catch (e) {
             // ignore
         }
+    }
+
+    /**
+     * 播放骰子摇动动画（灰色闪烁，不带玩家颜色）。
+     * 本地掷骰与远端同步共用，保证所有玩家看到的骰子节奏一致。
+     */
+    startDiceFlashing() {
+        const diceDisplay = document.getElementById('diceDisplay');
+        if (!diceDisplay) return;
+        this.stopDiceFlashing();
+        diceDisplay.className = diceDisplay.className.replace(/player-\d+/g, '');
+        diceDisplay.classList.remove('dice-waiting', 'dice-glowing', 'not-rolled', 'rolled', 'dice-flashing');
+        void diceDisplay.offsetWidth; // 强制重排
+        diceDisplay.classList.add('dice-flashing');
+        this.rollStartTime = Date.now();
+        this.currentFlashInterval = setInterval(() => {
+            diceDisplay.textContent = DICE_SYMBOLS[Math.floor(Math.random() * 6)];
+        }, 100);
     }
 
     cacheDefeatedChessPosition(player, chessIndex) {
@@ -156,20 +245,25 @@ class MultiplayerGameManager {
         // 每次进入联机初始化前清理状态，避免跨局残留导致AI误判
         this.players.clear();
         this.aiTakeoverPlayers.clear();
+        this._localRollIssued = false;
+        // 新一局重新开始计数 seq，水位必须清零，否则新会话快照会被旧水位挡掉
+        this._snapshotGate.reset();
+        this._snapshotRetryCount = 0;
+        this._catchUpMode = false;
+        this._serverThinkingWindow = null;
         
-        // 动态获取 WebSocketClient 如果没有提供
-        if (!multiplayerGameData.wsClient && typeof window !== 'undefined' && window.WebSocketClient) {
-            multiplayerGameData.wsClient = new window.WebSocketClient();
-        }
-
-        this.playerId = multiplayerGameData.isSpectator ? multiplayerGameData.wsClient?.playerId || playerIdManager.getPlayerId() : multiplayerGameData.wsClient.playerId;
-        this.serverUrl = multiplayerGameData.wsClient?.serverUrl || ''; // 保存服务器URL
+        // sessionStorage 只存了 playerId / serverUrl，缺失时各自兜底即可，
+        // 不必再 new 一个从不 connect 的 WebSocketClient
+        const clientInfo = multiplayerGameData.wsClient || {};
+        this.playerId = clientInfo.playerId || playerIdManager.getPlayerId();
+        this.serverUrl = clientInfo.serverUrl || '';
         this.isOnlineMode = true; // 设置为联机模式
+        // 联机模式不置 engineDriven：该标志代表「本地引擎持权威」，仅单机/人机使用。
+        // 联机的走子必须走 sendIntent 交给服务端裁决，否则本地推进回合而服务端不知情。
         this.hasPrintedGameStart = false; // 跟踪是否已经打印过游戏开始消息
         this.isFreshStart = !multiplayerGameData.isReconnecting; // 标记是否为全新正常开局
-
-        // 无论是否观战，都设置全局变量引用
-        this.setGlobalReferences();
+        // 每次页面加载只拉一次历史，避免普通断线重连时把面板里已有的消息再叠一遍
+        this._historyRequested = false;
 
         // 无论是否观战，都确保 audioManager 处于正确模式
         if (window.audioManager) {
@@ -188,6 +282,9 @@ class MultiplayerGameManager {
             }
             return;
         }
+
+        // 玩家路径统一开启快照自愈：回到前台、重连、周期兜底都会主动对齐一次棋面
+        this.startSnapshotSelfHeal();
 
         // 检查是否是重连模式
         if (multiplayerGameData.isReconnecting) {
@@ -220,11 +317,12 @@ class MultiplayerGameManager {
                     this.aiTakeoverPlayers.add(player.id);
                 }
             }
+            this._syncBotFlagsFromRoster(multiplayerGameData.players);
 
             // 更新 activePlayers
             this._updateActivePlayers();
 
-            // 等待游戏完全初始化后再设置全局变量引用和连接服务器
+            // 等待游戏完全初始化后再连接服务器
             await this.waitForGameInitialization();
 
             // 重新绑定棋子DOM元素（重连时可能需要重新绑定）
@@ -441,7 +539,7 @@ class MultiplayerGameManager {
         }
 
         // 重连/刷新触发的 allAudioLoaded（isResync=true）不触发任何游戏操作。
-        // AI操作已在 gameSessionConnected 的 restoreGameState 之后立即触发。
+        // AI操作由权威快照落地后的回调驱动。
         if (data.isResync) {
             return;
         }
@@ -453,125 +551,14 @@ class MultiplayerGameManager {
                 return;
             }
             const currentPlayer = this.gameInstance.gameState.getCurrentPlayer();
-            const gamePhase = this.gameInstance.gameState.getGamePhase();
-            // 检查当前玩家是否为AI或AI托管玩家，如果是则触发操作
+            // AI 与托管玩家的出手都在服务端（botDriver），客户端只把「等待中」的阶段扶正
             const isBotPlayer = this.gameInstance.gameState.isBotPlayer(currentPlayer);
-            
-            const currentPlayerId = this.getPlayerIdByPlayerNumber(currentPlayer);
-            const currentPlayerData = this.players?.get(currentPlayerId);
-            const isCurrentPlayerAITakeover = (this.aiTakeoverPlayers && this.aiTakeoverPlayers.has(currentPlayerId)) ||
-                currentPlayerData?.isAITakeover || 
-                (currentPlayerData?.isAI && !isBotPlayer) || false;
-
-            // 如果当前玩家是AI电脑或被AI接管，且当前客户端是房主，则触发AI操作
-            if ((isBotPlayer || isCurrentPlayerAITakeover) && this.isHost) {
-                setTimeout(() => {
-                    if (window.botController) {
-                        if (!window.botController.isEnabled) {
-                            window.botController.setEnabled(true);
-                        }
-                        // 确保游戏阶段正确
-                        if (gamePhase === 'waiting' || gamePhase === 'rolling') {
-                            window.botController.handleBotTurn();
-                        }
-                    }
-                }, 800);
-            } else if (!isBotPlayer && !isCurrentPlayerAITakeover) {
-                // 如果当前玩家是正常人类玩家，确保游戏阶段正确
-                if (gamePhase === 'waiting') {
-                    this.gameInstance.gameState.setGamePhase('rolling');
-                    if (window.uiUpdater) {
-                        window.uiUpdater.updateUI();
-                    }
+            if (!isBotPlayer && this.gameInstance.gameState.getGamePhase() === 'waiting') {
+                this.gameInstance.gameState.setGamePhase('rolling');
+                if (window.uiUpdater) {
+                    window.uiUpdater.updateUI();
                 }
             }
-        }
-    }
-
-    /**
-     * 收到其他玩家的棋盘同步请求 → 返回当前棋子状态
-     */
-    handleBoardSyncRequest(data) {
-        if (!this.gameInstance || !this.gameInstance.chessPiece) {
-            console.warn('[棋盘同步] 无法响应同步请求：gameInstance不可用');
-            return;
-        }
-        const gs = this.gameInstance.chessPiece.gameState;
-        if (!gs || !gs.playerChess) return;
-
-        const playerChessData = {};
-        for (let p = 1; p <= 4; p++) {
-            if (!gs.playerChess[p]) continue;
-            playerChessData[p] = {};
-            for (let i = 0; i < gs.pieceCount; i++) {
-                const chess = gs.playerChess[p][i];
-                if (chess) {
-                    playerChessData[p][i] = {
-                        position: chess.position,
-                        finished: chess.finished
-                    };
-                }
-            }
-        }
-
-        console.log('[棋盘同步] 发送棋盘状态', playerChessData);
-        this.sendMessage('boardSyncData', {
-            targetPlayerId: data.targetPlayerId,
-            playerChess: playerChessData,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 收到棋盘同步数据 → 校正本地棋子位置
-     */
-    handleBoardSyncData(data, _retryCount = 0) {
-        if (!data.playerChess) {
-            console.log('[棋盘同步] 收到空参考状态（无其他玩家可同步）');
-            return;
-        }
-
-        if (!this.gameInstance || !this.gameInstance.chessPiece) {
-            if (_retryCount < 10) {
-                console.log(`[棋盘同步] 游戏未完全初始化，延迟重试(${_retryCount + 1}/10)...`);
-                setTimeout(() => this.handleBoardSyncData(data, _retryCount + 1), 500);
-                return;
-            }
-            console.warn('[棋盘同步] 重试超限，放弃同步');
-            return;
-        }
-
-        const gs = this.gameInstance.chessPiece.gameState;
-        if (!gs || !gs.playerChess) return;
-
-        console.log('[棋盘同步] 收到参考状态，开始比对:', data.playerChess);
-
-        let changed = false;
-        for (let p = 1; p <= 4; p++) {
-            if (!data.playerChess[p] || !gs.playerChess[p]) continue;
-            for (let i = 0; i < gs.pieceCount; i++) {
-                const remote = data.playerChess[p][i];
-                const local = gs.playerChess[p][i];
-                if (!remote || !local) continue;
-                if (local.position !== remote.position || local.finished !== remote.finished) {
-                    console.log(`[棋盘同步] 玩家${p}棋子${i}: local(${local.position}/${local.finished}) → remote(${remote.position}/${remote.finished})`);
-                    local.position = remote.position;
-                    local.finished = remote.finished;
-                    if (remote.finished) {
-                        gs.updateChessPosition(p, i, remote.position || 56);
-                    }
-                    changed = true;
-                }
-            }
-        }
-
-        if (changed) {
-            console.log('[棋盘同步] 已更新不一致的棋子位置');
-            if (this.gameInstance.chessPiece.updateAllChessPositions) {
-                this.gameInstance.chessPiece.updateAllChessPositions(false);
-            }
-        } else {
-            console.log('[棋盘同步] 所有棋子位置一致，无需修正');
         }
     }
 
@@ -582,8 +569,7 @@ class MultiplayerGameManager {
         return new Promise((resolve) => {
             const checkInitialization = () => {
                 if (window.gameState && window.uiUpdater && window.gameInfo) {
-                    console.log('游戏初始化完成，设置全局变量引用');
-                    this.setGlobalReferences();
+                    console.log('游戏初始化完成');
                     resolve();
                 } else {
                     console.log('等待游戏初始化...', {
@@ -599,52 +585,70 @@ class MultiplayerGameManager {
     }
 
     /**
-     * 设置全局变量引用
-     */
-    setGlobalReferences() {
-        gameState = window.gameState;
-        uiUpdater = window.uiUpdater;
-        gameInfo = window.gameInfo;
-    }
-
-    /**
      * 连接到服务器
      */
     async connectToServer(serverUrl) {
         return new Promise((resolve, reject) => {
+            this.stopWsHeartbeat();
             try {
-                this.wsClient = new WebSocket(serverUrl);
+                // 旧连接的回调必须先摘掉：它会往新 socket（还在 CONNECTING）上发消息，直接抛错
+                const previous = this.wsClient;
+                if (previous) {
+                    previous.onopen = previous.onmessage = previous.onclose = previous.onerror = null;
+                    try {
+                        previous.close();
+                    } catch (e) {
+                        // ignore
+                    }
+                }
 
-                this.wsClient.onopen = () => {
+                const socket = new WebSocket(serverUrl);
+                this.wsClient = socket;
+
+                socket.onopen = () => {
+                    if (this.wsClient !== socket) return;
                     this.isConnected = true;
                     this.reconnectAttempts = 0;
+                    this.startWsHeartbeat();
+                    // 一上来就把前后台状态报给服务端：一进后台的页面不该被服务端等着演完
+                    this.reportVisibility();
                     // 发送待发送的消息队列
                     this.processPendingMessages();
 
                     resolve();
                 };
 
-                this.wsClient.onmessage = (event) => {
+                socket.onmessage = (event) => {
+                    if (this.wsClient !== socket) return;
                     try {
                         const data = JSON.parse(event.data);
+                        // pong 只是保活回执，不进业务分发，免得刷一堆未知消息告警
+                        if (data && data.type === 'pong') {
+                            this._wsAlive = true;
+                            return;
+                        }
                         this.handleMessage(data);
                     } catch (error) {
                         console.error('解析WebSocket消息失败:', error);
                     }
                 };
 
-                this.wsClient.onclose = () => {
+                socket.onclose = () => {
+                    if (this.wsClient !== socket) return;
                     console.log('游戏内WebSocket连接已关闭');
                     this.isConnected = false;
+                    this.stopWsHeartbeat();
                     if (!this.disableReconnect) {
                         this._didDisconnectOnce = true;
                         this.attemptReconnect();
                     }
                 };
 
-                this.wsClient.onerror = (error) => {
+                socket.onerror = (error) => {
+                    if (this.wsClient !== socket) return;
                     console.error('游戏内WebSocket连接错误:', error);
                     this.isConnected = false;
+                    this.stopWsHeartbeat();
                     reject(error);
                 };
 
@@ -656,13 +660,54 @@ class MultiplayerGameManager {
     }
 
     /**
+     * 心跳只用一个定时器：每轮先检查上一轮是否收到 pong，没有就认定连接已死并主动关闭，
+     * 交给 onclose 走重连。这样即使浏览器把后台定时器节流到一分钟一次也不会误判，
+     * 而且避免了额外的超时定时器被节流后误杀健康连接。
+     */
+    startWsHeartbeat() {
+        this.stopWsHeartbeat();
+        this._wsAlive = true;
+        this._wsHeartbeat = setInterval(() => {
+            const socket = this.wsClient;
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+            if (!this._wsAlive) {
+                console.warn('[心跳] 未收到 pong，判定连接已断开');
+                try {
+                    socket.close(4000, 'heartbeat timeout');
+                } catch (e) {
+                    // ignore
+                }
+                return;
+            }
+
+            this._wsAlive = false;
+            try {
+                socket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+            } catch (e) {
+                // 发送失败则等下一轮判定，这里不重复处理
+            }
+        }, WS_PING_INTERVAL_MS);
+    }
+
+    stopWsHeartbeat() {
+        if (this._wsHeartbeat) {
+            clearInterval(this._wsHeartbeat);
+            this._wsHeartbeat = null;
+        }
+        this._wsAlive = true;
+    }
+
+    /**
      * 重新加入游戏会话
      */
     rejoinGameSession() {
         if (this.isSpectator) {
             if (this.isConnected && this.roomCode) {
                 this.sendMessage('spectate_room', {
-                    roomCode: this.roomCode
+                    roomCode: this.roomCode,
+                    // 观战页没有昵称输入，沿用大厅里保存过的那个，供聊天显示
+                    nickname: playerIdManager.getSavedNickname() || ''
                 });
             }
             return;
@@ -670,8 +715,10 @@ class MultiplayerGameManager {
         if (this.isConnected && this.gameSessionId && this.playerId) {
             this.sendMessage('rejoinGameSession', {
                 gameSessionId: this.gameSessionId,
-                playerId: this.playerId
+                playerId: this.playerId,
+                needsHistory: !this._historyRequested
             });
+            this._historyRequested = true;
         } else {
             console.warn('重新加入游戏会话失败 - 缺少必要信息:', {
                 isConnected: this.isConnected,
@@ -701,6 +748,8 @@ class MultiplayerGameManager {
             if (this.isConnected) {
                 this.reconnectAttempts = 0;
                 this.rejoinGameSession(); // 重新加入游戏会话
+                // 断线期间服务端可能已推进多步，重连后立即对齐一次权威棋面
+                this.requestSnapshot('重连成功', { force: true });
             }
         } catch (error) {
             console.error('重新连接失败:', error);
@@ -714,11 +763,12 @@ class MultiplayerGameManager {
      * 发送消息
      */
     sendMessage(type, data = {}) {
-        if (this.isSpectator && !['spectate_room', 'rejoinRoom', 'audioLoaded'].includes(type)) {
+        if (this.isSpectator && !['spectate_room', 'rejoinRoom', 'audioLoaded', 'chatMessage'].includes(type)) {
             console.warn('[sendMessage] 观战模式，跳过消息发送:', type);
             return;
         }
-        if (this.isConnected && this.wsClient) {
+        // 握手未完成时 send 会抛 InvalidStateError
+        if (this.isConnected && this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
             const message = {
                 type,
                 playerId: this.playerId,
@@ -824,7 +874,7 @@ class MultiplayerGameManager {
             
             if (data.gameData) {
                 this.gameSessionId = data.gameSessionId || (data.room && data.room.gameSessionId);
-                this.restoreGameState(data.gameData);
+                this.restoreAuxState(data.gameData);
                 
                 // 确保触发全员就绪逻辑，让观战可以解除等待遮罩
                 if (window.audioManager) {
@@ -845,86 +895,20 @@ class MultiplayerGameManager {
             case 'connected':
                 // 处理连接确认消息，通常不需要特殊处理
                 break;
-            case 'diceRoll':
-                this.handleDiceRolled(data);
-                break;
-            case 'diceDisplay':
-                this.handleDiceDisplay(data);
-                break;
-            case 'fullMoveStart':
-                this.handleFullMoveStart(data);
-                break;
-            case 'finalMoveResult':
-                this.handleFinalMoveResult(data);
-                break;
             case 'teleportIcon':
                 this.handleTeleportIcon(data);
-                break;
-            case 'polyhedralDice':
-                this.handlePolyhedralDice(data);
-                break;
-            case 'mysteryBoxIcon':
-                this.handleMysteryBoxIcon(data);
-                break;
-            case 'removeMysteryBoxIcon':
-                this.handleRemoveMysteryBoxIcon(data);
-                break;
-            case 'energyGainAnimation':
-                this.handleEnergyGainAnimation(data);
-                break;
-            case 'diceAnimationStart':
-                this.handleDiceAnimationStart(data);
-                break;
-            case 'chessMove':
-                this.handleChessMove(data);
-                break;
-            case 'pieceMove':
-                this.handlePieceMove(data);
-                break;
-            case 'boardState':
-                this.handleBoardState(data);
-                break;
-            case 'gameStateSync':
-                this.handleGameStateSync(data);
                 break;
             case 'playerTurnChange':
                 this.handlePlayerTurnChange(data);
                 break;
-            case 'noMovableChess':
-                this.handleNoMovableChess(data);
-                break;
             case 'aiTakeoverChange':
                 this.handleAITakeoverChange(data);
                 break;
+            case 'audioEnabledChange':
+                this.handleAudioEnabledChange(data);
+                break;
             case 'nicknameChange':
                 this.handleNicknameChange(data);
-                break;
-            case 'jumpAnimation':
-                this.handleJumpAnimation(data);
-                break;
-            case 'flyAnimation':
-                this.handleFlyAnimation(data);
-                break;
-            case 'moveChessToStart':
-                this.handleMoveChessToStart(data);
-                break;
-            case 'moveChessToFinish':
-                this.handleMoveChessToFinish(data);
-                break;
-            case 'energyChange':
-                this.handleEnergyChange(data);
-                break;
-            case 'defeatCountChange':
-                this.handleDefeatCountChange(data);
-                break;
-            case 'stackCollision':
-                this.handleStackCollision(data);
-                break;
-            case 'stackBounce':
-                this.handleStackBounce(data);
-                break;
-            case 'endpointBounce':
-                this.handleEndpointBounce(data);
                 break;
             case 'gameEnd':
                 this.handleGameEnd(data);
@@ -956,17 +940,11 @@ class MultiplayerGameManager {
             case 'gameInfo':
                 this.handleGameInfo(data);
                 break;
+            case 'gameInfoHistory':
+                this.applyGameInfoHistory(data);
+                break;
             case 'gameSessionConnected':
                 this.handleGameSessionConnected(data);
-                break;
-            case 'boardSyncRequest':
-                this.handleBoardSyncRequest(data);
-                break;
-            case 'boardSyncData':
-                this.handleBoardSyncData(data);
-                break;
-            case 'threeSixesPenalty':
-                this.handleThreeSixesPenalty(data);
                 break;
             case 'audioLoaded':
                 this.handleAudioLoaded(data);
@@ -984,14 +962,14 @@ class MultiplayerGameManager {
                 // 调用eventHandler的showChatMessage方法显示消息
                 // 传递服务器提供的playerName而不是依赖本地playerNameManager
                 if (window.eventHandler) {
-                    window.eventHandler.showChatMessage(data.message, data.playerNumber, data.playerName, data.isSystemMessage);
+                    window.eventHandler.showChatMessage(data.message, data.playerNumber, data.playerName, data.isSystemMessage, data.isSpectatorMessage);
                 } else {
                     console.warn('eventHandler 不存在，无法显示聊天消息');
                 }
 
                 // 同时添加到游戏信息
                 if (window.gameInfo) {
-                    window.gameInfo.addChatMessage(data.playerNumber, data.message, data.playerName, true);
+                    window.gameInfo.addChatMessage(data.playerNumber, data.message, data.playerName, true, data.isSpectatorMessage);
                 }
                 break;
             case 'playerDisconnected':
@@ -1008,14 +986,8 @@ class MultiplayerGameManager {
                 this._mergePlayersFromPayload(data);
                 this._safeUpdateUI();
                 break;
-            case 'progressBarReset':
-                this.handleProgressBarReset(data);
-                break;
             case 'gameAutoPaused':
                 this.handleGameAutoPaused(data);
-                break;
-            case 'gameResumed':
-                this.handleGameResumed(data);
                 break;
             case 'roomDestroying':
                 this.handleRoomDestroying(data);
@@ -1023,10 +995,550 @@ class MultiplayerGameManager {
             case 'hostChanged':
                 this.handleHostChanged(data);
                 break;
-            case 'diceStatisticsSync':
+            case 'gameSnapshot':
+                this.handleGameSnapshot(data);
+                break;
+            case 'intentRejected':
+                this.handleIntentRejected(data);
                 break;
             default:
                 console.warn('未知的游戏消息类型:', data.type);
+        }
+    }
+
+    /**
+     * 发送动作意图。联机模式下前端只表达「想做什么」，点数与合法性由服务端裁决。
+     */
+    sendIntent(intent) {
+        this.sendMessage('intent', { intent });
+    }
+
+    /** 多面骰子掷出后亮出数字牌（滚轮动画版），收牌时机由 skillManager 把关 */
+    _showPolyhedralDiceForRoll(diceValue) {
+        if (!diceValue || diceValue < 1) return;
+        const skillManager = this.gameInstance && this.gameInstance.skillManager;
+        if (skillManager && typeof skillManager.showPolyhedralDice === 'function') {
+            skillManager.showPolyhedralDice(diceValue);
+        }
+        this.gameInstance?.uiUpdater?.updateDiceDisplay?.(diceValue, this.gameInstance?.gameState?.currentPlayer);
+    }
+
+    /** 把快照里的道具状态交给 skillManager 渲染；data 传 null 表示按缓存重画 */
+    _renderItemState(gs, data) {
+        const skillManager = this.gameInstance && this.gameInstance.skillManager;
+        if (!skillManager) return;
+        if (!data) {
+            skillManager.refreshItemVisuals();
+            return;
+        }
+
+        const currentPlayer = gs.getCurrentPlayer();
+        skillManager.renderItemState({
+            pendingItem: data.pendingItem || null,
+            diceItem: engineAdapter.ready ? engineAdapter.state.diceItem : false,
+            diceValue: gs.getDiceValue(),
+            currentPlayer,
+            localTurn: this.isLocalPlayerTurn(currentPlayer)
+        });
+    }
+
+    /** 本机这位人类玩家是不是当前回合的玩家（离线：非机器人回合即自己） */
+    isLocalPlayerTurn(currentPlayer) {
+        if (!this.isOnlineMode) return !gameState.isBotPlayer(currentPlayer);
+        return currentPlayer === this.getPlayerNumberByPlayerId(this.playerId);
+    }
+
+
+    /**
+     * 服务端权威快照：联机模式下棋面的唯一来源。
+     * 去重与换会话归零的规则在 SnapshotGate 里；动画与投影串行执行，避免相互覆盖。
+     */
+    handleGameSnapshot(data) {
+        if (!data || !data.playerChess) return;
+
+        if (!this._snapshotGate.accept(data)) return;
+        if (data.gameSessionId) this.gameSessionId = this._snapshotGate.sessionId;
+
+        // 这一帧到的时候，队列里是否已经压着一帧（压上了才算真落后）
+        const queuedAlready = Boolean(this._pendingSnapshot);
+        this._pendingSnapshot = data;
+        if (this._snapshotDraining) {
+            // 只晚到一帧：照样排队等它演完，动画一帧都不丢（AI/托管那一掷的骰子闪烁
+            // 就是这么被丢掉的）。连着一帧演不完又来一帧，才说明真追不上，后面定格追赶
+            if (queuedAlready) this._catchUpMode = true;
+            return;
+        }
+        this._drainSnapshots();
+    }
+
+    /**
+     * 按序落地快照，但落后时不再逐帧补动画。
+     * 每帧动画要花好几秒（逐格 190ms），服务端推进快过客户端补动画时，
+     * 逐帧排队会让棋面越拖越远、动画连成一串，观感就是「AI 没有停顿、整局在快进」，
+     * 而且结算读的是落后的本地棋面，冠军完成度会不到 100%。追平前只落棋面与战报，不演。
+     */
+    async _drainSnapshots() {
+        this._snapshotDraining = true;
+        try {
+            while (this._pendingSnapshot) {
+                const next = this._pendingSnapshot;
+                this._pendingSnapshot = null;
+                const skipAnimation = this._catchUpMode;
+                this._catchUpMode = false;
+                await this._applyGameSnapshot(next, { skipAnimation });
+                this._snapshotRetryCount = 0;
+            }
+        } catch (error) {
+            console.warn('[快照应用失败]', error);
+            this._scheduleSnapshotRetry();
+        } finally {
+            this._snapshotDraining = false;
+        }
+    }
+
+    /**
+     * 本机是否已经把上一帧快照演完（结算弹框要等这一步）
+     */
+    isRenderSettled() {
+        return !this._snapshotDraining && !this._pendingSnapshot;
+    }
+
+    /**
+     * 主动向服务端要一份全量快照。
+     * force=true 时这次到达的快照会绕过水位校验强制落地，用于回到前台/重连等需要确定性对齐的场景。
+     */
+    requestSnapshot(reason = '', { force = false } = {}) {
+        if (this.isSpectator || !this.isConnected || !this.wsClient) return;
+        if (force) {
+            this._snapshotGate.forceNext();
+        }
+        this.sendMessage('snapshotRequest', {});
+        // 周期兜底是常态，不值得每次报一声；掉帧、落后这类异常才留个痕迹
+        if (reason && reason !== '周期兜底') console.log('[快照自愈] 请求全量快照:', reason);
+    }
+
+    /**
+     * 快照应用失败后的补偿：强制重拉同一帧，避免单帧异常导致该帧终态永久丢失。
+     */
+    _scheduleSnapshotRetry() {
+        if (this.isSpectator || !this.isConnected) return;
+        if (this._snapshotRetryCount >= SNAPSHOT_RETRY_LIMIT) return;
+        this._snapshotRetryCount += 1;
+        const delay = 600 * this._snapshotRetryCount;
+        setTimeout(() => this.requestSnapshot('快照应用失败重试', { force: true }), delay);
+    }
+
+    /**
+     * 暂停期间服务端状态是冻结的，拉快照只会换回同一帧，
+     * 心跳与回前台对齐都跳过，免得暂停时日志一直刷「请求全量快照」
+     */
+    _isFrozenByPause() {
+        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        return Boolean(gs && typeof gs.getIsPaused === 'function' && gs.getIsPaused());
+    }
+
+    /** 把本机前后台状态报给服务端：服务端不等后台客户端演完，整桌才不会被它拖慢 */
+    reportVisibility() {
+        if (!this.isConnected || typeof document === 'undefined') return;
+        this.sendMessage('visibilityChange', { hidden: document.visibilityState !== 'visible' });
+    }
+
+    startSnapshotSelfHeal() {
+        if (this._snapshotSelfHealStarted) return;
+        this._snapshotSelfHealStarted = true;
+
+        if (typeof document !== 'undefined') {
+            this._visibilityHandler = () => {
+                // 前后台都要告诉服务端：后台页面的定时器被节流、动画要拖很久，
+                // 服务端据此把这台从「等演完」的名单里摘出去，别让整桌陪它慢
+                this.reportVisibility();
+                if (document.visibilityState !== 'visible') return;
+                if (this._isFrozenByPause()) return;
+                // 后台期间浏览器会节流定时器与渲染，回前台主动对齐，避免画面停在旧帧
+                this.requestSnapshot('页面回到前台', { force: true });
+            };
+            document.addEventListener('visibilitychange', this._visibilityHandler);
+        }
+
+        this._snapshotHeartbeat = setInterval(() => {
+            if (this._isFrozenByPause()) return;
+            this.requestSnapshot('周期兜底');
+        }, SNAPSHOT_SELF_HEAL_INTERVAL_MS);
+    }
+
+    stopSnapshotSelfHeal() {
+        this._snapshotSelfHealStarted = false;
+        if (this._visibilityHandler && typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', this._visibilityHandler);
+            this._visibilityHandler = null;
+        }
+        if (this._snapshotHeartbeat) {
+            clearInterval(this._snapshotHeartbeat);
+            this._snapshotHeartbeat = null;
+        }
+    }
+
+    async _applyGameSnapshot(data, { skipAnimation = false } = {}) {
+        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        if (!gs) return;
+
+        if (typeof gs.setIsOnlineMultiplayer === 'function') {
+            gs.setIsOnlineMultiplayer(true);
+        }
+        // 快照落地前的回合归属与阶段，用于判断这一批事件是否推进到了新阶段
+        const previousPlayer = typeof gs.getCurrentPlayer === 'function' ? gs.getCurrentPlayer() : null;
+        const previousPhase = typeof gs.getGamePhase === 'function' ? gs.getGamePhase() : null;
+
+        // 先按事件流播放动画，再落到权威终态，避免棋子瞬移
+        const events = Array.isArray(data.events) ? data.events : [];
+        // 本批事件里最后一次掷骰，供骰子上色与抖动使用
+        const rolledDice = [...events].reverse().find((event) => event.type === 'dice');
+        // 实时路径的掷骰战报在这里记；静默回放自己会记一份，两边都记就会多出一条「摇到了 N 点」
+        if (!skipAnimation) {
+            for (const event of events) {
+                if (event.type === 'dice') {
+                    (this.gameInstance && this.gameInstance.gameInfo || window.gameInfo || gameInfo)
+                        ?.addDiceRoll?.(event.player, event.value, true);
+                }
+            }
+        }
+
+        // 骰子动画必须先于走棋：闪烁（灰色）→ 定格结果（此刻才上掷骰者的颜色）→ 走棋 → 抖动。
+        // 定格必须发生在事件回放之前，三次六的「退回起点」才会出现在点数显示之后。
+        const diceDisplay = document.getElementById('diceDisplay');
+        let shakeRequest = null;
+        // 多面骰子的 7-12 没有对应骰面，表现换成滚轮数字牌
+        const isPolyhedralRoll = Boolean(rolledDice && rolledDice.item === 'polyhedral-dice');
+        // 连出两个 6 之后的这一掷：整段动画骰子保持纯红（重绘也不被本色顶掉）
+        if (rolledDice && rolledDice.value > 0 && skipAnimation) {
+            // 追赶中的过渡帧：直接把骰面定格在点数上，不播闪烁与抖动
+            this._localRollIssued = false;
+            uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
+        } else if (rolledDice && rolledDice.value > 0 && isPolyhedralRoll) {
+            this._localRollIssued = false;
+            window.audioManager?.playRollingSound?.();
+            this._showPolyhedralDiceForRoll(rolledDice.value);
+        } else if (rolledDice && rolledDice.value > 0) {
+            // 判断是否补播闪烁的依据是「本机有没有自己播过这段动画」，而不是点数归谁：
+            // 别的机器（服务端或他人）掷出的骰子，点数属于本机时本地也没有动画在播，
+            // 只按归属判断会跳过补播，表现为点数直接出现、看不到闪烁。
+            const rollStillPlaying = diceDisplay && diceDisplay.classList.contains('dice-flashing');
+            const startedLocally = this._localRollIssued;
+            this._localRollIssued = false;
+            // 别处掷出的骰子：本地补播一次灰色闪烁，让各端看到同一段节奏
+            if (!startedLocally && !rollStillPlaying) {
+                this.startDiceFlashing();
+                // 服务端只发结算后的快照，没有「开始掷骰」的广播，
+                // 补播闪烁时必须一并补上投掷音效，否则只有掷骰者自己听得到
+                window.audioManager?.playRollingSound?.();
+            }
+            await this._waitDiceRollSettled();
+            this.stopDiceFlashing();
+            this.rollStartTime = null;
+            uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
+        }
+
+        if (events.length > 0) {
+            // 走子/掷骰即将开播：各端统一把这一手正在走的进度条「冻住」（保留进度、不回 0），
+            // 颜色落回出手的那一家，否则带动画的一端已停表、别的端还在跑，两端不同步
+            // 只要这一段有演出（掷骰闪烁也算）：进度条暂停在原处，演完进新阶段再重置
+            if (events.length) {
+                uiUpdater?.holdThinkingProgressBar?.();
+            }
+            if (skipAnimation) {
+                // 追赶中的过渡帧：只把事件翻成战报，棋面与积分都交给下面的快照投影
+                await enginePlayback.replay(events);
+            } else {
+                shakeRequest = await enginePlayback.play(events);
+            }
+        }
+
+        engineAdapter.applySnapshot(data);
+        engineAdapter.projectTo(gs);
+
+        // 道具的进行中状态不在棋面里，统一按快照渲染（该亮的亮、该收的收）
+        this._renderItemState(gs, data);
+        // 积分同样以快照为准：本地的加减只负责演出，账本永远跟着权威值走
+        energyManager.applySnapshot(data.energy);
+
+        // 完成度历史由服务端权威记录，客户端直接采用，避免各端各算一遍再互相同步
+        if (Array.isArray(data.progressHistory)) {
+            gs.progressHistory = data.progressHistory;
+        }
+        if (typeof data.round === 'number' && data.round > (gs.currentRound || 0)) {
+            gs.currentRound = data.round;
+        }
+
+        // 不把服务端的窗口写进本地显示：进度条由本机按「阶段」自己跑（进新阶段才重置）。
+        // 服务端那扇窗口仍由服务端用于超时裁决，前端只做展示，否则演出期间会被拉回去/向后走
+
+        // 称号统计依赖投影后的 consecutiveSixes，须在 projectTo 之后记录
+        for (const event of events) {
+            if (event.type !== 'dice') continue;
+            if (typeof gs.recordDiceRollForTitle === 'function') {
+                // 道具骰子不参与普通骰子的称号统计
+                gs.recordDiceRollForTitle(event.player, event.value, Boolean(event.item));
+            }
+            // 点数统计：联机下点数由服务端产出，只能从事件流里记（道具骰子点数可超过 6，不计入）
+            const stats = gs.diceStatistics && gs.diceStatistics[event.player];
+            if (!event.item && stats && stats[event.value] !== undefined) {
+                stats[event.value] += 1;
+            }
+        }
+
+        if (typeof gs.setSelectedChess === 'function') gs.setSelectedChess(null);
+        if (typeof gs.setCanReroll === 'function') gs.setCanReroll(false);
+        if (typeof gs.setChessMoving === 'function') gs.setChessMoving(false);
+        gs.isRolling = false;
+
+        // 没有事件流说明这是一次「纯恢复」快照（首次进入 / 刷新重连），
+        // 棋子 DOM 还停在初始位置，必须按恢复出的坐标重新落位，否则棋盘看起来被重置了；
+        // 追赶中跳过了动画的过渡帧同理，直接落到快照坐标上
+        if (events.length === 0 || skipAnimation) {
+            this._renderAllChess(gs);
+        }
+
+        activePlayerManager.setCurrentActivePlayer(data.currentPlayer);
+
+        // 动画期间进度条锁定为本次掷骰者，避免快照已推进到下家时进度条提前变色
+        if (rolledDice && rolledDice.value > 0) {
+            gs.setThinkingProgressDisplayOwner?.(rolledDice.player);
+        }
+
+        this._safeUpdateUI();
+
+        // 抖动紧接在闪烁定格之后：闪烁结束立刻定格结果并抖动，不额外停顿。
+        // 抖动期间不改颜色，演完才切换回合
+        // 六面骰用骰面定格点数；多面骰的 7-12 无面可定格，但数字牌本身可以抖
+        if (shakeRequest && shakeRequest.value > DICE_SYMBOLS.length && shakeRequest.item !== 'polyhedral-dice') {
+            shakeRequest = null;
+        }
+        if (shakeRequest) {
+            await this._waitDiceRollSettled();
+            this.stopDiceFlashing();
+            this.rollStartTime = null;
+            if (shakeRequest.item !== 'polyhedral-dice') {
+                uiUpdater?.updateDiceDisplay?.(shakeRequest.value, shakeRequest.player);
+            }
+            await enginePlayback.playDiceShake(shakeRequest);
+            // 抖动只是瞬时表现，静止外观仍由快照终态决定（无子可动时骰子应回到准备态）
+            uiUpdater?.updateDiceDisplay?.();
+        }
+
+        // 这一帧是否把对局推进到了新阶段：换人、换阶段，或服务端换了思考窗
+        // （服务端只在阶段边界换窗：换人 / 连投 6 重掷 / 买道具）
+        const serverWindow = typeof data.thinkingStartTime === 'number' && data.thinkingStartTime > 0
+            ? data.thinkingStartTime
+            : null;
+        const windowChanged = serverWindow !== null && serverWindow !== this._serverThinkingWindow;
+        const phaseChanged = windowChanged
+            || previousPlayer !== gs.getCurrentPlayer()
+            || data.gamePhase !== previousPhase;
+        if (windowChanged) {
+            // 本地超时窗口跟上服务端这一扇（进度条本身由显示时钟自己走，不采信服务端时间戳）
+            this._serverThinkingWindow = serverWindow;
+            gs.thinkingStartTime = serverWindow;
+            gs.pausedThinkingTime = data.pausedThinkingMs || 0;
+        }
+        // 动画结束，释放展示归属，进度条回落到下家
+        gs.clearThinkingProgressDisplayOwner?.();
+
+        // 这一帧到此真的演完了：告诉服务端，AI 的下一手等各端都演完再出
+        if (this.isOnlineMode && typeof data.seq === 'number') {
+            this.sendMessage('animationDone', { seq: data.seq, hidden: document.visibilityState !== 'visible' });
+        }
+
+        if (!phaseChanged) {
+            // 同一阶段的补帧（周期兜底、纯恢复）：接着走，进度不清零
+            uiUpdater?.releaseThinkingProgressBar?.();
+        }
+
+        this._finishSnapshotApply(data, Boolean(shakeRequest), phaseChanged);
+    }
+
+    /** 等待本地掷骰动画播完（骰子仍在闪烁时按剩余时长等待） */
+    _waitDiceRollSettled() {
+        const diceDisplay = document.getElementById('diceDisplay');
+        if (!diceDisplay || !diceDisplay.classList.contains('dice-flashing')) {
+            return Promise.resolve();
+        }
+        const elapsed = this.rollStartTime ? Date.now() - this.rollStartTime : 0;
+        const wait = Math.max(0, 500 - elapsed);
+        return new Promise((resolve) => setTimeout(resolve, wait));
+    }
+
+    /**
+     * 快照落地后的收尾：结算、回合倒计时与 AI 驱动。
+     * 进度条延后到骰子动画（含抖动）播完再重启，否则抖动期间进度条会先染成下一家的颜色。
+     */
+    _finishSnapshotApply(data, deferProgressBar = false, phaseChanged = true) {
+        if (data.gamePhase === 'ended' || data.gamePhase === 'finished') {
+            this._notifyGameEnded(data);
+            return;
+        }
+        this._syncOfficiallyStartedFromSnapshot(data);
+        if (deferProgressBar) {
+            setTimeout(() => {
+                this._startTurnProgressBar(data.currentPlayer, data.gamePhase, phaseChanged);
+            }, 0);
+        } else {
+            this._startTurnProgressBar(data.currentPlayer, data.gamePhase, phaseChanged);
+        }
+        // 停顿只由 botController 内部控制，这里直接触发，避免延迟叠加
+    }
+
+    /**
+     * 刷新或重连后本地的"已开局"标志会重置为 false，而服务端只把它当作初始值下发、
+     * 之后不再维护，于是 _startTurnProgressBar 会把当前玩家当成尚未操作的首发玩家，
+     * 只把进度条置 0% 而不启动计时器与刷新循环，表现为进度条卡在 0 不动。
+     * 这里依据权威快照推断对局是否已经推进，并补回该标志。
+     */
+    _syncOfficiallyStartedFromSnapshot(snapshot) {
+        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        if (!gs || typeof gs.setGameOfficiallyStarted !== 'function' || gs.getGameOfficiallyStarted()) {
+            return;
+        }
+
+        if ((snapshot.diceValue || 0) > 0 ||
+            (snapshot.round || 0) > 0 ||
+            (snapshot.consecutiveSixes || 0) > 0 ||
+            (Array.isArray(snapshot.progressHistory) && snapshot.progressHistory.length > 0)) {
+            gs.setGameOfficiallyStarted(true);
+            return;
+        }
+
+        const playerChess = snapshot.playerChess;
+        if (!playerChess) return;
+        for (const color of Object.keys(playerChess)) {
+            const chesses = playerChess[color];
+            if (Array.isArray(chesses) && chesses.some((chess) => chess && (chess.position !== -1 || chess.finished))) {
+                gs.setGameOfficiallyStarted(true);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 按 gameState 中已恢复的坐标重新摆放所有棋子。
+     * projectTo 只写数据不动 DOM，刷新重连时必须显式落位，否则棋盘停在初始布局。
+     */
+    _renderAllChess(gs) {
+        const animation = this.gameInstance?.animation || window.gameInstance?.animation;
+        if (!animation || typeof animation.updateChessPosition !== 'function') return;
+        const pieceCount = gs.pieceCount || 4;
+        for (let player = 1; player <= 4; player++) {
+            for (let i = 0; i < pieceCount; i++) {
+                if (!gs.playerChess[player] || !gs.playerChess[player][i]) continue;
+                animation.updateChessPosition(player, i, null, false);
+            }
+        }
+    }
+
+    /**
+     * 回合由权威快照推进后重启思考进度条。
+     * 房主或当前玩家本人持有超时回调，其余客户端只驱动进度条展示。
+     */
+    _startTurnProgressBar(playerNumber, gamePhase, phaseChanged = true) {
+        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const ui = this.gameInstance?.uiUpdater;
+
+        // 同一阶段的补帧：只推进度条，不动计时器与颜色归属。
+        // 停一次再起一次会「缩回 0 又弹回原位」，正是周期兜底快照的抖动来源
+        if (!phaseChanged) return;
+
+        // 本机遥控骰子正在选点：等待归面板自己的计时器，周期快照不能顶掉它
+        if (document.getElementById('diceSelectionPanel')) {
+            return;
+        }
+
+        // 无论后续走哪条分支，先无条件清掉上一轮的计时器与渲染循环。
+        // AI 回合没有人类回合那样的交接点，若不在这里清理，上一个玩家/AI
+        // 的计时器会一直挂着（颜色归属不变），看起来就是「两个 AI 共用进度条」。
+        ui?.stopThinkingProgressBar?.();
+
+        if (gamePhase !== 'rolling' && gamePhase !== 'selecting') return;
+        if (!gs || typeof gs.getIsOnlineMultiplayer !== 'function' || !gs.getIsOnlineMultiplayer()) return;
+        if (typeof gs.getIsPaused === 'function' && gs.getIsPaused()) return;
+
+        const playerId = this.getPlayerIdByPlayerNumber(playerNumber);
+        // 判据与服务端同源：机器人「和」被托管玩家都由服务端出手，
+        // 这里若只看 isAI，托管回合会走人类那条路（本地开计时），进度条就会和服务端窗口打架
+        const isAI = isAiDriven(playerNumber, this);
+        const isLocalPlayer = playerNumber === this.getPlayerNumberByPlayerId(this.playerId);
+
+        // 开局首位操作前不计时，只露一根静止空条；观战也要走这条，否则它会看到条自己往前走
+        if (!isAI && typeof gs.getGameOfficiallyStarted === 'function' && !gs.getGameOfficiallyStarted()) {
+            ui?.showIdleThinkingProgressBar?.(playerNumber);
+            return;
+        }
+
+        if (this.isSpectator) {
+            // 观战也走同一条开场：归零、起计时、跑循环，只是没有超时回调
+            ui?.startThinkingProgressBar?.(null);
+            return;
+        }
+
+        // AI 回合同样走（不挂超时回调，节奏归服务端掌握）
+        if (isAI) {
+            ui?.startThinkingProgressBar?.(null);
+            return;
+        }
+
+        // 回合开始一律本地重开一段（服务端窗口不参与显示）
+        ui?.startThinkingProgressBar?.(null);
+        ui?._renderThinkingProgressBar?.(playerNumber);
+    }
+
+    /**
+     * 服务端拒绝了本次意图：撤销本地的乐观表现，回到权威棋面。
+     */
+    handleIntentRejected(data) {
+        console.warn('[意图被拒]', data.reason, data.intent);
+        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        if (!gs) return;
+
+        // 投掷意图被拒后不会再有对应的骰子事件，标记必须清掉，
+        // 否则会抑制住下一位玩家掷骰时的闪烁补播
+        this._localRollIssued = false;
+        if (engineAdapter.ready) {
+            engineAdapter.projectTo(gs);
+        }
+        gs.isRolling = false;
+        if (typeof gs.setSelectedChess === 'function') gs.setSelectedChess(null);
+        if (typeof gs.setCanReroll === 'function') gs.setCanReroll(false);
+        // 选点意图被拒时激活态还在服务端，面板要能重新开出来给玩家再选
+        this.gameInstance?.skillManager?.resetRemoteDiceSelection?.();
+        this._renderItemState(gs);
+        this._safeUpdateUI();
+    }
+
+    /**
+     * 对局结束时由房主（或获胜方）上报一次，服务端再广播结算数据给所有人。
+     */
+    _notifyGameEnded(snapshot) {
+        if (this._gameEndReported) return;
+        if (snapshot.winner === null || snapshot.winner === undefined) return;
+        this._gameEndReported = true;
+
+        // 对局已结束，会话随后会在服务端销毁；停掉快照兜底巡检，
+        // 否则它还会一直发请求、换回一串「玩家不在任何游戏会话中」
+        this.stopSnapshotSelfHeal();
+        // 结算读的是本地棋面：先把最后一帧权威快照拉回来，避免冠军完成度显示不到 100%
+        this.requestSnapshot('对局结束', { force: true });
+
+        const myColor = this.getPlayerNumberByPlayerId(this.playerId);
+        if (this.isHost || myColor === snapshot.winner) {
+            this.syncGameEnd(snapshot.winner);
+            // 上报方收到的是自己发的 gameEnd，handleGameEnd 会跳过弹框，
+            // 不在这里本地补一次房主（或获胜方）就看不到结算弹框。
+            // 延迟与广播到其他客户端的一致；同样等本地棋面追平再弹，保证名次与完成度是终局数据
+            const showWhenCaughtUp = (attempt = 0) => {
+                if (!this.isRenderSettled() && attempt < 20) {
+                    return setTimeout(() => showWhenCaughtUp(attempt + 1), 150);
+                }
+                this.gameInstance?.settlementModal?.show(snapshot.winner);
+            };
+            setTimeout(() => showWhenCaughtUp(), 1000);
         }
     }
 
@@ -1056,11 +1568,6 @@ class MultiplayerGameManager {
         this.totalPlayers = data.room.players.length;
         this.gameInitialized = false;
 
-        // 设置全局变量引用
-        gameState = window.gameState;
-        uiUpdater = window.uiUpdater;
-        gameInfo = window.gameInfo;
-
         // 设置audioManager为联机模式
         if (window.audioManager) {
             window.audioManager.setMultiplayerMode(true);
@@ -1069,6 +1576,7 @@ class MultiplayerGameManager {
         // 初始化玩家数据并恢复AI托管状态
         this.players.clear();
         this.aiTakeoverPlayers.clear(); // 清空AI托管列表
+        this._syncBotFlagsFromRoster(data.room.players);
 
         for (const player of data.room.players) {
             this.players.set(player.id, {
@@ -1098,7 +1606,8 @@ class MultiplayerGameManager {
                 }, 200);
 
                 // 如果是当前玩家，且不是观战模式，恢复本地AI托管状态
-                if (player.id === this.playerId && !this.isSpectator) {
+                // 暂停期间不恢复托管 UI，避免覆盖暂停遮罩
+                if (player.id === this.playerId && !this.isSpectator && !data.gameData?.isPaused) {
                     console.log('当前玩家处于AI托管状态，恢复本地UI');
                     // 异步恢复本地AI托管状态
                     setTimeout(async () => {
@@ -1122,9 +1631,9 @@ class MultiplayerGameManager {
             }
         }
 
-        // 如果有游戏数据，说明游戏正在进行中，需要恢复游戏状态
+        // 如果有游戏数据，先补辅助状态；棋面与骰子由随后的 gameSnapshot 权威恢复
         if (data.gameData) {
-            this.restoreGameState(data.gameData);
+            this.restoreAuxState(data.gameData);
         }
 
         // 重新加入游戏会话（会触发服务端再次发送 gameSessionConnected，进一步恢复状态）
@@ -1143,756 +1652,64 @@ class MultiplayerGameManager {
     }
 
     /**
-     * 恢复游戏状态
+     * 恢复权威快照未包含的辅助状态（道具积分、当前回合数、完成度历史）
+     * 棋面、骰子、阶段由 gameSnapshot 统一恢复，此处不重复处理
      */
-    restoreGameState(gameData) {
-        // 如果是观战模式加入，不需要限制恢复频率
-        if (!this.isSpectator) {
-            // 防止短时间内重复恢复
-            const now = Date.now();
-            if (this._lastRestoreTime && now - this._lastRestoreTime < 1000) {
-                return;
-            }
-            this._lastRestoreTime = now;
-        }
+    restoreAuxState(gameData) {
+        if (!gameData) return;
 
-        // 确保全局变量引用已设置
-        if (!gameState) {
-            this.setGlobalReferences();
-        }
-
-        // 再次检查gameState是否可用
-        if (!gameState) {
-            return;
-        }
-
-        // 先清除思考开始时间，后续从 gameData.thinkingStartTime 恢复
-        gameState.thinkingStartTime = null;
-        gameState.pausedThinkingTime = 0;
-
-        // 确保设置在线多人模式标志（重连时可能被resetGameState重置）
         gameState.setIsOnlineMultiplayer(true);
 
-        // 首先检查并应用棋子个数配置
-        if (gameData.pieceCount !== undefined && gameData.pieceCount !== gameState.pieceCount) {
-            gameState.initializePlayerChess(gameData.pieceCount);
-
-            // 重新设置棋子元素，确保DOM元素正确绑定
-            if (this.gameInstance && this.gameInstance.setupChessElements) {
-                this.gameInstance.setupChessElements();
-            }
-        }
-
-        // 设置当前玩家（如果服务器返回null，使用fallback逻辑）
-        if (gameData.currentPlayer !== undefined && gameData.currentPlayer !== null) {
-            gameState.setCurrentPlayer(gameData.currentPlayer);
-        } else {
-            // 服务器返回null，使用fallback逻辑
-            // 优先使用本地已有的currentPlayer（如果有效）
-            const localCurrentPlayer = gameState.getCurrentPlayer();
-
-            // 获取激活玩家列表（从服务器数据或本地）
-            let activePlayers = [];
-            if (gameData.playerChess) {
-                // 从服务器的playerChess数据中获取激活玩家
-                activePlayers = Object.keys(gameData.playerChess).map(k => parseInt(k)).sort((a, b) => a - b);
-            }
-            if (activePlayers.length === 0) {
-                activePlayers = activePlayerManager.getActivePlayers() || [1];
-            }
-            
-            // 设置激活玩家并更新可见性
-            activePlayerManager.setActivePlayers(activePlayers);
-
-            // 检查本地currentPlayer是否在激活玩家列表中
-            if (!localCurrentPlayer || !activePlayers.includes(localCurrentPlayer)) {
-                // 本地值无效，使用第一个激活玩家
-                const firstPlayer = activePlayers[0] || 1;
-                gameState.setCurrentPlayer(firstPlayer);
-            }
-        }
-
-        // 恢复欢乐模式标志
-        if (gameData.happyMode !== undefined) {
-            gameState.setHappyMode(gameData.happyMode);
-        }
-
-        // 确保currentPlayer已设置（最终检查）
-        if (!gameState.getCurrentPlayer()) {
-            gameState.setCurrentPlayer(1);
-        }
-
-        // 设置游戏阶段
-        if (gameData.gamePhase) {
-            gameState.setState('gamePhase', gameData.gamePhase);
-        }
-
-        // 恢复暂停状态
-        if (gameData.isPaused) {
-            gameState.gamePhaseBeforePause = gameData.gamePhaseBeforePause || 'rolling';
-            gameState.setIsPaused(true);
-            if (window.eventHandler) {
-                window.eventHandler.updatePauseButtonText();
-            }
-            if (this.gameInstance && typeof this.gameInstance.pauseGame === 'function') {
-                this.gameInstance.pauseGame();
-            }
-        } else {
-            gameState.setIsPaused(false);
-        }
-
-        // 恢复骰子值
-        if (gameData.diceValue !== undefined) {
-            gameState.setState('diceValue', gameData.diceValue);
-        }
-
-        // 重置isRolling防抖标志，确保重连后可以正常投骰子
-        gameState.isRolling = false;
-
-        // 恢复思考开始时间（server gameData 中已有 progressBarStart 保存的时间戳）
-        // 即使 elapsed 已超过 THINKING_TIME 也恢复，让 startProgressBarAfterReconnect
-        // 立即触发超时（而不是从 0% 重新计时，那会导致和服务端不同步）
         if (gameData.thinkingStartTime) {
             gameState.thinkingStartTime = gameData.thinkingStartTime;
-            console.log(`[重连] 恢复 thinkingStartTime=${gameData.thinkingStartTime}, elapsed=${Date.now() - gameData.thinkingStartTime}ms`);
-        } else {
-            console.log('[重连] gameData 无 thinkingStartTime');
+            gameState.pausedThinkingTime = gameData.pausedTotalMs || 0;
         }
 
-        // 同步游戏正式开始标志
-        if (gameData.gameOfficiallyStarted !== undefined) {
-            gameState.setGameOfficiallyStarted(gameData.gameOfficiallyStarted);
-            console.log(`[游戏状态] 同步游戏正式开始状态: ${gameData.gameOfficiallyStarted}`);
-        } else {
-            // 如果后端没有提供该标志，则通过棋子位置推断
-            const isStarted = this.hasNonInitialChessPositions(gameData.playerChess);
-            gameState.setGameOfficiallyStarted(isStarted);
-            console.log(`[游戏状态] 通过棋子位置推断游戏正式开始状态: ${isStarted}`);
+        if (Array.isArray(gameData.progressHistory) && gameData.progressHistory.length > 0) {
+            gameState.progressHistory = gameData.progressHistory;
+        }
+        if (typeof gameData.currentRound === 'number') {
+            gameState.currentRound = Math.max(gameData.currentRound, gameState.currentRound || 0);
         }
 
-        // 恢复连投奖励状态
-        if (gameData.canReroll !== undefined) {
-            gameState.canReroll = gameData.canReroll;
-        }
-        if (gameData.consecutiveSixes !== undefined) {
-            gameState.consecutiveSixes = gameData.consecutiveSixes;
-        }
-        if (gameData.justRolledSix !== undefined) {
-            gameState.justRolledSix = gameData.justRolledSix;
-        }
-
-
-        // 特殊处理1：如果有连骰奖励状态（canReroll && justRolledSix）且骰子值已被消耗（移动已完成），
-        // 说明玩家已移动完成但还没发送回合切换消息
-        // 这种情况下应该恢复为rolling阶段，让玩家继续投骰子
-        // 注意：如果 _pendingMove 存在，说明移动尚未完成，不要提前切到 rolling
-        if (gameData.canReroll && gameData.justRolledSix && !gameData._pendingMove && gameData.diceValueConsumed) {
-            gameState.setState('gamePhase', 'rolling');
-            gameState.setState('diceValue', 0);
-            gameState.justRolledSix = false; // 重置justRolledSix，避免重复处理
-        }
-        // 特殊处理2：如果服务器端游戏阶段是moving但有骰子值，说明玩家已投掷但未移动
-        // 客户端应该恢复为selecting阶段，让玩家选择棋子
-        else if (gameData.gamePhase === 'moving' && gameData.diceValue > 0) {
-            // 检查骰子值是否已被消耗（已通过 finalMoveResult / noMovableChess 使用过）
-            if (gameData.diceValueConsumed) {
-                // 骰子值已被消耗，说明玩家已移动过或无法移动，等待服务端切换回合
-                // 不要恢复为 selecting，防止重连后重复移动
-                console.log(`[恢复] 骰子值${gameData.diceValue}已被消耗，跳过选棋恢复`);
-                gameState.setState('gamePhase', 'moving');
-                gameState.setState('diceValue', gameData.diceValue);
-            } else {
-                gameState.setState('gamePhase', 'selecting');
-                // 检查是否有可移动的棋子
-                const currentPlayer = gameData.currentPlayer || gameState.getCurrentPlayer();
-
-                // 优先使用服务端棋子数据检查，确保棋子位置是最新的
-                let hasMovableChess = false;
-                const serverChess = gameData.playerChess?.[currentPlayer];
-                if (serverChess && Array.isArray(serverChess)) {
-                    const canLaunch = gameData.diceValue % 2 === 0;
-                    hasMovableChess = serverChess.some(c => {
-                        if (c.finished) return false;
-                        const pos = c.position;
-                        if (pos === undefined || pos === null || pos === -1) return canLaunch;
-                        if (pos >= 0 && pos <= 50) return true;
-                        if (pos >= 51 && pos < 56) return true;
-                        return false;
-                    });
-                } else {
-                    // 降级：使用本地gameState的棋子数据
-                    const playerChess = gameState.getPlayerChess();
-                    const canLaunch = gameData.diceValue % 2 === 0;
-                    hasMovableChess = playerChess[currentPlayer].some(chess => {
-                        if (chess.finished) return false;
-                        if (chess.position === -1) return canLaunch;
-                        if (chess.position >= 0 && chess.position <= 50) return true;
-                        if (chess.position >= 51 && chess.position < 56) return true;
-                        return false;
-                    });
-                }
-
-                if (!hasMovableChess) {
-                    // 没有可移动的棋子：显示骰子值但阻止点击，
-                    // 等待服务端 fallback 广播 noMovableChess + playerTurnChange
-                    console.log(`[恢复] 玩家${currentPlayer}骰子值${gameData.diceValue}无法移动，等待服务端切换`);
-                    gameState.setState('gamePhase', 'moving');
-                    gameState.setState('diceValue', gameData.diceValue);
-                }
+        // 暂停状态必须一并恢复，否则刷新后本地会以为没人暂停而继续接受操作
+        if (gameData.isPaused) {
+            const phaseBeforePause = gameData.gamePhaseBeforePause;
+            gameState.setIsPaused(true);
+            // setIsPaused 会把刚加载的本地阶段记成暂停前阶段，必须在它之后再写回
+            // 服务端记的阶段，否则恢复时还原成 waiting，骰子不可用、进度条也不走
+            if (phaseBeforePause) {
+                gameState.gamePhaseBeforePause = phaseBeforePause;
             }
+            this.gameInstance?.pauseGame?.({ force: true });
         }
 
-        // 确保骰子显示正确的状态（使用gameState的当前值，因为可能已被特殊处理修改）
-        if (uiUpdater) {
-            const currentDiceValue = gameState.getDiceValue();
-            const currentGamePhase = gameState.getGamePhase();
-
-            if (currentDiceValue > 0) {
-                uiUpdater.updateDiceDisplay(currentDiceValue);
-            } else if (currentGamePhase === 'rolling') {
-                // 如果是rolling阶段且骰子值为0（如连骰奖励状态），重置骰子显示
-                uiUpdater.updateDiceDisplay(0);
-            }
-        }
-
-        // 恢复棋子位置和状态
-        if (gameData.playerChess && gameState.getAllChessStates) {
-            // 获取当前游戏状态中的棋子数据
-            const currentChessStates = gameState.getAllChessStates();
-
-            // 遍历每个玩家的棋子数据
-            for (const [playerIndex, playerChessArray] of Object.entries(gameData.playerChess)) {
-                const playerNum = parseInt(playerIndex);
-
-                // 服务器发送的是直接的棋子数组，不是包含pieces属性的对象
-                if (currentChessStates[playerNum] && Array.isArray(playerChessArray)) {
-                    // 恢复每个棋子的位置
-                    for (let chessIdx = 0; chessIdx < playerChessArray.length; chessIdx++) {
-                        const chessData = playerChessArray[chessIdx];
-
-                        if (currentChessStates[playerNum][chessIdx] && chessData) {
-                            // 恢复棋子完成状态
-                            currentChessStates[playerNum][chessIdx].finished = chessData.finished || false;
-
-                            // 恢复棋子位置：已完成的棋子在前端应该保持位置-1
-                            if (chessData.finished) {
-                                currentChessStates[playerNum][chessIdx].position = -1;
-                            } else {
-                                currentChessStates[playerNum][chessIdx].position = chessData.position;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 恢复击败计数（在循环外统一恢复）
-            if (gameData.defeatCounts) {
-                gameState.defeatCounts = gameData.defeatCounts;
-
-                // 更新UI显示
-                import('./defeatCountDisplay.js').then(({ defeatCountDisplay }) => {
-                    defeatCountDisplay.updateAllDefeatCounts(gameData.defeatCounts);
-                }).catch(err => {
-                    console.error('更新击败计数显示失败:', err);
-                });
-            }
-
-            // 恢复积分状态（道具模式）
-            if (gameData.energyStates) {
-                // 恢复积分管理器的状态
-                import('./energyManager.js').then(({ energyManager }) => {
-                    if (energyManager.isSkillModeEnabled()) {
-                        for (const [player, energy] of Object.entries(gameData.energyStates)) {
-                            const playerNum = parseInt(player);
-                            if (playerNum >= 1 && playerNum <= 4) {
-                                energyManager.setEnergy(playerNum, energy);
-                            }
-                        }
-                    }
-                }).catch(err => {
-                    console.error('[道具系统] 恢复积分状态失败:', err);
-                });
-            }
-
-            // 恢复骰子统计数据（用于数据分析）
-            if (gameData.diceStatistics) {
-                gameState.diceStatistics = gameData.diceStatistics;
-            }
-
-            // 恢复完成度历史记录（用于数据分析）
-            if (gameData.progressHistory && gameData.progressHistory.length > 0) {
-                // 如果本地已有数据，需要合并而不是直接覆盖
-                if (gameState.progressHistory && gameState.progressHistory.length > 0) {
-                    // 创建一个Map来去重，以round为key
-                    const historyMap = new Map();
-
-                    // 先添加服务器的数据（优先）
-                    gameData.progressHistory.forEach(snapshot => {
-                        historyMap.set(snapshot.round, snapshot);
-                    });
-
-                    // 再添加本地的数据（如果服务器没有的话）
-                    gameState.progressHistory.forEach(snapshot => {
-                        if (!historyMap.has(snapshot.round)) {
-                            historyMap.set(snapshot.round, snapshot);
-                        }
-                    });
-
-                    // 按回合数排序
-                    const mergedHistory = Array.from(historyMap.values()).sort((a, b) => a.round - b.round);
-                    gameState.progressHistory = mergedHistory;
-                } else {
-                    // 本地没有数据，直接使用服务器的数据
-                    gameState.progressHistory = gameData.progressHistory;
-                }
-            }
-
-            // 恢复当前回合数（使用服务器和本地的较大值，确保不会倒退）
-            if (gameData.currentRound !== undefined) {
-                const serverRound = gameData.currentRound;
-                const localRound = gameState.currentRound || 0;
-                const maxRound = Math.max(serverRound, localRound);
-
-                // 如果有历史记录，确保currentRound不小于最大的历史回合数
-                if (gameState.progressHistory && gameState.progressHistory.length > 0) {
-                    const maxHistoryRound = Math.max(...gameState.progressHistory.map(s => s.round));
-                    gameState.currentRound = Math.max(maxRound, maxHistoryRound);
-                } else {
-                    gameState.currentRound = maxRound;
-                }
-            }
-
-            // 确保棋子DOM元素正确绑定
-            this.rebindChessElements();
-
-            // 强制更新棋盘显示 - 需要根据棋子位置调用不同的更新方法
-            const pieceCount = gameState.pieceCount || 4;
-            let restoredCount = 0;
-
-            // 执行棋子视觉位置恢复
-            for (let player = 1; player <= 4; player++) {
-                for (let chessIdx = 0; chessIdx < pieceCount; chessIdx++) {
-                    const chess = gameState.playerChess[player][chessIdx];
-
-                    if (!chess || !chess.element) {
-                        continue;
-                    }
-
-                    let restored = false;
-
-                    if (chess.finished) {
-                        // 棋子已完成 - 使用专门的恢复方法
-                        if (window.animation && window.animation.restoreChessToFinish) {
-                            restored = window.animation.restoreChessToFinish(player, chessIdx);
-                        }
-                    } else if (chess.position === -1) {
-                        // 棋子在起始区域（基地）- 使用专门的恢复方法
-                        if (window.animation && window.animation.restoreChessToStart) {
-                            restored = window.animation.restoreChessToStart(player, chessIdx);
-                        }
-                    } else {
-                        // 棋子在轨道上（包括位置0起飞点）- 使用专门的恢复方法
-                        if (window.animation && window.animation.restoreChessToTrack) {
-                            restored = window.animation.restoreChessToTrack(player, chessIdx);
-                        }
-                    }
-
-                    if (restored) {
-                        restoredCount++;
-                    }
-                }
-            }
-        }
-
-        // 更新UI
-        if (uiUpdater) {
-            uiUpdater.updateUI();
-
-            // 强制刷新骰子显示，避免dice-flashing等残留类干扰
-            const finalDiceValue = gameState.getDiceValue();
-            uiUpdater.updateDiceDisplay(finalDiceValue);
-
-            // 如果是selecting阶段，确保高亮可移动的棋子
-            if (gameState.getGamePhase() === 'selecting') {
-                uiUpdater.updateChessGlow();
-                uiUpdater.highlightMovableChess();
-            }
-        }
-
-        // 如果游戏处于暂停状态，不应启动进度条
-        if (gameState.getIsPaused()) {
-            console.log('[进度条] 跳过：当前游戏处于暂停状态，不启动进度条');
-        }
-        // 游戏非暂停状态下始终启动进度条（内部有阶段检查，非 rolling/selecting 阶段会自动跳过）
-        else {
-            this.startProgressBarAfterReconnect();
-        }
+        this.rebindChessElements();
     }
 
     /**
-     * 重连后启动进度条
-     * 根据当前游戏状态和玩家身份决定是否启动进度条
-     * 注意：此方法会保留服务器恢复的thinkingStartTime，确保进度条与其他玩家同步
+     * 告诉其他客户端「有人开了传送门」，让图标与音效立刻跟上。
+     * 只负责点亮：收起一律等权威快照把 pendingItem 清掉（回合交出去的那一刻）
      */
-    startProgressBarAfterReconnect() {
-        const currentGamePhase = gameState.getGamePhase();
-        let currentPlayer = gameState.getCurrentPlayer();
-
-        console.log(`[重连进度条] 开始处理，当前阶段=${currentGamePhase}，当前玩家=${currentPlayer}`);
-
-        // 如果currentPlayer为null，尝试从激活玩家列表获取
-        if (!currentPlayer) {
-            const activePlayers = activePlayerManager.getActivePlayers() || [1];
-            currentPlayer = activePlayers[0] || 1;
-            gameState.setCurrentPlayer(currentPlayer);
-            console.log(`[重连进度条] currentPlayer为null，使用激活玩家: ${currentPlayer}`);
-        }
-
-        // 只有在rolling或selecting阶段才需要启动进度条
-        if (currentGamePhase !== 'rolling' && currentGamePhase !== 'selecting') {
-            console.log(`[重连进度条] 不启动：当前阶段为${currentGamePhase}`);
-            return;
-        }
-
-        // 如果游戏尚未正式开始（首发玩家还未操作），只显示进度条容器不启动计时
-        if (!gameState.getGameOfficiallyStarted()) {
-            const progressContainer = document.getElementById('thinkingProgressContainer');
-            const progressBar = document.getElementById('thinkingProgressBar');
-            if (progressContainer && progressBar) {
-                progressContainer.className = `thinking-progress-container active player-${currentPlayer}`;
-                progressBar.style.width = '0%';
-            }
-            console.log(`[重连进度条] 游戏尚未正式开始，仅展示进度条容器，不启动计时`);
-            return;
-        }
-
-        // 检查是否有恢复的思考开始时间
-        const hasRestoredThinkingTime = gameState.thinkingStartTime !== null;
-
-        // 获取本地玩家信息
-        const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
-        const currentPlayerId = this.getPlayerIdByPlayerNumber(currentPlayer);
-        const currentPlayerData = this.players.get(currentPlayerId);
-        const isCurrentPlayerAI = currentPlayerData?.isAI || false;
-        const isCurrentPlayerAITakeover = this.aiTakeoverPlayers?.has(currentPlayerId) || currentPlayerData?.isAITakeover || false;
-
-        // 判断是否需要启动进度条（带超时回调）
-        // 条件：当前玩家是本地玩家且不是AI，或者本地是房主且当前玩家不是AI（房主代理所有非AI玩家）
-        const shouldStartWithCallback = (currentPlayer === localPlayerNumber && !isCurrentPlayerAI) ||
-            (this.isHost && !isCurrentPlayerAI);
-
-        // 显示进度条UI
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
-
-        if (progressContainer && progressBar) {
-            progressContainer.className = `thinking-progress-container active player-${currentPlayer}`;
-
-            // 如果有恢复的思考开始时间，计算当前进度
-            if (hasRestoredThinkingTime) {
-                const elapsed = Date.now() - gameState.thinkingStartTime;
-                const progress = Math.min(100, (elapsed / gameState.THINKING_TIME) * 100);
-                progressBar.style.width = `${progress}%`;
-                console.log(`[重连] 恢复进度条进度: ${progress.toFixed(1)}%, thinkingStartTime=${gameState.thinkingStartTime}, elapsed=${elapsed}ms`);
-
-                // 计算剩余时间
-                const remainingTime = Math.max(0, gameState.THINKING_TIME - elapsed);
-                console.log(`[重连] remainingTime=${remainingTime}ms, shouldStartWithCallback=${shouldStartWithCallback}`);
-
-                if (remainingTime <= 0) {
-                    // 时间已经用完，立即触发超时
-                    console.log('[重连] 思考时间已用完，触发超时');
-                    if (shouldStartWithCallback && this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                        this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                    }
-                    // 设置 dummy timer 维持进度条更新循环
-                    gameState.thinkingTimer = setTimeout(() => {}, 100);
-                    // 启动进度条更新循环
-                    if (uiUpdater && uiUpdater.updateProgressBarLoop) {
-                        uiUpdater.updateProgressBarLoop();
-                    }
-                    return; // 防止 fallthrough 到下面的 timer 设置代码
-                }
-
-                // 设置剩余时间的超时回调
-                if (shouldStartWithCallback) {
-                    console.log(`[重连] 设置剩余${remainingTime}ms的超时回调`);
-                    gameState._thinkingTimerContext = {
-                        startTime: gameState.thinkingStartTime,
-                        player: currentPlayer,
-                        phase: currentGamePhase
-                    };
-                    gameState.thinkingTimer = setTimeout(() => {
-                        console.log(`重连后玩家${currentPlayer}思考时间到，自动切换到下一个玩家`);
-                        if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                            this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                        }
-                    }, remainingTime);
-                } else {
-                    // 即使不由本客户端处理超时，仍需设置 timer 使进度条更新循环不停止
-                    gameState.thinkingTimer = setTimeout(() => {}, remainingTime);
-                }
-            } else {
-                // 没有恢复的思考开始时间，从0%开始
-                progressBar.style.width = '0%';
-                gameState.thinkingStartTime = Date.now();
-                gameState.pausedThinkingTime = 0;
-
-                // 设置完整时间的超时回调
-                if (shouldStartWithCallback) {
-                    console.log(`[重连] 无恢复时间，设置完整${gameState.THINKING_TIME}ms的超时回调`);
-                    gameState._thinkingTimerContext = {
-                        startTime: gameState.thinkingStartTime,
-                        player: currentPlayer,
-                        phase: currentGamePhase
-                    };
-                    gameState.thinkingTimer = setTimeout(() => {
-                        console.log(`重连后玩家${currentPlayer}思考时间到，自动切换到下一个玩家`);
-                        if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                            this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                        }
-                    }, gameState.THINKING_TIME);
-                } else {
-                    gameState.thinkingTimer = setTimeout(() => {}, gameState.THINKING_TIME);
-                }
-            }
-
-            // 启动进度条更新循环
-            if (uiUpdater && uiUpdater.updateProgressBarLoop) {
-                uiUpdater.updateProgressBarLoop();
-            }
-        }
-
-        console.log(`重连后启动进度条：当前玩家${currentPlayer}，阶段${currentGamePhase}，本地玩家${localPlayerNumber}，有恢复时间=${hasRestoredThinkingTime}`);
-
-        // 如果当前玩家是本地玩家且开启了AI托管，触发AI操作
-        // 或者当前玩家是AI电脑玩家且本地是房主，触发AI操作
-        const shouldTriggerAI = (currentPlayer === localPlayerNumber && isCurrentPlayerAITakeover) ||
-            (isCurrentPlayerAI && this.isHost);
-
-        if (shouldTriggerAI) {
-            console.log(`[重连] 当前玩家需要AI操作，延迟触发botController`);
-            setTimeout(() => {
-                console.log(`[重连] 触发botController.handleBotTurn()`);
-                if (window.botController && !window.botController.isProcessing) {
-                    window.botController.handleBotTurn();
-                }
-            }, 800); // 延迟确保状态完全恢复
-        }
-    }
-
-    /**
-     * 同步骰子动画开始
-     * @param {number} playerNumber - 触发玩家的编号（1-4）
-     * @param {number} diceValue - 已生成的骰子值（1-6），用于确保即使发送者刷新，其他客户端也能获取结果
-     */
-    syncDiceAnimationStart(playerNumber, diceValue) {
-        this.sendMessage('diceAnimationStart', {
-            triggerPlayerNumber: playerNumber,
-            diceValue: diceValue,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 处理骰子动画开始同步
-     */
-    handleDiceAnimationStart(data) {
-        // 所有玩家都需要停止思考进度条
-        if (this.gameInstance && this.gameInstance.uiUpdater) {
-            this.gameInstance.uiUpdater.stopThinkingProgressBar();
-        }
-
-        // 获取触发动画的玩家编号（1-4）
-        const triggerPlayerNumber = data.triggerPlayerNumber;
-
-        // 如果消息携带了骰子值，立即保存到本地游戏状态。
-        // （骰子值已在发送方生成，即使发送方在 500ms 动画期间刷新页面，
-        //   接收方和服务端都已获得骰子值，不会丢失结果）
-        if (data.diceValue !== undefined && data.diceValue !== null) {
-            const gs = this.gameInstance?.gameState || window.gameState;
-            if (gs) {
-                gs.diceValue = data.diceValue;
-            }
-        }
-
-        if (window.audioManager) {
-            window.audioManager.playRollingSound();
-        }
-
-        // 所有玩家都显示骰子动画
-        const diceDisplay = document.getElementById('diceDisplay');
-        if (diceDisplay) {
-            // 使用 triggerPlayerNumber 作为玩家编号
-            const playerNumber = triggerPlayerNumber;
-            if (playerNumber !== null) {
-                // 在开始动画前，根据当前游戏状态判断是否是第三次连续6的高危投掷，
-                try {
-                    const gs = window.gameState;
-                    const consecutiveSixes = typeof gs?.getConsecutiveSixes === 'function' ? gs.getConsecutiveSixes() : gs?.consecutiveSixes;
-                    const isThirdSixRisk = !!consecutiveSixes && consecutiveSixes >= 2;
-                    const isHappyMode = typeof gs?.isHappyMode === 'function' ? gs.isHappyMode() : false;
-                    if (isThirdSixRisk && !isHappyMode) {
-                        diceDisplay.classList.remove('dice-penalty-warning');
-                        diceDisplay.classList.add('dice-third-penalty');
-                    }
-                } catch (e) {
-                    // ignore
-                }
-
-                // 清除之前的定时器（防止多次触发导致的动画残留）
-                if (this.currentFlashInterval) {
-                    clearInterval(this.currentFlashInterval);
-                    this.currentFlashInterval = null;
-                }
-
-                // 清除之前的安全兜底定时器
-                if (this._diceFlashSafetyTimer) {
-                    clearTimeout(this._diceFlashSafetyTimer);
-                    this._diceFlashSafetyTimer = null;
-                }
-
-                // 清除之前的玩家样式和状态
-                diceDisplay.className = diceDisplay.className.replace(/player-\d+/g, '');
-                diceDisplay.classList.remove('rolled', 'not-rolled');
-
-                // 添加闪烁动画类，但不添加玩家颜色样式
-                diceDisplay.classList.add('dice-flashing');
-
-                // 闪烁过程中随机显示不同点数
-                const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-                const flashInterval = setInterval(() => {
-                    const randomIndex = Math.floor(Math.random() * 6);
-                    diceDisplay.textContent = DICE_SYMBOLS[randomIndex];
-                }, 100);
-
-                // 将flashInterval存储到实例变量中，以便在收到服务器结果时停止
-                this.currentFlashInterval = flashInterval;
-                this.currentDiceSymbols = DICE_SYMBOLS;
-
-                // 安全兜底：极端网络波动下可能收到动画开始但收不到结果(diceRoll)，导致闪烁永久不结束。
-                // 这里加超时强制停止，避免游戏被卡死。
-                this._diceFlashSafetyTimer = setTimeout(() => {
-                    if (!this.currentFlashInterval) return;
-                    console.warn('[联机] 骰子动画超时未收到结果，强制停止闪烁并尝试恢复显示');
-                    this.stopDiceFlashing();
-
-                    // 尝试用当前本地状态刷新骰子显示（forceDiceValue会覆盖闪烁保护）
-                    try {
-                        const gs = this.gameInstance?.gameState || window.gameState;
-                        const diceValue = gs?.diceValue || 0;
-                        if (this.gameInstance?.uiUpdater?.updateDiceDisplay) {
-                            this.gameInstance.uiUpdater.updateDiceDisplay(diceValue);
-                        }
-
-                        // 解除防抖，允许玩家继续操作（避免永远无法再次掷骰）
-                        if (gs) {
-                            gs.isRolling = false;
-                        }
-                    } catch (e) {
-                        // ignore
-                    }
-                }, 8000);
-            }
-        }
-    }
-    /**
-     * 同步骰子结果
-     * @param {number} diceValue - 骰子点数
-     * @param {number} player - 玩家编号
-     * @param {boolean} isRemoteDice - 是否是遥控骰子（遥控骰子不计入统计）
-     */
-    syncDiceRoll(diceValue, player, isRemoteDice = false) {
-        this.sendMessage('diceRoll', {
-            diceValue,
-            player: player, // 明确传递玩家编号，而不是playerId
-            isRemoteDice: isRemoteDice, // 标记是否是遥控骰子
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步骰子显示（遥控骰子道具）
-     */
-    syncDiceDisplay(diceValue) {
-        this.sendMessage('diceDisplay', {
-            diceValue,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步传送门图标显示
-     */
-    syncTeleportIcon(show) {
+    syncTeleportIcon() {
         this.sendMessage('teleportIcon', {
-            show,
             timestamp: Date.now()
         });
     }
 
+    
     /**
-     * 同步多面骰子显示
+     * 同步音效开关到服务端（联机时以服务端为恢复来源）
      */
-    syncPolyhedralDice(diceValue, playerNumber) {
-        this.sendMessage('polyhedralDice', {
-            diceValue,
-            playerNumber,
+    syncAudioEnabled(enabled) {
+        if (this.isSpectator || !this.isOnlineMode || !this.isConnected) return;
+        this.sendMessage('audioEnabledChange', {
+            playerId: this.playerId,
+            enabled: !!enabled,
             timestamp: Date.now()
         });
     }
 
-    /**
-     * 同步盲盒图标显示
-     */
-    syncMysteryBoxIcon(energyGain, playerNumber) {
-        this.sendMessage('mysteryBoxIcon', {
-            energyGain,
-            playerNumber,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步移除盲盒图标
-     */
-    syncRemoveMysteryBoxIcon() {
-        this.sendMessage('removeMysteryBoxIcon', {
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步积分数值动画
-     */
-    syncEnergyGainAnimation(energyGain, player) {
-        this.sendMessage('energyGainAnimation', {
-            energyGain,
-            player,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 处理骰子显示同步（遥控骰子道具）
-     */
-    handleDiceDisplay(data) {
-        const diceDisplay = document.getElementById('diceDisplay');
-        const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-        if (diceDisplay && data.diceValue) {
-            diceDisplay.textContent = DICE_SYMBOLS[data.diceValue - 1];
-            // 添加遥控骰子红色发光特效（包括本地玩家）
-            diceDisplay.classList.add('remote-dice');
-            // 同步更新游戏状态中的骰子值，防止暂停恢复后被updateUI重置
-            if (this.gameInstance && this.gameInstance.gameState) {
-                this.gameInstance.gameState.diceValue = data.diceValue;
-                this.gameInstance.gameState.isRemoteDice = true;
-            } else if (window.gameState) {
-                window.gameState.diceValue = data.diceValue;
-                window.gameState.isRemoteDice = true;
-            }
-        }
-    }
 
     /**
      * 处理传送门图标显示同步
@@ -1900,959 +1717,21 @@ class MultiplayerGameManager {
     handleTeleportIcon(data) {
         if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
 
-        if (data.show) {
-            const playerNumber = this.getPlayerNumberByPlayerId(data.playerId);
-            // 累计道具使用次数（远程玩家）
-            if (window.gameState && window.gameState.titleStats) {
-                window.gameState.titleStats.skillUseCount[playerNumber] =
-                    (window.gameState.titleStats.skillUseCount[playerNumber] || 0) + 1;
-            }
-        }
+        // 使用次数不在这里累计：传送门真正落地时事件流会统一记一次，
+        // 只激活不传送（点骰子取消）不该算作一次传送
 
-        if (this.gameInstance && this.gameInstance.skillManager) {
-            if (data.show) {
-                // 播放道具音效
-                if (window.audioManager) {
-                    window.audioManager.playSkillSound();
-                }
-                this.gameInstance.skillManager.showTeleportIcon();
-            } else {
-                this.gameInstance.skillManager.restoreDiceIcon();
-            }
-        }
-    }
-
-    /**
-     * 处理多面骰子显示同步
-     */
-    handlePolyhedralDice(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        const playerNumber = data.playerNumber || this.getPlayerNumberByPlayerId(data.playerId);
-        console.log(`[同步] 玩家${playerNumber}使用多面骰子: ${data.diceValue}`);
-
-        // 更新 titleStats（远程玩家也需要记录，否则称号无法触发）
-        if (window.gameState && window.gameState.titleStats) {
-            // 累计道具使用次数
-            window.gameState.titleStats.skillUseCount[playerNumber] =
-                (window.gameState.titleStats.skillUseCount[playerNumber] || 0) + 1;
-
-            if (data.diceValue > (window.gameState.titleStats.polyhedralMax[playerNumber] || 0)) {
-                window.gameState.titleStats.polyhedralMax[playerNumber] = data.diceValue;
-            }
-            if (data.diceValue < (window.gameState.titleStats.polyhedralMin[playerNumber] || 99)) {
-                window.gameState.titleStats.polyhedralMin[playerNumber] = data.diceValue;
-            }
-        }
-
-        // 播放道具音效
         if (window.audioManager) {
             window.audioManager.playSkillSound();
         }
-
-        if (this.gameInstance && this.gameInstance.skillManager) {
-            this.gameInstance.skillManager.showPolyhedralDice(data.diceValue);
-        }
+        // 只点亮，不负责收起：收起交回给快照，避免和权威状态互相打架
+        this.gameInstance?.skillManager?.showTeleportIcon();
     }
 
-    /**
-     * 处理盲盒图标显示同步
-     */
-    handleMysteryBoxIcon(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
+    
+    
+    
+    
 
-        // 更新 titleStats（远程玩家的盲盒称号数据）
-        const playerNumber = data.playerNumber || this.getPlayerNumberByPlayerId(data.playerId);
-        if (window.gameState && window.gameState.titleStats) {
-            // 累计道具使用次数
-            window.gameState.titleStats.skillUseCount[playerNumber] =
-                (window.gameState.titleStats.skillUseCount[playerNumber] || 0) + 1;
-
-            if (data.energyGain > (window.gameState.titleStats.mysteryBoxMax[playerNumber] || 0)) {
-                window.gameState.titleStats.mysteryBoxMax[playerNumber] = data.energyGain;
-            }
-            if (data.energyGain < (window.gameState.titleStats.mysteryBoxMin[playerNumber] || 99)) {
-                window.gameState.titleStats.mysteryBoxMin[playerNumber] = data.energyGain;
-            }
-        }
-
-        // 播放道具音效
-        if (window.audioManager) {
-            window.audioManager.playSkillSound();
-        }
-
-        if (this.gameInstance && this.gameInstance.skillManager) {
-            this.gameInstance.skillManager.showMysteryBoxIcon(playerNumber);
-        }
-    }
-
-    /**
-     * 处理移除盲盒图标同步
-     */
-    handleRemoveMysteryBoxIcon(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        if (this.gameInstance && this.gameInstance.skillManager) {
-            this.gameInstance.skillManager.removeMysteryBoxIcon();
-        }
-    }
-
-    /**
-     * 处理积分数值动画同步
-     */
-    handleEnergyGainAnimation(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-        const playerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-
-        if (this.gameInstance && this.gameInstance.skillManager) {
-            this.gameInstance.skillManager.showEnergyGainAnimation(data.energyGain, playerNumber);
-        }
-    }
-
-    /**
-     * 处理骰子结果同步
-     */
-    handleDiceRolled(data) {
-        this.stopDiceFlashing();
-
-        // 收到任何掷骰子消息，说明游戏正式开始
-        if (this.gameInstance && this.gameInstance.gameState && !this.gameInstance.gameState.getGameOfficiallyStarted()) {
-            this.gameInstance.gameState.setGameOfficiallyStarted(true);
-            console.log('[同步] 收到首个掷骰消息，标记游戏正式开始');
-            
-            // 更新按钮状态
-            if (window.aiTakeoverManager && typeof window.aiTakeoverManager.updateToggleButton === 'function') {
-                window.aiTakeoverManager.updateToggleButton();
-            }
-        }
-
-        // 防插队保护：验证掷骰子玩家是否为当前玩家
-        const diceRollerPlayer = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-        const currentPlayer = this.gameInstance?.gameState?.getCurrentPlayer?.();
-        if (currentPlayer !== undefined && currentPlayer !== null && diceRollerPlayer !== currentPlayer && this.gameInstance?.gameState?.getGameOfficiallyStarted()) {
-            console.warn(`[防插队] 忽略玩家${diceRollerPlayer}的掷骰消息: 当前玩家为${currentPlayer}`);
-            return;
-        }
-
-        const diceDisplay = document.getElementById('diceDisplay');
-
-        // 更新游戏状态 - 强制同步骰子值（必须在更新显示之前）
-        if (this.gameInstance && this.gameInstance.gameState) {
-            // 强制更新本地游戏状态的骰子值，确保与网络同步的值一致
-            this.gameInstance.gameState.diceValue = data.diceValue;
-
-            this.gameInstance.gameState.setGamePhase('selecting');
-
-            if (data.consecutiveSixes !== undefined) {
-                this.gameInstance.gameState.consecutiveSixes = data.consecutiveSixes;
-            }
-
-            // 记录骰子投掷（用于称号统计）
-            const dicePlayerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-            if (dicePlayerNumber) {
-                this.gameInstance.gameState.recordDiceRollForTitle(dicePlayerNumber, data.diceValue, data.isRemoteDice);
-            }
-
-            //同步canReroll和justRolledSix状态
-            if (data.canReroll !== undefined) {
-                this.gameInstance.gameState.canReroll = data.canReroll;
-            }
-            if (data.justRolledSix !== undefined) {
-                this.gameInstance.gameState.justRolledSix = data.justRolledSix;
-            }
-
-            // 更新本地骰子统计（非遥控骰子时）- 保持数据一致性
-            // 只有当消息不是自己发送的时候才更新（自己发送的已在dice.js中更新）
-            if (data.playerId !== this.playerId && !data.isRemoteDice) {
-                const dicePlayerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-                if (dicePlayerNumber && this.gameInstance.gameState.diceStatistics &&
-                    this.gameInstance.gameState.diceStatistics[dicePlayerNumber]) {
-                    this.gameInstance.gameState.diceStatistics[dicePlayerNumber][data.diceValue]++;
-                }
-            }
-        }
-
-        // 更新骰子显示 - 强制所有玩家显示相同的结果
-        if (diceDisplay) {
-            const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-
-            // 清除所有可能的等待状态样式和闪烁动画
-            diceDisplay.classList.remove('dice-waiting', 'dice-flashing');
-
-            // 强制更新骰子显示，确保所有玩家看到相同的结果
-            diceDisplay.textContent = DICE_SYMBOLS[data.diceValue - 1];
-
-            // 获取当前玩家编号 - 优先使用data.player，如果没有则从playerId推断
-            const playerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-            if (playerNumber !== null) {
-                // 清除之前的玩家样式
-                diceDisplay.className = diceDisplay.className.replace(/player-\d+/g, '');
-                // 添加基础类
-                diceDisplay.classList.add('dice-icon');
-                // 添加当前玩家的样式
-                diceDisplay.classList.add(`player-${playerNumber}`);
-                diceDisplay.classList.add('rolled');
-                diceDisplay.classList.remove('dice-flashing'); // 确保结果展示时移除闪烁
-                diceDisplay.classList.add('dice-glowing'); // 确保结果展示时有发光效果
-            }
-        } else {
-            console.error('[调试] 找不到diceDisplay元素!');
-        }
-
-        // 忽略自己发送的消息（已经在本地处理过了，后续的游戏状态更新逻辑由发起者在本地完成）
-        if (String(data.playerId) === String(this.playerId)) {
-            return;
-        }
-
-        console.log(`[同步] 玩家${data.player}摇到了${data.diceValue}点`);
-
-        // 获取本地玩家编号和掷骰子玩家编号
-        const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
-        const dicePlayerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-
-        // 添加到游戏信息 - 优先使用data.player确保显示正确的玩家昵称
-        // 只有非本地操作的骰子结果才需要添加（本地操作已在dice.js中添加）
-        // 判断依据：检查消息的playerId是否是自己，而不是检查playerNumber
-        // 因为房主可能代理AI玩家操作，此时playerNumber != localPlayerNumber，但消息是自己发的
-        if (this.gameInstance && this.gameInstance.gameInfo && dicePlayerNumber !== null) {
-            // 只有当消息不是自己发送的时候，才添加到游戏信息
-            if (data.playerId !== this.playerId && !data.isRemoteDice) {
-                // 使用skipSync=true避免重复同步
-                this.gameInstance.gameInfo.addDiceRoll(dicePlayerNumber, data.diceValue, true);
-            }
-        }
-
-        // 处理掷骰子结果 - 判断是否需要处理后续逻辑
-        const isLocalPlayerTurn = data.player === localPlayerNumber;
-
-        // 检查是否是AI托管玩家（房主需要代理处理）
-        const dicePlayerId = this.getPlayerIdByPlayerNumber(data.player);
-        const dicePlayerData = this.players.get(dicePlayerId);
-        const isAIPlayer = dicePlayerData?.isAI || false;
-        const isAITakeoverPlayer = this.aiTakeoverPlayers.has(dicePlayerId) || dicePlayerData?.isAITakeover || false;
-        const shouldHostHandle = this.isHost && (isAIPlayer || isAITakeoverPlayer);
-
-        // 本地玩家的回合，或者房主代理AI/托管玩家
-        if (isLocalPlayerTurn || shouldHostHandle) {
-            // 重置防抖标志，允许后续操作
-            if (this.gameInstance && this.gameInstance.gameState) {
-                this.gameInstance.gameState.isRolling = false;
-            }
-        }
-
-        // 更新UI显示 - 但要确保骰子显示不被覆盖
-        if (this.gameInstance && this.gameInstance.uiUpdater) {
-            // 更新UI
-            this.gameInstance.uiUpdater.updateUI();
-
-            // 立即重新设置骰子显示，防止被updateUI覆盖
-            if (diceDisplay) {
-                const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-                const correctContent = DICE_SYMBOLS[data.diceValue - 1];
-                const playerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-                diceDisplay.textContent = correctContent;
-
-                // 清除可能被updateUI添加的错误样式
-                diceDisplay.classList.remove('dice-waiting', 'dice-flashing', 'not-rolled', 'dice-glowing');
-
-                // 确保正确的样式
-                if (playerNumber !== null) {
-                    diceDisplay.classList.add('rolled', `player-${playerNumber}`);
-                }
-
-                // 遥控骰子保留特效
-                if (data.isRemoteDice) {
-                    diceDisplay.classList.add('remote-dice');
-                }
-            }
-
-            // 强制确保骰子显示正确的结果
-            if (diceDisplay) {
-                const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-                const expectedContent = DICE_SYMBOLS[data.diceValue - 1];
-                // 无论如何都重新设置正确的显示
-                diceDisplay.textContent = expectedContent;
-
-                // 确保样式正确 - 使用data.player而不是data.playerId
-                const playerNumber = data.player !== undefined ? data.player : this.getPlayerNumberByPlayerId(data.playerId);
-                if (playerNumber !== null) {
-                    // 清除可能的等待状态
-                    diceDisplay.classList.remove('dice-waiting', 'dice-flashing', 'not-rolled');
-                    // 确保有正确的样式
-                    diceDisplay.classList.add('rolled', `player-${playerNumber}`);
-                }
-
-                // 遥控骰子保留特效
-                if (data.isRemoteDice) {
-                    diceDisplay.classList.add('remote-dice');
-                }
-            }
-        }
-    }
-
-    /**
-     * 同步棋子移动
-     */
-    syncPieceMove(fromPosition, toPosition, playerId, pieceId) {
-        this.sendMessage('pieceMove', {
-            fromPosition,
-            toPosition,
-            playerId,
-            pieceId,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 处理棋子移动同步
-     */
-    handlePieceMove(data) {
-        if (data.playerId !== this.playerId) {
-            // 其他玩家的棋子移动，需要同步显示
-            console.log(`玩家${data.playerId}移动棋子从${data.fromPosition}到${data.toPosition}`);
-
-            // 播放棋子移动音效
-            if (window.audioManager) {
-                window.audioManager.playMoveSound();
-            }
-
-            // 这里需要调用游戏实例的棋子移动方法
-            if (this.gameInstance && this.gameInstance.chessPiece) {
-                // 同步移动棋子（不触发额外的网络消息）
-                this.gameInstance.chessPiece.syncMoveFromNetwork(data);
-            }
-        }
-    }
-
-    /**
-     * 同步棋子移动
-     */
-    syncChessMove(player, chessIndex, fromPositionOrTargetPosition, toPosition = null, moveType = 'normal') {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
-            // 向后兼容：如果只传3个参数，认为第3个参数是targetPosition
-            let finalFromPosition = null;
-            let finalToPosition = fromPositionOrTargetPosition;
-            let finalMoveType = 'normal';
-
-            if (toPosition !== null) {
-                // 新的调用方式：4或5个参数
-                finalFromPosition = fromPositionOrTargetPosition;
-                finalToPosition = toPosition;
-                finalMoveType = moveType;
-            }
-
-            this.sendMessage('chessMove', {
-                player: player,
-                chessIndex: chessIndex,
-                position: finalToPosition, // 保持向后兼容
-                fromPosition: finalFromPosition,
-                toPosition: finalToPosition,
-                moveType: finalMoveType,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 同步整回合移动的开始（意图同步）：告诉其他玩家"我选了棋子X，骰子点数Y，从位置Z开始"
-     */
-    syncFullMoveStart(player, chessIndex, diceValue, fromPosition, targetPosition) {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
-            this.sendMessage('fullMoveStart', {
-                player: player,
-                chessIndex: chessIndex,
-                diceValue: diceValue,
-                fromPosition: fromPosition,
-                targetPosition: targetPosition,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 同步整回合移动的最终结果（兜底校验）：告诉其他玩家最终位置和被beat的棋子
-     */
-    syncFinalMoveResult(player, chessIndex, finalPosition, beatenChesses, extraInfo) {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
-            this.sendMessage('finalMoveResult', {
-                player: player,
-                chessIndex: chessIndex,
-                finalPosition: finalPosition,
-                beatenChesses: beatenChesses || [],
-                extraInfo: extraInfo || {},
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 处理棋子移动同步
-     */
-    handleChessMove(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        // 记录上一次同步移动的棋子，避免重复打印（因为逐格移动会发送多条消息）
-        if (this._lastSyncedMove?.player !== data.player || this._lastSyncedMove?.chessIndex !== data.chessIndex) {
-            
-            // 将其他玩家的棋子移动添加到本地游戏信息日志中
-            const isLaunch = data.fromPosition === -1 && data.position === 0;
-            const isNormalMove = !isLaunch && data.moveType !== 'teleport';
-            
-            if (isLaunch) {
-                console.log(`[同步] 玩家${data.player}的棋子${data.chessIndex}起飞`);
-            } else if (isNormalMove) {
-                console.log(`[同步] 玩家${data.player}选择了棋子${data.chessIndex}移动`);
-            }
-            
-            this._lastSyncedMove = { player: data.player, chessIndex: data.chessIndex };
-        }
-
-        // 更新游戏状态中的棋子位置
-        if (this.gameInstance && this.gameInstance.gameState) {
-            const chess = this.gameInstance.gameState.playerChess[data.player]?.[data.chessIndex];
-            const previousPosition = chess?.position;
-
-            // 防后退保护：如果棋子已在更高位置，忽略过时的 `chessMove` 消息
-            // （但传送门可以合法后退，不拦截）
-            if (data.moveType !== 'teleport' &&
-                previousPosition !== undefined && previousPosition >= 0 && previousPosition < 56 && 
-                data.position >= 0 && data.position < 56 && data.position < previousPosition) {
-                console.log(`[handleChessMove] 忽略后退移动: 玩家${data.player}棋子${data.chessIndex} ${previousPosition}→${data.position}`);
-                return;
-            }
-
-            // 更新位置
-            this.gameInstance.gameState.updateChessPosition(data.player, data.chessIndex, data.position);
-
-            // 记录起飞尝试结果（用于称号统计）：成功
-            this.gameInstance.gameState.recordTakeoffAttempt(data.player, true);
-
-            // 记录距离统计
-            if (previousPosition !== undefined) {
-                // 起飞
-                if (previousPosition === -1 && data.position === 0) {
-                    this.gameInstance.gameState.incrementTotalDistance(data.player, 1);
-                } 
-                // 传送
-                else if (data.moveType === 'teleport') {
-                    if (data.position > previousPosition) {
-                        this.gameInstance.gameState.incrementTotalDistance(data.player, data.position - previousPosition);
-                    }
-                }
-                // 普通步进（由animateChessMovement循环发送）
-                else if (data.position > previousPosition) {
-                    this.gameInstance.gameState.incrementTotalDistance(data.player, data.position - previousPosition);
-                }
-            }
-
-            // 播放音效
-            if (previousPosition !== undefined && window.audioManager) {
-                // 从基地起飞（-1到0）播放fly音效
-                if (previousPosition === -1 && data.position === 0) {
-                    window.audioManager.playFlySound();
-                }
-                // 普通移动（位置变化为1）播放move音效
-                // 跳子和飞棋的音效由专门的handleJumpAnimation和handleFlyAnimation处理
-                else if (previousPosition !== -1 && data.moveType !== 'teleport') {
-                    const positionDiff = Math.abs(data.position - previousPosition);
-                    if (positionDiff === 1) {
-                        window.audioManager.playMoveSound();
-                    }
-                }
-            }
-
-            if (data.position === 56 && chess) {
-                console.log(`棋子到达终点位置56，更新视觉位置后设置finished状态: 玩家${data.player}的棋子${data.chessIndex}`);
-                // 先更新视觉位置到56，让其他玩家看到这一步
-                if (this.gameInstance.chessPiece && this.gameInstance.chessPiece.animation) {
-                    this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-                    this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                }
-                // 设置finished状态，但不立即return，让后续可能的反弹消息能正确处理
-                chess.finished = true;
-                return;
-            } else if (data.position === -1 && chess) {
-                // 如果位置是-1（起始区域），清除finished状态
-                chess.finished = false;
-                // 位置-1需要特殊处理，由 moveChessToStart 同步消息处理
-                return;
-            }
-
-            // 传送门移动暂不更新视觉位置
-            if (data.moveType !== 'teleport') {
-                if (this.gameInstance.chessPiece && this.gameInstance.chessPiece.animation) {
-                    this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-                    this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                }
-            }
-
-            // 如果是传送门移动，叠加淡入淡出和格子高亮
-            if (data.moveType === 'teleport' && chess && chess.element) {
-                // 记录最大传送距离（用于称号统计）
-                const fromPos = data.fromPosition !== undefined ? data.fromPosition : previousPosition;
-                const targetPos = data.toPosition !== undefined ? data.toPosition : data.position;
-                if (window.gameState && window.gameState.titleStats && fromPos !== undefined) {
-                    const teleportDist = Math.abs(targetPos - fromPos);
-                    if (teleportDist > (window.gameState.titleStats.maxTeleportDistance[data.player] || 0)) {
-                        window.gameState.titleStats.maxTeleportDistance[data.player] = teleportDist;
-                    }
-                }
-
-                // 播放传送音效
-                if (window.audioManager) {
-                    window.audioManager.playFlySound();
-                }
-
-                // 高亮源格子和目标格子（白色发光）
-                // 此时棋子还显示在源位置，不会被遮挡
-                if (this.gameInstance.chessPiece) {
-                    // data.position 和 data.toPosition 都是目标位置，data.position 一定存在
-                    const targetPos = data.toPosition !== undefined ? data.toPosition : data.position;
-                    // data.fromPosition 可能因旧服务器丢失，用 previousPosition 兜底
-                    const fromPos = data.fromPosition !== undefined ? data.fromPosition : previousPosition;
-                    const fromAbsPos = this.gameInstance.chessPiece.utils.getAbsolutePosition(data.player, fromPos);
-                    const toAbsPos = this.gameInstance.chessPiece.utils.getAbsolutePosition(data.player, targetPos);
-                    this.gameInstance.chessPiece.highlightTeleportGrids(data.player, fromAbsPos, toAbsPos);
-                }
-
-                const chessElement = chess.element;
-                // 淡出：先设置过渡，强制重排确保注册，再改 opacity
-                chessElement.style.transition = 'opacity 0.2s ease-out';
-                void chessElement.offsetWidth;
-                chessElement.style.opacity = '0';
-
-                // 等待淡出完成后更新位置并淡入
-                setTimeout(() => {
-                    // 更新视觉位置
-                    if (this.gameInstance.chessPiece && this.gameInstance.chessPiece.animation) {
-                        this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-                        this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                    }
-
-                    // 淡入
-                    setTimeout(() => {
-                        chessElement.style.opacity = '1';
-                        setTimeout(() => {
-                            chessElement.style.transition = '';
-                            // 淡入完成后清除高亮
-                            if (this.gameInstance.chessPiece) {
-                                this.gameInstance.chessPiece.clearTeleportHighlights();
-                            }
-                        }, 200);
-                    }, 50);
-                }, 200);
-            }
-        }
-    }
-
-    /**
-     * 处理整回合移动开始消息（其他玩家的意图同步）：本地重算并播放动画
-     */
-    async handleFullMoveStart(data) {
-        if (String(data.playerId) === String(this.playerId)) return;
-
-        console.log(`[选择] 玩家${data.player} 棋子${data.chessIndex}`);
-
-        if (this.gameInstance?.chessPiece) {
-            // 防重复/过时保护：如果棋子已经超过起始位置（且不是回家），说明已被后续消息更新，跳过回放
-            const chess = this.gameInstance.chessPiece.gameState?.playerChess?.[data.player]?.[data.chessIndex];
-            if (chess) {
-                if (data.fromPosition >= 0 && chess.position > data.fromPosition) {
-                    console.log(`[FullMoveStart] 跳过过期回放: 棋子已在位置${chess.position} > 消息起始${data.fromPosition}`);
-                    return;
-                }
-                // 如果棋子已在终点，跳过
-                if (chess.finished || chess.position === 56) {
-                    console.log(`[FullMoveStart] 跳过回放: 棋子已完成`);
-                    return;
-                }
-            }
-
-            // 简化：直接调用 animateChessMovement，不修改其他状态
-            this.gameInstance.chessPiece._isNetworkReplayMode = true;
-            
-            // 如果是从家出发，先移到0
-            if (data.fromPosition === -1) {
-                const chess = this.gameInstance.chessPiece.gameState.playerChess[data.player][data.chessIndex];
-                chess.position = 0;
-                chess.lastLandPos = this.gameInstance.chessPiece.generateUniqueLastLandPos(0);
-                this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-                this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                audioManager.playFlySound();
-                this.gameInstance.chessPiece.gameState.incrementTotalDistance(data.player, 1);
-                
-                // 检查特殊位置
-                if (this.gameInstance.chessPiece.utils.isJumpPoint(0)) {
-                    const nextJumpPoint = this.gameInstance.chessPiece.utils.getNextJumpPoint(0);
-                    if (nextJumpPoint) {
-                        await this.gameInstance.chessPiece.animation.animateJump(data.player, data.chessIndex, nextJumpPoint);
-                    }
-                }
-            } else {
-                // 正常移动：先用发送方的起始位置覆盖本地位置，确保动画与发送方一致
-                const chess = this.gameInstance.chessPiece.gameState.playerChess[data.player][data.chessIndex];
-                if (chess) {
-                    chess.position = data.fromPosition;
-                    chess.lastLandPos = this.gameInstance.chessPiece.generateUniqueLastLandPos(data.fromPosition);
-                    this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                }
-                await this.gameInstance.chessPiece.animateChessMovement(data.player, data.chessIndex, data.diceValue);
-            }
-            
-            this.gameInstance.chessPiece._isNetworkReplayMode = false;
-        }
-    }
-
-    /**
-     * 处理整回合移动最终结果（兜底校验）：用权威状态覆盖本地状态
-     */
-    handleFinalMoveResult(data) {
-        if (String(data.playerId) === String(this.playerId)) return;
-
-        if (!this.gameInstance?.chessPiece) return;
-
-        // 防无限重试：最多重试20次（约2秒）
-        data._retryCount = (data._retryCount || 0) + 1;
-        if (data._retryCount > 20) {
-            if (!this.gameInstance.chessPiece._isNetworkReplayMode) {
-                console.warn('[移动] 重试次数超限，强制处理');
-            }
-            this.gameInstance.chessPiece._isNetworkReplayMode = false;
-        }
-
-        // 如果正在回放模式，延迟处理，确保回放完成
-        if (this.gameInstance.chessPiece._isNetworkReplayMode) {
-            setTimeout(() => {
-                this.handleFinalMoveResult(data);
-            }, 100);
-            return;
-        }
-
-        console.log(`[移动] 玩家${data.player} 棋子${data.chessIndex} → 位置${data.finalPosition}`);
-
-        // 强制更新棋子位置
-        const chess = this.gameInstance.chessPiece.gameState?.playerChess?.[data.player]?.[data.chessIndex];
-        if (chess && chess.position !== data.finalPosition) {
-            console.log(`[FinalMoveResult] 修正棋子位置: 本地=${chess.position} → 同步=${data.finalPosition}`);
-            chess.position = data.finalPosition;
-            if (this.gameInstance.chessPiece.animation) {
-                this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-            }
-        }
-
-        // 强制修正被 beat 的棋子（只修正状态，不触发动画/音效）
-        // fullMoveStart 的回放动画已触发过 beat 动画，这里只做兜底状态修正
-        if (data.beatenChesses && data.beatenChesses.length > 0) {
-            for (const bc of data.beatenChesses) {
-                const targetChess = this.gameInstance.chessPiece.gameState?.playerChess?.[bc.player]?.[bc.chessIndex];
-                if (targetChess && targetChess.position !== -1) {
-                    console.log(`[FinalMoveResult] 修正被beat棋子: 玩家${bc.player}棋子${bc.chessIndex} 回家`);
-                    targetChess.position = -1;
-                    targetChess.finished = false;
-                    if (this.gameInstance.chessPiece.animation) {
-                        // 使用静默还原，不触发 beat 动画/音效
-                        this.gameInstance.chessPiece.animation.restoreChessToStart(bc.player, bc.chessIndex);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * 同步棋盘状态
-     */
-    syncBoardState() {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN && this.gameInstance) {
-            const boardState = {
-                playerChess: this.gameInstance.gameState.getAllChessStates(),
-                currentPlayer: this.gameInstance.gameState.getCurrentPlayer(),
-                gamePhase: this.gameInstance.gameState.getGamePhase(),
-                diceValue: this.gameInstance.gameState.getDiceValue(),
-                winner: this.gameInstance.gameState.getWinner(),
-                defeatCounts: this.gameInstance.gameState.getAllDefeatCounts()
-            };
-
-            this.sendMessage('boardState', {
-                boardState: boardState,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 处理棋盘状态同步
-     */
-    handleBoardState(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        console.log('同步棋盘状态:', data.boardState);
-
-        if (this.gameInstance && this.gameInstance.gameState) {
-            const boardState = data.boardState;
-
-            // 更新棋子状态
-            if (boardState.playerChess) {
-                for (let player = 1; player <= 4; player++) {
-                    if (boardState.playerChess[player]) {
-                        for (let i = 0; i < boardState.playerChess[player].length; i++) {
-                            const chessState = boardState.playerChess[player][i];
-                            this.gameInstance.gameState.updateChessPosition(player, i, chessState.position);
-                            this.gameInstance.gameState.setChessFinished(player, i, chessState.finished);
-                        }
-                    }
-                }
-
-                // 更新所有棋子的视觉位置
-                if (this.gameInstance.chessPiece) {
-                    this.gameInstance.chessPiece.updateAllChessPositions();
-                }
-            }
-
-            // 更新游戏状态
-            if (boardState.currentPlayer !== undefined) {
-                this.gameInstance.gameState.setCurrentPlayer(boardState.currentPlayer);
-            }
-            if (boardState.gamePhase !== undefined) {
-                this.gameInstance.gameState.setGamePhase(boardState.gamePhase);
-            }
-            if (boardState.diceValue !== undefined) {
-                this.gameInstance.gameState.setDiceValue(boardState.diceValue);
-            }
-            if (boardState.winner !== undefined) {
-                this.gameInstance.gameState.setWinner(boardState.winner);
-            }
-
-            // 更新击败次数统计
-            if (boardState.defeatCounts) {
-                this.gameInstance.gameState.defeatCounts = boardState.defeatCounts;
-            }
-
-            // 更新UI
-            if (this.gameInstance.uiUpdater) {
-                this.gameInstance.uiUpdater.updateUI();
-            }
-        }
-    }
-
-    /**
-     * 同步积分变化
-     * @param {number} player - 玩家编号
-     * @param {number} energy - 新的积分值
-     * @param {number} delta - 积分变化量
-     * @param {string} source - 积分来源
-     * @param {number} targetPlayer - 目标玩家
-     * @param {number} targetChessIndex - 目标棋子
-     */
-    syncEnergyChange(player, energy, delta, source = null, targetPlayer = null, targetChessIndex = null) {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
-            this.sendMessage('energyChange', {
-                player: player,
-                energy: energy,
-                delta: delta,
-                source: source,
-                targetPlayer: targetPlayer,
-                targetChessIndex: targetChessIndex,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 处理接收到的积分变化
-     */
-    async handleEnergyChange(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        // 导入积分管理器
-        const { energyManager } = await import('./energyManager.js');
-
-        if (energyManager.isSkillModeEnabled()) {
-            // 如果是因为击杀获得积分，且有目标，播放粒子动画
-            if (data.source === 'kill' && data.targetPlayer !== null && data.targetChessIndex !== null) {
-                if (energyManager.energyDisplay) {
-                    const startSource = this.consumeDefeatedChessPosition(data.targetPlayer, data.targetChessIndex) || data.targetPlayer;
-                    energyManager.energyDisplay.playEnergyParticles(startSource, data.targetChessIndex, data.player, () => {
-                        energyManager.setEnergy(data.player, data.energy, false);
-                        energyManager.energyDisplay.showEnergyGainAnimation(data.player, data.delta);
-                    }, data.delta);
-                } else {
-                    energyManager.setEnergy(data.player, data.energy, false);
-                }
-            } else if (data.source === 'mysteryBox' && data.delta > 0) {
-                // 如果是盲盒获取积分，获取骰子元素作为起点
-                if (energyManager.energyDisplay) {
-                    const diceIcon = document.querySelector('.dice-icon');
-                    if (diceIcon) {
-                        energyManager.energyDisplay.playEnergyParticles(diceIcon, null, data.player, () => {
-                            energyManager.setEnergy(data.player, data.energy, false);
-                            energyManager.energyDisplay.showEnergyGainAnimation(data.player, data.delta);
-                        }, data.delta);
-                    } else {
-                        energyManager.setEnergy(data.player, data.energy, false);
-                        energyManager.energyDisplay.showEnergyGainAnimation(data.player, data.delta);
-                    }
-                } else {
-                    energyManager.setEnergy(data.player, data.energy, false);
-                }
-            } else {
-                // 直接设置积分值，不触发回调避免重复同步
-                energyManager.setEnergy(data.player, data.energy, false);
-                if (data.delta > 0 && energyManager.energyDisplay) {
-                    energyManager.energyDisplay.showEnergyGainAnimation(data.player, data.delta);
-                }
-            }
-        }
-    }
-
-    /**
-     * 同步击败计数变化
-     */
-    syncDefeatCountChange(attackerPlayer, defeatedPlayer, count) {
-        if (this.wsClient && this.wsClient.readyState === WebSocket.OPEN) {
-            this.sendMessage('defeatCountChange', {
-                attackerPlayer: attackerPlayer,
-                defeatedPlayer: defeatedPlayer,
-                count: count,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 同步骰子统计数据到服务器
-     * @param {number} player - 玩家编号
-     * @param {number} diceValue - 骰子点数
-     * @param {number} count - 该点数的投掷次数
-     */
-    syncDiceStatistics(player, diceValue, count) {
-        if (this.isConnected) {
-            this.sendMessage('diceStatisticsSync', {
-                player: player,
-                diceValue: diceValue,
-                count: count,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 同步完成度历史记录到服务器
-     * @param {Object} snapshot - 完成度快照
-     * @param {number} currentRound - 当前回合数
-     */
-    syncProgressHistory(snapshot, currentRound) {
-        if (this.isConnected) {
-            this.sendMessage('progressHistorySync', {
-                snapshot: snapshot,
-                currentRound: currentRound,
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 处理接收到的击败计数变化
-     */
-    async handleDefeatCountChange(data) {
-        if (String(data.playerId) === String(this.playerId)) return; // 忽略自己的消息
-
-        // 更新本地gameState中的击败计数
-        if (window.gameState) {
-            if (!window.gameState.defeatCounts[data.attackerPlayer]) {
-                window.gameState.defeatCounts[data.attackerPlayer] = {};
-            }
-            window.gameState.defeatCounts[data.attackerPlayer][data.defeatedPlayer] = data.count;
-
-            // 更新显示
-            const { defeatCountDisplay } = await import('./defeatCountDisplay.js');
-            defeatCountDisplay.updateDefeatCount(
-                data.attackerPlayer,
-                data.defeatedPlayer,
-                data.count
-            );
-        }
-    }
-
-    /**
-     * 同步游戏状态
-     */
-    syncGameState(gameState) {
-        if (this.isHost) {
-            this.sendMessage('gameStateSync', {
-                gameState: {
-                    currentPlayer: gameState.currentPlayer,
-                    gamePhase: gameState.gamePhase,
-                    diceValue: gameState.diceValue,
-                    isPaused: gameState.isPaused,
-                    winner: gameState.winner
-                },
-                timestamp: Date.now()
-            });
-        }
-    }
-
-    /**
-     * 处理游戏状态同步
-     */
-    handleGameStateSync(data) {
-        if (!this.isHost && this.gameInstance && this.gameInstance.gameState) {
-            // 非房主接收房主的游戏状态同步
-            const gameState = this.gameInstance.gameState;
-            const syncData = data.gameState;
-
-            console.log('同步游戏状态:', syncData);
-
-            // 更新游戏状态
-            if (syncData.currentPlayer !== undefined) {
-                gameState.setCurrentPlayer(syncData.currentPlayer);
-            }
-            if (syncData.gamePhase !== undefined) {
-                gameState.setState('gamePhase', syncData.gamePhase);
-            }
-            if (syncData.diceValue !== undefined) {
-                gameState.diceValue = syncData.diceValue;
-            }
-            if (syncData.isPaused !== undefined) {
-                gameState.setState('isPaused', syncData.isPaused);
-            }
-            if (syncData.winner !== undefined) {
-                gameState.winner = syncData.winner;
-            }
-
-            // 更新UI
-            if (this.gameInstance.uiUpdater) {
-                this.gameInstance.uiUpdater.updateUI();
-            }
-        }
-    }
-
-    /**
-     * 同步玩家回合变化
-     */
-    syncPlayerTurnChange(newPlayer, extra = null) {
-        const payload = {
-            newPlayer: newPlayer,
-            timestamp: Date.now()
-        };
-
-        if (extra && typeof extra === 'object') {
-            Object.assign(payload, extra);
-        }
-
-        this.sendMessage('playerTurnChange', payload);
-    }
-
-    /**
-     * 同步无法移动状态
-     */
-    syncNoMovableChess(player, diceValue) {
-        this.sendMessage('noMovableChess', {
-            playerId: this.playerId,  // 添加发送者ID，用于过滤重复消息
-            player: player,
-            diceValue: diceValue,
-            timestamp: Date.now()
-        });
-    }
 
     /**
      * 处理玩家回合变化
@@ -2900,36 +1779,31 @@ class MultiplayerGameManager {
 
                     // 检查新玩家是否是AI电脑玩家
                     const playerIdForProgressBar = this.getPlayerIdByPlayerNumber(data.newPlayer);
-                    const playerDataForProgressBar = this.players.get(playerIdForProgressBar);
-                    const isNewPlayerAI = playerDataForProgressBar?.isAI || false;
-                    const isNewPlayerAITakeover = this.aiTakeoverPlayers.has(playerIdForProgressBar) || playerDataForProgressBar?.isAITakeover || false;
+                    const isNewPlayerAI = this.players.get(playerIdForProgressBar)?.isAI || false;
+                    const isNewPlayerAITakeover = isTakeoverPlayer(playerIdForProgressBar, this);
 
                     // 观战模式也启动倒计时，但没有超时回调
+                    // AI 回合不启动超时计时器（时长由 AI 自身决定），进度条以该 AI 的静止空条显示
                     if (this.isSpectator) {
-                        this.gameInstance.gameState.startThinkingTimer(null);
-                        if (this.gameInstance.uiUpdater && this.gameInstance.uiUpdater.updateProgressBarLoop) {
-                            this.gameInstance.uiUpdater.updateProgressBarLoop();
+                        if (!isNewPlayerAI) {
+                            this.gameInstance.uiUpdater?.startThinkingProgressBar?.(null);
+                        } else {
+                            this.gameInstance.uiUpdater?.showIdleThinkingProgressBar?.(data.newPlayer);
                         }
-                    } else {
+                    } else if (!isNewPlayerAI) {
                         // 启动新玩家的思考时间计时器（掷骰子阶段）
                         // 条件：
-                        // 1. 当前玩家是本地玩家且不是AI电脑玩家
-                        // 2. 当前客户端是房主，且当前玩家不是AI电脑玩家（房主为其他玩家代理超时，包括正常玩家和AI托管玩家）
+                        // 1. 当前玩家是本地玩家
+                        // 2. 当前客户端是房主（替非本地玩家维护进度条与超时）
                         const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
-                        const shouldStartProgressBar = (data.newPlayer === localPlayerNumber && !isNewPlayerAI) ||
-                            (this.isHost && !isNewPlayerAI);
+                        const shouldStartProgressBar = (data.newPlayer === localPlayerNumber) ||
+                            this.isHost;
 
                         if (shouldStartProgressBar) {
                             // 如果游戏尚未正式开始，且当前是人类玩家回合，则不启动超时计时器（允许无限等待直到首发玩家操作）
-                            if (this.gameInstance && this.gameInstance.gameState && !this.gameInstance.gameState.getGameOfficiallyStarted() && !isNewPlayerAI) {
+                            if (this.gameInstance && this.gameInstance.gameState && !this.gameInstance.gameState.getGameOfficiallyStarted()) {
                                 console.log('[开局] 游戏尚未正式开始，且为人类玩家回合，不启动超时计时器');
-                                // 仅展示进度条容器，但不开始计时
-                                const progressContainer = document.getElementById('thinkingProgressContainer');
-                                if (progressContainer) {
-                                    progressContainer.className = `thinking-progress-container active player-${data.newPlayer}`;
-                                    const progressBar = document.getElementById('thinkingProgressBar');
-                                    if (progressBar) progressBar.style.width = '0%';
-                                }
+                                this.gameInstance.uiUpdater?.showIdleThinkingProgressBar?.(data.newPlayer);
                                 return;
                             }
 
@@ -2939,44 +1813,16 @@ class MultiplayerGameManager {
                                     this.gameInstance.dice.handleThinkingTimeoutWrapper();
                                 }
                             });
-                        } else if (!isNewPlayerAI) {
-                            // 非房主且非本地玩家：启动定时器（无超时回调），仅用于维持进度条运行
-                            this.gameInstance.gameState.startThinkingTimer(null);
-                            if (this.gameInstance.uiUpdater && this.gameInstance.uiUpdater.updateProgressBarLoop) {
-                                this.gameInstance.uiUpdater.updateProgressBarLoop();
-                            }
+                        } else {
+                            // 非房主且非本地玩家：只跑进度条展示，超时归服务端
+                            this.gameInstance.uiUpdater?.startThinkingProgressBar?.(null);
                         }
+                    } else {
+                        // AI 回合：同上，按服务端窗口续上计时
+                        this.gameInstance.uiUpdater?.startThinkingProgressBar?.(null);
                     }
                 }
 
-                // 统一处理：AI电脑玩家和AI托管玩家都由房主代理
-                const playerIdForCheck = this.getPlayerIdByPlayerNumber(data.newPlayer);
-                const currentPlayerData = this.players.get(playerIdForCheck);
-                const isAIPlayer = currentPlayerData?.isAI || false;
-                const isPlayerAITakeover = this.aiTakeoverPlayers.has(playerIdForCheck) || currentPlayerData?.isAITakeover || false;
-
-                // 判断当前玩家是否需要AI操作（AI电脑或AI托管）
-                const needsAIOperation = isAIPlayer || isPlayerAITakeover;
-
-                if (needsAIOperation && this.isHost && !this.isSpectator) {
-                    // 房主代理：统一处理AI电脑玩家和AI托管玩家
-                    setTimeout(() => {
-                        if (window.botController && this.gameInstance?.gameState) {
-                            // 确保botController已启用
-                            if (!window.botController.isEnabled) {
-                                window.botController.setEnabled(true);
-                            }
-
-                            const currentPhase = this.gameInstance.gameState.getGamePhase();
-                            const currentPlayer = this.gameInstance.gameState.getCurrentPlayer();
-
-                            // botController会根据游戏阶段自动执行掷骰子或选择棋子
-                            if ((currentPhase === 'rolling' || currentPhase === 'selecting') && currentPlayer === data.newPlayer) {
-                                window.botController.handleBotTurn();
-                            }
-                        }
-                    }, 500); // 延迟确保状态更新完成
-                }
             }
         } else {
             console.error('playerTurnChange消息中缺少newPlayer属性:', data);
@@ -2985,167 +1831,6 @@ class MultiplayerGameManager {
                 message: 'playerTurnChange消息中缺少newPlayer属性'
             });
         }
-    }
-
-    /**
-     * 处理无法移动状态同步
-     */
-    handleNoMovableChess(data) {
-        // 忽略自己发送的消息（避免重复显示）
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) {
-            return;
-        }
-
-        console.log(`[同步] 玩家${data.player}无法移动任何棋子`);
-
-        // 防止重复消息：检查timestamp
-        if (!this._lastNoMovableChessMessages) {
-            this._lastNoMovableChessMessages = new Map();
-        }
-
-        const messageKey = `${data.player}-${data.diceValue}`;
-        const lastTimestamp = this._lastNoMovableChessMessages.get(messageKey);
-
-        // 如果在500ms内收到相同的消息，认为是重复消息
-        if (lastTimestamp && data.timestamp - lastTimestamp < 500) {
-            console.log(`忽略重复的无法移动消息 - player: ${data.player}, diceValue: ${data.diceValue}, 时间差: ${data.timestamp - lastTimestamp}ms`);
-            return;
-        }
-
-        // 记录当前消息的timestamp
-        this._lastNoMovableChessMessages.set(messageKey, data.timestamp);
-
-        // 记录起飞尝试结果（用于称号统计）：失败
-        if (this.gameInstance && this.gameInstance.gameState) {
-            this.gameInstance.gameState.recordTakeoffAttempt(data.player, false);
-        }
-
-        // 清理旧的记录（保留最近1秒的）
-        setTimeout(() => {
-            this._lastNoMovableChessMessages.delete(messageKey);
-        }, 1000);
-
-        // 添加到游戏信息面板
-        if (this.gameInstance && this.gameInstance.gameInfo) {
-            // 使用skipSync=true避免重复同步
-            this.gameInstance.gameInfo.addNoMovableChess(data.player, data.diceValue, true);
-        }
-
-        // 停止骰子闪烁动画（如果正在进行）
-        if (this.currentFlashInterval) {
-            clearInterval(this.currentFlashInterval);
-            this.currentFlashInterval = null;
-        }
-
-        // 添加骰子震动效果
-        const diceDisplay = document.getElementById('diceDisplay');
-        if (diceDisplay) {
-            // 清除闪烁动画类
-            diceDisplay.classList.remove('dice-flashing');
-
-            // 添加震动效果
-            diceDisplay.classList.add('dice-shake');
-            setTimeout(() => {
-                diceDisplay.classList.remove('dice-shake');
-            }, 500);
-        }
-
-        // 延迟播放震动音效，避免与rolling音效冲突
-        setTimeout(() => {
-            if (window.audioManager) {
-                window.audioManager.playShakeSound();
-            }
-        }, 300);
-    }
-
-    /**
-     * 同步跳子动画
-     */
-    syncJumpAnimation(player, chessIndex, startPosition, targetPosition) {
-        this.sendMessage('jumpAnimation', {
-            player: player,
-            chessIndex: chessIndex,
-            startPosition: startPosition,
-            targetPosition: targetPosition,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步飞棋动画
-     */
-    syncFlyAnimation(player, chessIndex, startPosition, targetPosition) {
-        this.sendMessage('flyAnimation', {
-            player: player,
-            chessIndex: chessIndex,
-            startPosition: startPosition,
-            targetPosition: targetPosition,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步棋子回归起点动画
-     */
-    syncMoveChessToStart(player, chessIndex, reason = 'beat') {
-        this.sendMessage('moveChessToStart', {
-            player: player,
-            chessIndex: chessIndex,
-            reason: reason, // 'beat', 'stack_collision', 'bounce', etc.
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步棋子到达终点动画
-     */
-    syncMoveChessToFinish(player, chessIndex) {
-        this.sendMessage('moveChessToFinish', {
-            player: player,
-            chessIndex: chessIndex,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步叠子碰撞事件
-     */
-    syncStackCollision(player, targetPlayer, stackedChesses, collisionPosition) {
-        this.sendMessage('stackCollision', {
-            player: player,
-            targetPlayer: targetPlayer,
-            stackedChesses: stackedChesses,
-            collisionPosition: collisionPosition,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步叠子反弹事件
-     */
-    syncStackBounce(player, chessIndex, startPosition, endPosition, bounceSteps) {
-        this.sendMessage('stackBounce', {
-            player: player,
-            chessIndex: chessIndex,
-            startPosition: startPosition,
-            endPosition: endPosition,
-            bounceSteps: bounceSteps,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * 同步终点反弹事件
-     */
-    syncEndpointBounce(player, chessIndex, startPosition, endPosition, bounceSteps) {
-        this.sendMessage('endpointBounce', {
-            player: player,
-            chessIndex: chessIndex,
-            startPosition: startPosition,
-            endPosition: endPosition,
-            bounceSteps: bounceSteps,
-            timestamp: Date.now()
-        });
     }
 
     /**
@@ -3247,402 +1932,7 @@ class MultiplayerGameManager {
         });
     }
 
-    /**
-     * 处理跳子动画同步
-     */
-    handleJumpAnimation(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) return; // 忽略自己的消息
-
-        console.log(`[同步] 玩家${data.player}的棋子${data.chessIndex}触发跳跃`);
-
-        // 播放跳跃音效
-        if (window.audioManager) {
-            window.audioManager.playFlySound();
-        }
-
-        // 执行跳子动画
-        if (this.gameInstance && this.gameInstance.chessPiece && this.gameInstance.chessPiece.animation) {
-            // 更新前先移到最顶层
-            this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-            
-            // 更新棋子位置到起跳点
-            this.gameInstance.gameState.updateChessPosition(data.player, data.chessIndex, data.startPosition);
-            this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-
-            // 执行跳子动画（不触发额外的同步消息）
-            setTimeout(() => {
-                const chess = this.gameInstance.gameState.playerChess[data.player]?.[data.chessIndex];
-                if (chess) {
-                    const fromPos = chess.position;
-                    chess.position = data.targetPosition;
-                    if (window.gameInstance && window.gameInstance.chessPiece) {
-                        chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-                    }
-                    
-                    // 记录距离统计
-                    if (data.targetPosition > fromPos) {
-                        this.gameInstance.gameState.incrementTotalDistance(data.player, data.targetPosition - fromPos);
-                    }
-                    
-                    this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                }
-            }, 200);
-        }
-    }
-
-    /**
-     * 处理飞棋动画同步
-     */
-    handleFlyAnimation(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) return; // 忽略自己的消息
-
-        console.log(`[同步] 玩家${data.player}的棋子${data.chessIndex}触发飞行`);
-
-        // 播放飞行音效
-        if (window.audioManager) {
-            window.audioManager.playFlySound();
-        }
-
-        // 执行飞棋动画
-        if (this.gameInstance && this.gameInstance.chessPiece && this.gameInstance.chessPiece.animation) {
-            // 更新前先移到最顶层
-            this.gameInstance.chessPiece.animation.bringToFront(data.player, data.chessIndex);
-
-            // 更新棋子位置到起飞点
-            this.gameInstance.gameState.updateChessPosition(data.player, data.chessIndex, data.startPosition);
-            this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-
-            // 执行飞棋动画（延迟300ms模拟飞行效果）
-            setTimeout(() => {
-                const chess = this.gameInstance.gameState.playerChess[data.player]?.[data.chessIndex];
-                if (chess) {
-                    const fromPos = chess.position;
-                    chess.position = data.targetPosition;
-                    if (window.gameInstance && window.gameInstance.chessPiece) {
-                        chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-                    }
-                    
-                    // 记录距离统计
-                    if (data.targetPosition > fromPos) {
-                        this.gameInstance.gameState.incrementTotalDistance(data.player, data.targetPosition - fromPos);
-                    }
-                    
-                    this.gameInstance.chessPiece.animation.updateChessPosition(data.player, data.chessIndex);
-                }
-
-                // 注意：不在这里添加gameInfo，因为本地操作时已经添加过了，避免重复显示
-            }, 300);
-        }
-    }
-
-    /**
-     * 处理棋子回归起点动画同步
-     */
-    handleMoveChessToStart(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) return; // 忽略自己的消息
-
-        // 如果正在回放模式，延迟重试，等待回放完成
-        if (this.gameInstance?.chessPiece?._isNetworkReplayMode) {
-            console.log('[handleMoveChessToStart] 正在回放中，延迟100ms后处理');
-            setTimeout(() => {
-                this.handleMoveChessToStart(data);
-            }, 100);
-            return;
-        }
-
-        const chess = this.gameInstance?.gameState?.playerChess?.[data.player]?.[data.chessIndex];
-
-        // 如果棋子已经被回放动画送回家了（position === -1），
-        // 说明击败动画和音效已经由回放路径处理过了。
-        // 这里只做静默视觉修正，避免重复触发 playBeatSound() 导致两次击败音效/动画。
-        if (chess && chess.position === -1) {
-            console.log(`[handleMoveChessToStart] 棋子已在起点，静默修正: 玩家${data.player}棋子${data.chessIndex}`);
-            if (this.gameInstance?.animation) {
-                this.gameInstance.animation.restoreChessToStart(data.player, data.chessIndex);
-            }
-            return;
-        }
-
-        console.log(`[同步] 棋子回归起点: 玩家${data.player}的棋子${data.chessIndex}，原因：${data.reason}`);
-
-        if (data.reason === 'beat') {
-            // 在棋子被移回家之前缓存其当前位置，用于能量粒子动画的起点
-            this.cacheDefeatedChessPosition(data.player, data.chessIndex);
-        }
-
-        // 立即执行，不延迟，避免和其他操作冲突
-        if (this.gameInstance && this.gameInstance.animation) {
-            // 执行回归起点动画，跳过同步以防止无限循环
-            this.gameInstance.animation.moveChessToStart(data.player, data.chessIndex, null, true);
-        }
-    }
-
-    /**
-     * 处理棋子到达终点动画同步
-     */
-    handleMoveChessToFinish(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) return; // 忽略自己的消息
-
-        console.log(`同步棋子到达终点动画: 玩家${data.player}的棋子${data.chessIndex}`);
-
-        if (this.gameInstance && this.gameInstance.gameState) {
-            const chess = this.gameInstance.gameState.playerChess[data.player]?.[data.chessIndex];
-            if (chess) {
-                console.log(`🏁 设置棋子终点状态: 玩家${data.player}的棋子${data.chessIndex}`);
-                chess.finished = true;
-                chess.position = 56;
-                if (window.gameInstance && window.gameInstance.chessPiece) {
-                    chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-                }
-            }
-        }
-
-        // 执行到达终点动画，跳过同步以防止无限循环
-        if (this.gameInstance && this.gameInstance.animation) {
-            this.gameInstance.animation.moveChessToFinish(data.player, data.chessIndex, true);
-        }
-    }
-
-    /**
-     * 处理叠子碰撞同步
-     */
-    handleStackCollision(data) {
-        // 不再忽略自己发送的消息，因为本地调用addStackCollision时已经传入skipSync=true
-        // 所有玩家（包括发送者）都需要通过网络消息来显示，确保一致性
-        console.log(`处理叠子碰撞同步: 玩家${data.player}与玩家${data.targetPlayer}的叠子碰撞`);
-
-        if (this.gameInstance && this.gameInstance.gameInfo) {
-            // 添加beat信息（根据stackedChesses数组）
-            if (data.stackedChesses && Array.isArray(data.stackedChesses)) {
-                // 对于叠子中的每个棋子：碰撞玩家击败叠子玩家的棋子
-                for (const stackedChess of data.stackedChesses) {
-                    this.gameInstance.gameInfo.addChessBeat(data.player, stackedChess.player, stackedChess.chessIndex, true, false, true);
-                }
-                // 叠子玩家击败碰撞玩家
-                this.gameInstance.gameInfo.addChessBeat(data.targetPlayer, data.player, null, true, false, true);
-            }
-
-            // 添加叠子碰撞信息（使用skipSync=true避免再次触发同步）
-            this.gameInstance.gameInfo.addStackCollision(data.player, data.targetPlayer, true);
-
-            // 播放音效
-            if (this.gameInstance.audioManager) {
-                this.gameInstance.audioManager.playBeatSound();
-            }
-        }
-    }
-
-    /**
-     * 处理叠子反弹同步
-     */
-    async handleStackBounce(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) return; // 忽略自己的消息，因为本地已经执行了动画
-
-        console.log(`处理叠子反弹同步: 玩家${data.player}的棋子${data.chessIndex}从位置${data.startPosition}反弹到${data.endPosition}`);
-
-        if (!this.gameInstance) return;
-
-        const gameState = this.gameInstance.gameState;
-        const animation = this.gameInstance.animation;
-        const audioManager = this.gameInstance.audioManager;
-
-        // 获取棋子对象
-        const chess = gameState.playerChess[data.player]?.[data.chessIndex];
-        if (!chess) return;
-
-        // 反弹前移到最顶层
-        animation.bringToFront(data.player, data.chessIndex);
-
-        // 先确保棋子位置在起始位置（叠子位置），如果不在，先移动到那里
-        if (chess.position !== data.startPosition) {
-            console.log(`[叠子反弹同步] 棋子位置不在起始位置，从${chess.position}移动到${data.startPosition}`);
-
-            // 逐步移动到起始位置
-            while (chess.position < data.startPosition) {
-                await new Promise(resolve => setTimeout(resolve, 200));
-                chess.position++;
-                animation.updateChessPosition(data.player, data.chessIndex);
-
-                // 播放移动音效
-                if (audioManager) {
-                    audioManager.playMoveSound();
-                }
-            }
-        }
-
-        // 执行反弹动画
-        let currentPosition = data.startPosition;
-        const bounceSteps = data.bounceSteps || (data.startPosition - data.endPosition);
-
-        for (let step = 1; step <= bounceSteps; step++) {
-            // 如果已经到达位置0（起飞点），停止反弹
-            if (currentPosition <= 0) {
-                console.log(`叠子反弹到达位置0，停止反弹`);
-                break;
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 200));
-
-            // 播放移动音效
-            if (audioManager) {
-                audioManager.playMoveSound();
-            }
-
-            currentPosition--;
-            chess.position = currentPosition;
-            if (window.gameInstance && window.gameInstance.chessPiece) {
-                chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-            }
-            animation.updateChessPosition(data.player, data.chessIndex);
-        }
-    }
-
-    /**
-     * 处理终点反弹同步
-     */
-    async handleEndpointBounce(data) {
-        if (String(data.playerId) === String(this.playerId) && !this.isSpectator) {
-            return; // 忽略自己的消息，因为本地已经执行了动画
-        }
-
-        console.log(`[终点反弹同步] 开始处理终点反弹: 玩家${data.player}的棋子${data.chessIndex}从终点反弹，从${data.startPosition}到${data.endPosition}`);
-
-        if (!this.gameInstance) return;
-
-        const gameState = this.gameInstance.gameState;
-        const animation = this.gameInstance.animation;
-        const audioManager = this.gameInstance.audioManager;
-
-        // 获取棋子对象
-        const chess = gameState.playerChess[data.player]?.[data.chessIndex];
-        if (!chess) return;
-
-        // 反弹前移到最顶层
-        animation.bringToFront(data.player, data.chessIndex);
-
-        // 重置finished状态，因为棋子要从终点反弹回来
-        console.log(`[终点反弹同步] 重置棋子finished状态: 玩家${data.player}的棋子${data.chessIndex}，原finished=${chess.finished}`);
-        chess.finished = false;
-
-        // 先确保棋子位置在起始位置（56），如果不在，先移动到那里
-        if (chess.position !== data.startPosition) {
-            console.log(`[终点反弹同步] 棋子位置不在起始位置，从${chess.position}移动到${data.startPosition}`);
-
-            // 逐步移动到起始位置
-            while (chess.position < data.startPosition) {
-                await new Promise(resolve => setTimeout(resolve, 200));
-                chess.position++;
-                animation.updateChessPosition(data.player, data.chessIndex);
-
-                // 播放移动音效
-                if (audioManager) {
-                    audioManager.playMoveSound();
-                }
-            }
-        }
-
-        // 执行反弹动画
-        let currentPosition = data.startPosition;
-        const bounceSteps = data.bounceSteps || (data.startPosition - data.endPosition);
-
-        for (let step = 1; step <= bounceSteps; step++) {
-            // 终点反弹不需要检查位置0，因为终点通道是51-56
-            await new Promise(resolve => setTimeout(resolve, 200));
-
-            // 播放移动音效
-            if (audioManager) {
-                audioManager.playMoveSound();
-            }
-
-            currentPosition--;
-            chess.position = currentPosition;
-            if (window.gameInstance && window.gameInstance.chessPiece) {
-                chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-            }
-            animation.updateChessPosition(data.player, data.chessIndex);
-        }
-
-        // 添加终点反弹移动信息
-        // 同理，不需要在联机模式下的其他客户端中再次展示这条普通的[移动]信息。
-        if (this.gameInstance.gameInfo) {
-            // 本地触发端已经在chessPiece.js中处理过，这里跳过
-        }
-    }
-
-    /**
-     * 处理三次6惩罚同步
-     */
-    async handleThreeSixesPenalty(data) {
-        console.log(`处理三次6惩罚同步: 玩家${data.player}连续摇到3次6，所有棋子返回起点`);
-
-        // 立即设置三次6惩罚标志，防止AI继续操作
-        if (window.gameState) {
-            window.gameState.setThreeSixesPenaltyActive(true);
-        }
-
-        const diceDisplay = document.getElementById('diceDisplay');
-        if (diceDisplay) {
-            diceDisplay.classList.add('dice-shake');
-            setTimeout(() => {
-                diceDisplay.classList.remove('dice-shake');
-            }, 500);
-        }
-        if (window.audioManager && window.audioManager.playShakeSound) {
-            window.audioManager.playShakeSound();
-        }
-
-        // 添加三次6惩罚信息到游戏信息面板（skipSync=true避免重复同步）
-        if (this.gameInstance && this.gameInstance.gameInfo) {
-            this.gameInstance.gameInfo.addThreeSixesPenalty(data.player, true);
-        }
-
-        // 执行惩罚：所有棋子返回起点
-        const pieceCount = window.gameState?.pieceCount || 4;
-        const animation = window.gameInstance?.animation;
-
-        for (let i = 0; i < pieceCount; i++) {
-            const chess = window.gameState?.playerChess[data.player]?.[i];
-            if (chess && chess.position >= 0 && !chess.finished) {
-                chess.position = -1;
-                if (window.gameInstance && window.gameInstance.chessPiece) {
-                    chess.lastLandPos = window.gameInstance.chessPiece.generateUniqueLastLandPos(chess.position);
-                }
-                if (animation) {
-                    animation.moveChessToStart(data.player, i, null, true);
-                }
-            }
-        }
-
-        // 重置连续6的计数
-        if (window.gameState) {
-            window.gameState.consecutiveSixes = 0;
-            window.gameState.canReroll = false;
-            window.gameState.justRolledSix = false;
-            // 关键：重置游戏阶段为waiting，防止AI继续选棋
-            window.gameState.gamePhase = 'waiting';
-            // 标记AI决策未在进行中
-            window.gameState.setAIDecisionInProgress(false);
-        }
-
-        // 停止思考进度条，防止Bot继续操作
-        if (window.uiUpdater && window.uiUpdater.stopThinkingProgressBar) {
-            window.uiUpdater.stopThinkingProgressBar();
-        }
-
-        // 更新UI
-        if (window.uiUpdater) {
-            window.uiUpdater.updateUI();
-        }
-
-        // 延迟等待动画完成
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 清除三次6惩罚标志
-        if (window.gameState) {
-            window.gameState.setThreeSixesPenaltyActive(false);
-        }
-    }
-
+    
     /**
      * 处理游戏结束同步
      */
@@ -3753,15 +2043,19 @@ class MultiplayerGameManager {
                 // ignore
             }
 
-            // 显示结算模态框
-            setTimeout(() => {
+            // 结算用的是本地棋面，可能还压在快照队列里没追上（表现为冠军完成度不到 100%）。
+            // 先把最后一帧权威快照强制拉回来，等本地棋面追平再弹结算
+            this.requestSnapshot('对局结束', { force: true });
+            const showWhenCaughtUp = (attempt = 0) => {
+                if (!this.isRenderSettled() && attempt < 20) {
+                    return setTimeout(() => showWhenCaughtUp(attempt + 1), 150);
+                }
                 if (isSelfMessage && !this.isSpectator) {
                     return;
                 }
-                if (this.gameInstance.settlementModal) {
-                    this.gameInstance.settlementModal.show(data.winnerPlayer);
-                }
-            }, 1000); // 延迟1秒显示，让玩家看到胜利信息
+                this.gameInstance?.settlementModal?.show(data.winnerPlayer);
+            };
+            setTimeout(() => showWhenCaughtUp(), 1000); // 延迟1秒显示，让玩家看到胜利信息
         }
     }
 
@@ -3889,67 +2183,14 @@ class MultiplayerGameManager {
     }
 
     /**
-     * 处理进度条开始同步
+     * 处理进度条开始同步：只是让各端把进度条画出来。
+     * 窗口起点不采信这条消息（谁都能发），一律用快照带下来的服务端窗口
      */
     handleProgressBarStart(data) {
-        // 所有玩家都需要同步显示进度条
-
-        // 防止重复处理相同的进度条启动消息
-        if (this._lastProgressBarStartData &&
-            this._lastProgressBarStartData.playerId === data.playerId &&
-            Math.abs(this._lastProgressBarStartData.timestamp - data.timestamp) < 500) {
-            // 降低日志级别，避免重复刷屏
-            // console.log('忽略重复的进度条启动消息');
-            return;
-        }
-        this._lastProgressBarStartData = data;
-
-        // 获取当前玩家编号
-        const playerNumber = this.getPlayerNumberByPlayerId(data.playerId);
-        if (playerNumber === null) {
-            console.warn('无法获取玩家编号:', data.playerId);
-            return;
-        }
-
-        // 同步显示进度条
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
-
-        if (progressContainer && progressBar) {
-            // 显示进度条并设置玩家颜色
-            progressContainer.className = `thinking-progress-container active player-${playerNumber}`;
-            // 进度条从0%开始，避免满进度跳变为空白的问题
-            progressBar.style.width = '0%';
-
-            // 同步思考开始时间，使用本地时间确保进度条正确计算
-
-            if (this.gameInstance && this.gameInstance.gameState) {
-                // 使用本地时间作为开始时间，避免时间差异导致的进度条倒退
-                this.gameInstance.gameState.thinkingStartTime = Date.now();
-                this.gameInstance.gameState.pausedThinkingTime = 0;
-
-                // 启动进度条更新循环 - 所有玩家都需要看到进度条增长
-                if (this.gameInstance.uiUpdater) {
-                    // 获取当前玩家信息
-                    const localPlayerId = this.getCurrentPlayerId();
-                    const localPlayerNumber = this.getPlayerNumberByPlayerId(localPlayerId);
-
-                    if (playerNumber !== localPlayerNumber) {
-                        // 其他玩家：由房主启动定时器并处理超时
-                        // 本地玩家已在 handlePlayerTurnChange → startThinkingProgressBar 中设置了定时器
-                        const timeoutCallback = this.isHost ? () => {
-                            if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                                this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                            }
-                        } : null;
-                        this.gameInstance.gameState.startThinkingTimer(timeoutCallback);
-                    }
-
-                    // 所有玩家都启动进度条更新循环，确保视觉效果一致
-                    this.gameInstance.uiUpdater.updateProgressBarLoop();
-                }
-            }
-        }
+        const ui = this.gameInstance && this.gameInstance.uiUpdater;
+        if (!ui) return;
+        ui.updateProgressBarLoop();
+        ui._renderThinkingProgressBar();
     }
 
 
@@ -3981,6 +2222,8 @@ class MultiplayerGameManager {
             }
             // 同时调用gameInstance的pauseGame方法来设置游戏阶段
             this.gameInstance.pauseGame();
+            // 道具界面（传送门图标/数字牌/选点面板）统一按暂停态收起并登记恢复
+            this._renderItemState(this.gameInstance.gameState || window.gameState);
         }
     }
 
@@ -4043,57 +2286,17 @@ class MultiplayerGameManager {
      * 处理房主权限转移
      */
     handleHostTransferred(data) {
-        console.log('房主权限已转移:', {
-            newHostId: data.newHostId,
-            newHostNickname: data.newHostNickname,
-            currentPlayerId: this.playerId,
-            wasHost: this.isHost
-        });
-
         const wasHost = this.isHost;
         this.isHost = (data.newHostId === this.playerId);
-
-        console.log(`房主转移: ${wasHost} -> ${this.isHost}`);
 
         // 更新暂停按钮UI
         if (window.gameInstance && window.gameInstance.eventHandler) {
             window.gameInstance.eventHandler.updatePauseButtonText();
         }
 
-        if (!wasHost && this.isHost) {
-            // 从普通玩家变成房主
-            console.log('我成为了新房主，将接管AI电脑玩家的控制');
-
-            // 显示提示消息
-            if (window.gameInfo) {
-                window.gameInfo.addChatMessage(null, `${data.newHostNickname} 成为了新房主`, null, true);
-            }
-
-            // 检查当前玩家是否是AI电脑玩家，如果是则立即触发操作
-            if (this.gameInstance && this.gameInstance.gameState) {
-                const currentPlayer = this.gameInstance.gameState.currentPlayer;
-                const currentPlayerId = this.getPlayerIdByPlayerNumber(currentPlayer);
-                const currentPlayerData = this.players?.get(currentPlayerId);
-
-                if (currentPlayerData && currentPlayerData.isAI) {
-                    console.log('🤖 当前玩家是AI电脑玩家，新房主立即接管');
-
-                    // 延迟触发，确保状态更新完成
-                    setTimeout(() => {
-                        if (window.botController && window.botController.isCurrentPlayerBot()) {
-                            console.log('触发AI电脑玩家操作');
-                            window.botController.handleBotTurn();
-                        }
-                    }, 500);
-                }
-            }
-        } else if (wasHost && !this.isHost) {
-            // 从房主变成普通玩家（不应该发生，因为房主离线会被移除）
-            console.log('⚠️ 我不再是房主');
-
-            if (window.gameInfo) {
-                window.gameInfo.addChatMessage(null, `${data.newHostNickname} 成为了新房主`, null, true);
-            }
+        // AI 与托管玩家的出手在服务端（botDriver），新房主不需要替谁操作
+        if (window.gameInfo) {
+            window.gameInfo.addChatMessage(null, `${data.newHostNickname} 成为了新房主`, null, true);
         }
     }
 
@@ -4109,6 +2312,12 @@ class MultiplayerGameManager {
             return;
         }
 
+        // 服务端已经没有这一局了：继续自愈只会反复报错，收摊回主页
+        if (SCENE_GONE_ERRORS.some((text) => data.message && data.message.includes(text))) {
+            this.abortToHome('对局已不存在，即将返回主页');
+            return;
+        }
+
         this.showError(data.message);
     }
 
@@ -4116,13 +2325,24 @@ class MultiplayerGameManager {
      * 显示连接错误
      */
     showConnectionError() {
-        const errorMessage = '与服务器的连接已断开，即将返回主页';
-        this.showError(errorMessage);
+        this.abortToHome('与服务器的连接已断开，即将返回主页');
+    }
 
-        // 3秒后重定向回主页
+    /**
+     * 会话已不存在（重连超限、被服务端清理）：停掉自愈、心跳与重连，提示后回主页
+     */
+    abortToHome(message) {
+        if (this._abortedToHome) return;
+        this._abortedToHome = true;
+
+        this.disableReconnect = true;
+        this.stopSnapshotSelfHeal();
+        this.stopWsHeartbeat();
+        this.showError(message);
+
         setTimeout(() => {
             window.location.replace('/');
-        }, 3000);
+        }, 2000);
     }
 
     /**
@@ -4233,6 +2453,42 @@ class MultiplayerGameManager {
     }
 
     /**
+     * 刷新后重建右侧面板：战报由服务端留存的整局事件流静默回放，聊天直接补回。
+     * 与实时路径共用同一套事件翻译，天然不会出现重复。
+     */
+    async applyGameInfoHistory(data) {
+        if (!data) return;
+        const gameInfo = this.gameInstance?.gameInfo || window.gameInfo;
+        if (!gameInfo || !gameInfo.infoContainer) return;
+
+        const events = Array.isArray(data.events) ? data.events : [];
+        const chatList = Array.isArray(data.chat) ? data.chat : [];
+
+        try {
+            if (events.length) {
+                await enginePlayback.replay(events);
+            }
+            if (chatList.length) {
+                chatList.forEach(item => {
+                    if (!item) return;
+                    gameInfo.addMessage({
+                        type: 'chat_message',
+                        // 观战者没有席位编号，判别要看 isSpectatorMessage，否则会被当成系统消息
+                        player: (item.isSystemMessage || item.isSpectatorMessage) ? null : item.playerNumber,
+                        data: {
+                            message: item.message,
+                            playerName: item.playerName ?? null,
+                            isSpectatorMessage: !!item.isSpectatorMessage
+                        }
+                    }, true, true);
+                });
+            }
+        } catch (error) {
+            console.error('❌ 回放游戏信息历史失败:', error);
+        }
+    }
+
+    /**
      * 获取当前玩家ID
      */
     getCurrentPlayerId() {
@@ -4242,6 +2498,20 @@ class MultiplayerGameManager {
     /**
      * 处理游戏会话连接消息
      */
+    /** 用服务端名单校正「谁是机器人」：两边不一致时 botController 会静默不出手 */
+    _syncBotFlagsFromRoster(roster) {
+        const bots = (roster || []).filter((player) => player && player.isAI);
+        if (!bots.length) return;
+
+        gameState.setBotPlayers(bots.map((bot) => bot.color ?? bot.id));
+        if (window.botController) {
+            if (!window.botController.isEnabled) window.botController.setEnabled(true);
+            const difficulties = {};
+            for (const bot of bots) difficulties[bot.color ?? bot.id] = bot.difficulty || 'easy';
+            window.botController.setBotDifficulties?.(difficulties);
+        }
+    }
+
     handleGameSessionConnected(data) {
         const isRealReconnect = !!(this.isReconnecting || this._didDisconnectOnce);
 
@@ -4288,6 +2558,16 @@ class MultiplayerGameManager {
                 // 清空现有玩家信息和AI托管列表
                 this.players.clear();
                 this.aiTakeoverPlayers.clear();
+
+                // 恢复本机音效开关：服务端有记录则以服务端为准，否则上报本地偏好
+                if (window.audioManager && !this.isSpectator) {
+                    const localPlayer = data.gameSession.players.find(p => String(p.id) === String(this.playerId));
+                    if (localPlayer && typeof localPlayer.audioEnabled === 'boolean') {
+                        window.audioManager.setEnabled(localPlayer.audioEnabled);
+                    } else {
+                        this.syncAudioEnabled(window.audioManager.isEnabled);
+                    }
+                }
 
                 // 添加新的玩家信息
                 for (const player of data.gameSession.players) {
@@ -4348,8 +2628,18 @@ class MultiplayerGameManager {
                 }
 
 
+                // 名单到手就校正一次「谁是机器人」：缺了这一步，那台机器上的 AI 会静默不出手
+                this._syncBotFlagsFromRoster(data.gameSession.players);
+
                 // 更新游戏中的玩家名称显示
                 this.updateGamePlayerNames(data.gameSession.players);
+
+                // 重连/刷新回来时把头像也贴回去（观战路径一直这么做，玩家路径漏了）
+                for (const player of data.gameSession.players) {
+                    if (player.color && player.emoji) {
+                        window.gameInstance?.updatePlayerEmoji?.(player.color, player.emoji);
+                    }
+                }
 
                 // 更新房主状态（重连时需要）
                 const myPlayerData = data.gameSession.players.find(p => p.id === this.playerId);
@@ -4367,28 +2657,21 @@ class MultiplayerGameManager {
                     console.log(`[重连] 更新房主状态: ${wasHost} -> ${this.isHost}`);
                 }
 
-                // 如果房主状态发生变化，处理AI托管代理逻辑
+                // 房主状态变化时，同步托管显示
                 if (wasHost !== this.isHost) {
                     // 更新暂停和结算按钮UI
                     if (window.gameInstance && window.gameInstance.eventHandler) {
                         window.gameInstance.eventHandler.updatePauseButtonText();
                     }
                     
-                    if (this.isHost) {
-                        // 成为新房主，需要接管AI托管玩家的操作
-                        console.log('[重连] 成为房主，检查是否需要接管AI托管操作');
-                        this.checkAndTakeoverAIOperations();
-                    } else {
-                        // 不再是房主，清除AI托管的超时回调
-                        console.log('[重连] 不再是房主，清除AI托管超时回调');
-                        if (gameState && gameState.thinkingTimer) {
-                            // 只清除非本地玩家的超时回调
-                            const currentPlayer = gameState.getCurrentPlayer();
-                            const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
-                            if (currentPlayer !== localPlayerNumber) {
-                                clearTimeout(gameState.thinkingTimer);
-                                gameState.thinkingTimer = null;
-                            }
+                    // 房主身份变化只影响「谁能暂停/结束」这类权限：AI 与托管出手在服务端
+                    if (!this.isHost && gameState && gameState.thinkingTimer) {
+                        // 不再是房主，清掉替别人挂着的超时回调
+                        const currentPlayer = gameState.getCurrentPlayer();
+                        const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
+                        if (currentPlayer !== localPlayerNumber) {
+                            clearTimeout(gameState.thinkingTimer);
+                            gameState.thinkingTimer = null;
                         }
                     }
                 }
@@ -4429,14 +2712,21 @@ class MultiplayerGameManager {
                 // 检查是否需要恢复：有当前玩家或有棋子不在初始位置
                 const needsRestore = gameData.currentPlayer !== null ||
                     this.hasNonInitialChessPositions(gameData.playerChess);
+
+                // 对局已有推进痕迹说明这是刷新/重连而非全新开局，别再冒出一条"游戏开始"
+                if ((gameData.currentRound || 0) > 0 ||
+                    (gameData.diceValue || 0) > 0 ||
+                    this.hasNonInitialChessPositions(gameData.playerChess)) {
+                    this.hasPrintedGameStart = true;
+                }
                 
-                // 观战模式总是恢复
-                // 普通模式只要 needsRestore 为 true 就恢复（即使不是重连！）
+                // 服务端权威会话接管后，棋面/骰子/阶段一律以随后的 gameSnapshot 为准，
+                // 此处只补快照不包含的辅助状态（积分、思考进度时间），避免两套恢复逻辑互相覆盖
                 if (this.isSpectator || needsRestore) {
-                    console.log('[游戏状态同步] 开始调用restoreGameState');
-                    this.restoreGameState(gameData);
+                    console.log('[游戏状态同步] 恢复辅助状态，等待权威快照');
+                    this.restoreAuxState(gameData);
                 } else {
-                    console.log('[游戏状态同步] 跳过restoreGameState，条件不满足');
+                    console.log('[游戏状态同步] 跳过恢复，条件不满足');
                 }
             } else {
                 if (isRealReconnect) {
@@ -4450,13 +2740,6 @@ class MultiplayerGameManager {
                     players: data.gameSession.players,
                     gameSessionId: data.gameSessionId
                 });
-            }
-
-            // 无条件检查：如果游戏已正式开始且我是房主，检查是否需要接管AI操作
-            // 这个检查不依赖 wasHost / isRealReconnect 等条件，确保任何重连场景下都能触发
-            if (this.isHost && data.gameSession?.gameData?.gameOfficiallyStarted) {
-                console.log('[重连] 游戏已正式开始且我是房主，检查AI操作');
-                this.checkAndTakeoverAIOperations();
             }
 
             // 重连完成后的最终UI刷新：确保骰子和棋子高亮状态正确
@@ -4523,6 +2806,16 @@ class MultiplayerGameManager {
             });
         } catch (error) {
             console.error('更新游戏玩家名称失败:', error);
+        }
+    }
+
+    /**
+     * 处理服务端下发的音效开关变化（仅作用于本机玩家）
+     */
+    handleAudioEnabledChange(data) {
+        if (String(data.playerId) !== String(this.playerId)) return;
+        if (window.audioManager) {
+            window.audioManager.setEnabled(data.enabled);
         }
     }
 
@@ -4624,37 +2917,6 @@ class MultiplayerGameManager {
                 }
             }
 
-            // 如果当前回合就是这个被托管的玩家，且是房主客户端，立即触发AI操作
-            if (data.isActive && this.isHost) {
-                const currentPlayer = this.gameInstance.gameState.getCurrentPlayer();
-                const playerNumber = this.getPlayerNumberByPlayerId(data.playerId);
-                const currentPhase = this.gameInstance?.gameState?.getGamePhase();
-
-                console.log('检查是否需要立即触发AI操作:', {
-                    currentPlayer,
-                    playerNumber,
-                    playerId: data.playerId,
-                    isMatch: currentPlayer === playerNumber,
-                    gamePhase: currentPhase
-                });
-
-                // 如果当前回合正好是这个被托管的玩家，立即触发AI操作
-                if (currentPlayer === playerNumber) {
-                    const currentDiceValue = this.gameInstance?.gameState?.getDiceValue() || 0;
-
-                    if (currentPhase === 'selecting' || currentPhase === 'rolling') {
-                        console.log('当前回合是被托管玩家，房主立即触发AI操作');
-
-                        setTimeout(() => {
-                            if (window.botController && !window.botController.isProcessing) {
-                                window.botController.handleBotTurn();
-                            }
-                        }, 300); // 短延迟确保状态更新完成
-                    }
-                }
-            } else if (data.isActive && !this.isHost) {
-                console.log('非房主收到AI托管消息，不触发操作');
-            }
         } catch (error) {
             console.error('处理AI托管状态变化失败:', error);
         }
@@ -4743,9 +3005,11 @@ class MultiplayerGameManager {
                 ];
 
                 let updated = false;
-                selectors.forEach((selector, index) => {
+                let found = false;
+                selectors.forEach((selector) => {
                     const elements = document.querySelectorAll(selector);
                     elements.forEach(element => {
+                        found = true;
                         const currentName = element.textContent;
 
                         if (isActive && !currentName.includes('【Bot】')) {
@@ -4761,37 +3025,40 @@ class MultiplayerGameManager {
                 });
 
                 if (!updated) {
-                    // DOM 可能尚未渲染完成（尤其在重连/布局切换后），稍后重试一次
+                    // 名称已是目标状态时本来就无需改动；只有元素还没渲染出来才值得排一次重试
                     if (!this._aiTakeoverUiRetryTimers) {
                         this._aiTakeoverUiRetryTimers = new Map();
                     }
 
-                    // 检查当前最新的状态是否与重试状态一致
+                    // 目标状态已经过期（例如托管刚被关掉）就丢弃这次界面更新
                     const currentState = this.aiTakeoverPlayers.has(playerId);
-                    if (currentState === isActive) {
-                        // 状态一致，可以重试
-                        if (!this._aiTakeoverUiRetryTimers.has(playerNumber)) {
-                            const timer = setTimeout(() => {
-                                try {
-                                    this._aiTakeoverUiRetryTimers.delete(playerNumber);
-                                    // 重试前再次检查状态一致性
-                                    const latestState = this.aiTakeoverPlayers.has(playerId);
-                                    if (latestState === isActive) {
-                                        this.updatePlayerAITakeoverDisplay(playerId, isActive);
-                                    } else {
-                                        console.log(`重试取消：状态已变化，当前: ${latestState}, 重试目标: ${isActive}`);
-                                    }
-                                } catch (e) {
-                                    // ignore
-                                }
-                            }, 120);
-                            this._aiTakeoverUiRetryTimers.set(playerNumber, timer);
-                        } else {
-                            console.warn(`未找到玩家${playerNumber}的名称元素或名称无需更新`);
-                        }
-                    } else {
-                        console.log(`重试取消：状态已变化，当前: ${currentState}, 重试目标: ${isActive}`);
+                    if (currentState !== isActive) {
+                        console.log(`[AI托管] 丢弃过期的界面更新：目标 ${isActive}，当前 ${currentState}`);
+                        return;
                     }
+
+                    if (this._aiTakeoverUiRetryTimers.has(playerNumber)) {
+                        return; // 已有重试在排队
+                    }
+                    if (!found) {
+                        console.log(`[AI托管] 暂未找到玩家${playerNumber}的名称元素，稍后重试一次`);
+                    }
+
+                    const timer = setTimeout(() => {
+                        try {
+                            this._aiTakeoverUiRetryTimers.delete(playerNumber);
+                            // 重试前再次检查状态一致性
+                            const latestState = this.aiTakeoverPlayers.has(playerId);
+                            if (latestState === isActive) {
+                                this.updatePlayerAITakeoverDisplay(playerId, isActive);
+                            } else {
+                                console.log(`[AI托管] 重试时状态已变化，放弃这次界面更新：目标 ${isActive}，当前 ${latestState}`);
+                            }
+                        } catch (e) {
+                            // ignore
+                        }
+                    }, 120);
+                    this._aiTakeoverUiRetryTimers.set(playerNumber, timer);
                 }
             } else {
                 console.warn(`无法找到playerId ${playerId} 对应的玩家编号`);
@@ -5042,15 +3309,6 @@ class MultiplayerGameManager {
             }
         }
 
-        // 如果是房主，检查是否需要重新触发AI操作
-        // 这是为了处理以下情况：玩家A断线后玩家B成为房主，玩家B开启了AI托管
-        // 当玩家A重连后，玩家B的AI操作可能需要重新触发
-        if (this.isHost && data.playerId !== this.playerId) {
-            setTimeout(() => {
-                this.checkAndTriggerAIOperationIfNeeded();
-            }, 500);
-        }
-
         // 自己重连：如果本地仍处于AI托管，主动向服务器重新同步一次。
         // 否则其他客户端只会看到昵称【Bot】（本地渲染）而收不到托管状态，导致操作权限/标记不同步。
         if (String(data.playerId) === String(this.playerId)) {
@@ -5067,97 +3325,6 @@ class MultiplayerGameManager {
             } catch (e) {
                 // ignore
             }
-        }
-    }
-
-    /**
-     * 检查并触发AI操作（如果需要）
-     * 用于处理各种状态变化后可能需要重新触发AI操作的情况
-     */
-    checkAndTriggerAIOperationIfNeeded() {
-        if (!this.isHost || !this.gameInstance?.gameState) {
-            return;
-        }
-
-        // 检查是否正在掷骰中，防止骰子结果尚未处理完毕时重复触发
-        const isRolling = this.gameInstance.gameState.getIsRolling ? this.gameInstance.gameState.getIsRolling() : false;
-        if (isRolling) {
-            console.log('[检查AI操作] 正在掷骰中，跳过');
-            return;
-        }
-
-        console.log('[检查AI操作] 触发botController.handleBotTurn()');
-        if (window.botController && !window.botController.isProcessing) {
-            window.botController.handleBotTurn();
-        }
-    }
-
-    /**
-     * 处理进度条重置消息（当前玩家重连时触发）
-     */
-    handleProgressBarReset(data) {
-        console.log('[进度条重置] 收到消息:', data);
-
-        const { playerColor, thinkingStartTime } = data;
-
-        // 更新本地的思考开始时间
-        if (gameState && thinkingStartTime) {
-            gameState.thinkingStartTime = thinkingStartTime;
-            gameState.pausedThinkingTime = 0;
-            console.log(`[进度条重置] 更新thinkingStartTime: ${thinkingStartTime}`);
-        }
-
-        // 重置进度条显示
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
-
-        if (progressContainer && progressBar) {
-            // 设置玩家颜色
-            progressContainer.className = `thinking-progress-container active player-${playerColor}`;
-            // 重置进度为0%
-            progressBar.style.width = '0%';
-            console.log(`[进度条重置] 进度条已重置为0%，玩家颜色: ${playerColor}`);
-        }
-
-        // 重新设置超时回调（如果需要）
-        const localPlayerNumber = this.getPlayerNumberByPlayerId(this.playerId);
-        const isCurrentPlayerLocal = playerColor === localPlayerNumber;
-
-        // 清除旧的超时回调
-        if (gameState.thinkingTimer) {
-            clearTimeout(gameState.thinkingTimer);
-            gameState.thinkingTimer = null;
-        }
-
-        // 如果是本地玩家的回合，或是房主代理非本地玩家回合，设置新的超时回调
-        const shouldSetTimeout = isCurrentPlayerLocal || this.isHost;
-
-        if (shouldSetTimeout) {
-            // 计算剩余时间（从 thinkingStartTime 到现在的耗时）
-            const elapsed = Date.now() - (gameState.thinkingStartTime || Date.now());
-            const remainingTime = Math.max(100, gameState.THINKING_TIME - elapsed); // 至少100ms
-            console.log(`[进度条重置] 设置新的超时回调，剩余${remainingTime}ms`);
-            gameState._thinkingTimerContext = {
-                startTime: gameState.thinkingStartTime,
-                player: playerColor,
-                phase: gameState.gamePhase
-            };
-            gameState.thinkingTimer = setTimeout(() => {
-                console.log(`玩家${playerColor}思考时间到，自动切换到下一个玩家`);
-                if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                    this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                }
-            }, remainingTime);
-        } else {
-            // 非当前玩家且非房主，计算剩余时间维持进度条更新循环
-            const elapsed = Date.now() - (gameState.thinkingStartTime || Date.now());
-            const remainingTime = Math.max(100, gameState.THINKING_TIME - elapsed);
-            gameState.thinkingTimer = setTimeout(() => {}, remainingTime);
-        }
-
-        // 启动进度条更新循环
-        if (uiUpdater && uiUpdater.updateProgressBarLoop) {
-            uiUpdater.updateProgressBarLoop();
         }
     }
 
@@ -5184,6 +3351,8 @@ class MultiplayerGameManager {
             if (this.gameInstance.resumeGame) {
                 this.gameInstance.resumeGame();
             }
+            // 暂停期间道具界面被统一收起过，这里按同一份权威状态重画（刷新回来的 DOM 是空的）
+            this._renderItemState(this.gameInstance.gameState || window.gameState);
             // 更新按钮文本
             if (window.eventHandler) {
                 window.eventHandler.updatePauseButtonText();
@@ -5211,16 +3380,6 @@ class MultiplayerGameManager {
      * 处理房主变更消息
      */
     handleHostChanged(data) {
-        console.log('房主变更:', {
-            oldHostId: data.oldHostId,
-            newHostId: data.newHostId,
-            newHostNickname: data.newHostNickname,
-            currentPlayerId: this.playerId,
-            isNewHost: data.newHostId === this.playerId
-        });
-
-        // 更新房主标志
-        const wasHost = this.isHost;
         this.isHost = data.newHostId === this.playerId;
 
         // 更新暂停按钮UI
@@ -5228,7 +3387,7 @@ class MultiplayerGameManager {
             window.gameInstance.eventHandler.updatePauseButtonText();
         }
 
-        // 显示系统消息
+        // 显示系统消息（AI/托管的出手在服务端，新房主不需要接管什么）
         if (window.gameInfo) {
             if (this.isHost) {
                 window.gameInfo.addChatMessage(null, `你已成为新房主`, null, true);
@@ -5236,135 +3395,6 @@ class MultiplayerGameManager {
                 window.gameInfo.addChatMessage(null, `${data.newHostNickname} 成为新房主`, null, true);
             }
         }
-
-        // 如果当前客户端成为新房主，立即检查是否需要接管AI操作
-        if (this.isHost && !wasHost) {
-            console.log('当前客户端成为新房主，检查是否需要接管AI操作');
-
-            // 延迟执行，确保状态更新完成
-            setTimeout(() => {
-                if (this.gameInstance && this.gameInstance.gameState) {
-                    const currentPlayer = this.gameInstance.gameState.getCurrentPlayer();
-                    const currentPlayerId = this.getPlayerIdByPlayerNumber(currentPlayer);
-                    const currentPlayerData = this.players.get(currentPlayerId);
-                    const gamePhase = this.gameInstance.gameState.getGamePhase();
-                    // 检查当前玩家是否是AI或处于AI托管状态
-                    const isAIPlayer = currentPlayerData?.isAI || false;
-                    const isPlayerAITakeover = this.aiTakeoverPlayers.has(currentPlayerId) || currentPlayerData?.isAITakeover || false;
-                    // 检查当前玩家是否已断开连接
-                    const isPlayerDisconnected = this._playerConnectionStatus.get(currentPlayerId) === false;
-
-                    if ((isAIPlayer || isPlayerAITakeover) && (gamePhase === 'rolling' || gamePhase === 'selecting')) {
-                        // 延迟触发，确保状态更新完成
-                        setTimeout(() => {
-                            if (window.botController) {
-                                if (!window.botController.isEnabled) {
-                                    window.botController.setEnabled(true);
-                                }
-
-                                const phaseNow = this.gameInstance?.gameState?.getGamePhase();
-                                const currentPlayerNow = this.gameInstance?.gameState?.getCurrentPlayer();
-
-                                if ((phaseNow === 'rolling' || phaseNow === 'selecting') && currentPlayerNow === currentPlayer) {
-                                    window.botController.handleBotTurn();
-                                }
-                            } else {
-                                console.error('❌ 无法执行AI操作：botController不存在');
-                            }
-                        }, 800);
-                    } else if (isPlayerDisconnected && (gamePhase === 'rolling' || gamePhase === 'selecting')) {
-                        // 当前玩家是断线的人类玩家（非AI），等待思考超时后触发AI托管
-                        console.log(`[房主变更] 当前玩家${currentPlayer}已断线，检查剩余思考时间`);
-                        const remainingTime = gameState.getRemainingThinkingTime();
-                        console.log(`[房主变更] 剩余思考时间: ${remainingTime}ms`);
-                        if (remainingTime > 0) {
-                            // 清除旧的计时器，设置新的超时回调
-                            if (gameState.thinkingTimer) {
-                                clearTimeout(gameState.thinkingTimer);
-                            }
-                            gameState._thinkingTimerContext = {
-                                startTime: gameState.thinkingStartTime,
-                                player: gameState.currentPlayer,
-                                phase: gameState.gamePhase
-                            };
-                            gameState.thinkingTimer = setTimeout(() => {
-                                console.log(`[房主变更] 思考超时，触发AI托管`);
-                                if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                                    this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                                }
-                            }, remainingTime);
-                        } else {
-                            // 时间已用完，立即触发超时
-                            console.log(`[房主变更] 思考时间已用完，立即触发AI托管`);
-                            if (this.gameInstance?.dice?.handleThinkingTimeoutWrapper) {
-                                this.gameInstance.dice.handleThinkingTimeoutWrapper();
-                            }
-                        }
-                    } else {
-                        console.log('当前玩家不需要AI操作或游戏阶段不合适', {
-                            isAIPlayer,
-                            isPlayerAITakeover,
-                            isPlayerDisconnected,
-                            gamePhase
-                        });
-                    }
-                } else {
-                    console.warn('⚠️ gameInstance或gameState不存在，无法检查AI状态');
-                }
-            }, 300);
-        }
-    }
-
-    /**
-     * 检查并接管AI托管操作（成为房主时调用）
-     */
-    checkAndTakeoverAIOperations() {
-        setTimeout(() => {
-            if (this.gameInstance && this.gameInstance.gameState) {
-                const currentPlayer = this.gameInstance.gameState.getCurrentPlayer();
-                const currentPlayerId = this.getPlayerIdByPlayerNumber(currentPlayer);
-                const currentPlayerData = this.players.get(currentPlayerId);
-                const gamePhase = this.gameInstance.gameState.getGamePhase();
-
-                // 检查当前玩家是否是AI或处于AI托管状态
-                const isAIPlayer = currentPlayerData?.isAI || false;
-                const isPlayerAITakeover = this.aiTakeoverPlayers.has(currentPlayerId) || currentPlayerData?.isAITakeover || false;
-
-                console.log('[接管AI] 检查状态:', {
-                    currentPlayer,
-                    isAIPlayer,
-                    isPlayerAITakeover,
-                    gamePhase,
-                    aiTakeoverPlayers: Array.from(this.aiTakeoverPlayers)
-                });
-
-                // 检查是否正在掷骰中，防止骰子结果尚未处理完毕时重复触发
-                const isRolling = this.gameInstance.gameState.getIsRolling ? this.gameInstance.gameState.getIsRolling() : false;
-                if (isRolling) {
-                    console.log('[接管AI] 正在掷骰中，跳过AI操作触发');
-                    return;
-                }
-
-                if ((isAIPlayer || isPlayerAITakeover) && (gamePhase === 'rolling' || gamePhase === 'selecting')) {
-                    console.log('[接管AI] 需要接管AI操作，清空倒计时避免冲突');
-
-                    if (gameState.thinkingTimer) {
-                        clearTimeout(gameState.thinkingTimer);
-                        gameState.thinkingTimer = null;
-                    }
-
-                    // 延迟触发AI操作
-                    setTimeout(() => {
-                        console.log('[接管AI] 触发botController.handleBotTurn()');
-                        if (window.botController && !window.botController.isProcessing) {
-                            window.botController.handleBotTurn();
-                        }
-                    }, 500);
-                } else {
-                    console.log('[接管AI] 当前玩家不需要AI操作或游戏阶段不合适');
-                }
-            }
-        }, 300);
     }
 
     /**
@@ -5373,6 +3403,12 @@ class MultiplayerGameManager {
     destroy() {
         this.disableReconnect = true;
         this.gameSessionId = null;
+        this.stopSnapshotSelfHeal();
+        this.stopWsHeartbeat();
+        this._snapshotGate.reset();
+        this._snapshotRetryCount = 0;
+        this._catchUpMode = false;
+        this._serverThinkingWindow = null;
         // 不重置 reconnectManager，保留 roomCode 和 gameSessionId 以便玩家从房间列表重连
         if (this.wsClient) {
             this.wsClient.close();

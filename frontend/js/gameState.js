@@ -1,6 +1,5 @@
 import { activePlayerManager } from './activePlayerManager.js';
 
-// 游戏状态管理模块
 class GameState {
     constructor() {
         // 思考时间常量（毫秒）
@@ -15,16 +14,13 @@ class GameState {
         this.isRolling = false; // 防抖标志，防止重复点击骰子
         this.consecutiveSixes = 0; // 当前回合连续摇到6的次数
         this.canReroll = false; // 是否可以重新投骰
-        this.justRolledSix = false; // 标记是否刚刚掷出了6点
         this.isRemoteDice = false; // 标记是否是遥控骰子（6点不触发连投）
         this.isPaused = false; // 游戏暂停状态
         this.isAITakeover = false; // AI托管状态
-        this.originalPlayerNames = {}; // 存储原始玩家昵称
         this.aiDecisionInProgress = false; // AI决策进行中状态
         this.chessMoving = false; // 棋子移动中状态
         this.gamePhaseBeforePause = null; // 暂停前的游戏阶段
         this.currentPlayerBeforePause = null; // 暂停前的当前玩家
-        this.pendingSafePause = false; // 待定的安全暂停安全暂停等待标志
         this.gameOfficiallyStarted = false; // 游戏是否正式开始（人类玩家进行了首次操作）
         this.isLocalMultiplayer = false; // 是否为本地多人模式
         this.isOnlineMultiplayer = false; // 是否为在线多人模式
@@ -44,6 +40,11 @@ class GameState {
         this.thinkingTimeRemaining = 0; // 剩余思考时间
         this.pausedThinkingTime = 0; // 暂停期间累计的时间
         this.pauseStartTime = null; // 暂停开始时间
+        this.thinkingTimerOwner = null; // 当前计时器所属玩家（进度条颜色依据）
+        this.thinkingProgressDisplayOwner = null; // 动画期间锁定的进度条展示归属（本次掷骰者）
+
+        // 由 shared/engine.mjs 接管规则的标志（单机模式开启）
+        this.engineDriven = false;
 
         // 主轨道位置
         this.mainTrack = this.generateMainTrack();
@@ -252,11 +253,6 @@ class GameState {
         return rotations;
     }
 
-    // 获取指定状态
-    getState(key) {
-        return this[key];
-    }
-
     // 设置指定状态
     setState(key, value) {
         this[key] = value;
@@ -272,35 +268,11 @@ class GameState {
         this.playerChess[player][index].position = position;
     }
 
-    // 设置棋子DOM元素
-    setChessElement(player, index, element) {
-        this.playerChess[player][index].element = element;
-    }
-
-    // 标记棋子完成
-    setChessFinished(player, index, finished = true) {
-        this.playerChess[player][index].finished = finished;
-    }
-
-    // 获取所有棋子状态
-    getAllChessStates() {
-        return this.playerChess;
-    }
-
-    // 获取主轨道
-    getMainTrack() {
-        return this.mainTrack;
-    }
-
-    // 获取起始位置
-    getStartPositions() {
-        return this.startPositions;
-    }
 
     // 重置游戏状态
     resetGameState() {
-        // 清除思考时间计时器
-        this.clearThinkingTimer();
+        // 清除思考时间计时器与窗口（新一局重新开始计时）
+        this.clearThinkingWindow();
 
         this.currentPlayer = null;
         this.gamePhase = 'waiting';
@@ -311,7 +283,6 @@ class GameState {
         this.consecutiveSixes = 0;
         this.canReroll = false;
         this.isRemoteDice = false;
-        this.isPolyhedralDiceActive = false;
         this.gameOfficiallyStarted = false; // 重置游戏正式开始状态
         this.isLocalMultiplayer = false; // 重置本地多人模式状态
         this.isOnlineMultiplayer = false; // 重置在线多人模式状态
@@ -381,19 +352,7 @@ class GameState {
         };
     }
 
-    // 记录首位完成者
-    recordFirstFinished(player) {
-        if (this.titleStats.firstFinishedPlayer === null) {
-            this.titleStats.firstFinishedPlayer = player;
-        }
-    }
 
-    // 增加玩家总前进距离
-    incrementTotalDistance(player, distance) {
-        if (this.totalDistance[player] !== undefined) {
-            this.totalDistance[player] += Math.max(0, distance);
-        }
-    }
 
     // 获取玩家总前进距离
     getTotalDistance(player) {
@@ -441,39 +400,7 @@ class GameState {
     recordBounceSteps(player, steps) {
         if (this.titleStats.bounceSteps && this.titleStats.bounceSteps[player] !== undefined) {
             this.titleStats.bounceSteps[player] += Math.max(0, steps);
-            console.log(`[称号统计] 玩家${player} 累计反弹格数增加 ${steps}，总计: ${this.titleStats.bounceSteps[player]}`);
         }
-    }
-
-    // 获取当前玩家可移动的棋子
-    getMovableChess(player, diceValue) {
-        const movableChess = [];
-
-        for (let i = 0; i < this.pieceCount; i++) {
-            const chess = this.playerChess[player][i];
-
-            // 如果棋子已完成，跳过
-            if (chess.finished) continue;
-
-            // 如果棋子在起始区域，只有摇到6才能出发
-            if (chess.position === -1) {
-                if (diceValue === 6) {
-                    movableChess.push(i);
-                }
-            }
-        }
-
-        return movableChess;
-    }
-
-    // 检查玩家是否获胜
-    checkPlayerWin(player) {
-        for (let i = 0; i < this.pieceCount; i++) {
-            if (!this.playerChess[player][i].finished) {
-                return false;
-            }
-        }
-        return true;
     }
 
     // 检查玩家是否只剩一颗未完成的棋子
@@ -491,23 +418,10 @@ class GameState {
     }
 
     // 切换到下一个玩家
-    nextPlayer(uiUpdater = null, handleThinkingTimeoutWrapper = null, triggerBotOperationIfNeeded = null, stopProgressBar = true, onlineTurnChangeExtra = null) {
-
-        // 网络回放模式下不切玩家、不发同步消息，状态由收到的 playerTurnChange 消息同步
-        const isNetworkReplay = window.gameInstance && window.gameInstance.chessPiece && window.gameInstance.chessPiece._isNetworkReplayMode;
-        if (isNetworkReplay) {
-            console.log('[nextPlayer] 网络回放模式，跳过本地切玩家');
-            return;
-        }
-
-        // 在多人模式下，需要先同步activePlayerManager的当前玩家状态
-        if (this.isOnlineMultiplayer || this.isLocalMultiplayer) {
-            // 确保activePlayerManager知道当前玩家是谁
-            activePlayerManager.setCurrentActivePlayer(this.currentPlayer);
-        }
-
-        // 使用activePlayerManager获取下一个激活玩家
-        const nextPlayer = activePlayerManager.getNextActivePlayer();
+    nextPlayer(uiUpdater = null, handleThinkingTimeoutWrapper = null, triggerBotOperationIfNeeded = null) {
+        // 引擎已经推进过回合，这里只把 activePlayerManager 对齐到引擎的当前玩家
+        const nextPlayer = this.currentPlayer;
+        activePlayerManager.setCurrentActivePlayer(nextPlayer);
 
         // 保存当前回合的完成度快照（在切换玩家之前）
         this.saveProgressSnapshot();
@@ -541,20 +455,13 @@ class GameState {
         this.consecutiveSixes = 0;
         this.canReroll = false;
         this.isRemoteDice = false;
-        this.isPolyhedralDiceActive = false;
         this.isThreeSixesPenaltyActive = false; // 确保清除三次6惩罚标志
 
-        // 在多人游戏模式下同步玩家轮次变化
+        // 在线多人模式下停止当前进度条；回合推进由服务端权威棋面驱动，无需本地广播
         if (this.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            // 在在线多人模式下，无论stopProgressBar参数如何，都需要停止当前进度条
-            // 这确保了正常切换下家时进度条状态的正确同步
             if (uiUpdater && uiUpdater.stopThinkingProgressBar) {
                 uiUpdater.stopThinkingProgressBar();
             }
-
-            // 同步玩家轮次变化
-            window.gameInstance.multiplayerGameManager.syncPlayerTurnChange(this.currentPlayer, onlineTurnChangeExtra);
-            // 注意：进度条启动由handlePlayerTurnChange处理，避免重复发送
         }
 
         // 更新UI（如果提供了uiUpdater）
@@ -601,19 +508,6 @@ class GameState {
     setCurrentPlayer(player) {
         if (this.currentPlayer === player) return;
         this.currentPlayer = player;
-
-        // 切换玩家时的彩色控制台日志
-        let color = '#ffffff';
-        try {
-            const rootStyle = getComputedStyle(document.documentElement);
-            const cssColor = rootStyle.getPropertyValue(`--player-${player}-color`).trim();
-            if (cssColor) {
-                color = cssColor;
-            }
-        } catch (e) {
-            // ignore
-        }
-        console.log(`%c切换到玩家${player}`, `color: ${color}; font-weight: bold; font-size: 14px;`);
     }
 
     // 获取游戏阶段
@@ -625,18 +519,6 @@ class GameState {
     setGamePhase(phase) {
         const oldPhase = this.gamePhase;
         this.gamePhase = phase;
-
-        // 当从关键阶段（selecting/moving）切换到其他阶段时，检查是否有待定的安全暂停
-        const criticalPhases = ['selecting', 'moving'];
-        const wasInCriticalPhase = criticalPhases.includes(oldPhase);
-        const isInCriticalPhase = criticalPhases.includes(phase);
-
-        if (wasInCriticalPhase && !isInCriticalPhase && this.pendingSafePause) {
-            // 延迟执行暂停，确保当前阶段切换完成
-            setTimeout(() => {
-                this.executePendingSafePause();
-            }, 0);
-        }
 
         // 当游戏阶段切换到rolling或selecting时，检查是否需要触发AI操作
         // 注意：联机模式下，AI操作由 handlePlayerTurnChange 统一处理，这里不触发
@@ -654,12 +536,6 @@ class GameState {
                 const isAITakeover = this.getIsAITakeover();
 
                 if (isBotPlayer || isAITakeover) {
-                    console.log(`当前玩家${currentPlayer}是bot或处于AI托管状态，触发AI操作`, {
-                        isBotPlayer,
-                        isAITakeover,
-                        gamePhase: phase
-                    });
-
                     // 触发AI操作
                     if (window.eventHandler && window.eventHandler.triggerBotOperationIfNeeded) {
                         window.eventHandler.triggerBotOperationIfNeeded();
@@ -713,10 +589,6 @@ class GameState {
         return this.isRolling;
     }
 
-    // 设置是否正在掷骰子
-    setIsRolling(rolling) {
-        this.isRolling = rolling;
-    }
 
     // 获取选中的棋子
     getSelectedChess() {
@@ -768,10 +640,23 @@ class GameState {
         return this.winner;
     }
 
-    // 设置获胜者
-    setWinner(winner) {
-        this.winner = winner;
+    /**
+     * 本局是否开启道具模式。
+     * 本地模式（单机 / 本地多人）由开局配置决定，引擎要用同一个值建初始状态；
+     * 联机由服务端下发，不看这里。首次读取后缓存，换模式会整页重载。
+     */
+    isSkillModeEnabled() {
+        if (this._skillModeEnabled === undefined) {
+            try {
+                const raw = sessionStorage.getItem('gameConfig');
+                this._skillModeEnabled = Boolean(raw && JSON.parse(raw).skillMode === true);
+            } catch (error) {
+                this._skillModeEnabled = false;
+            }
+        }
+        return this._skillModeEnabled;
     }
+
 
     // 重置游戏
     async resetGame() {
@@ -786,6 +671,16 @@ class GameState {
 
     // 开始思考时间计时
     startThinkingTimer(onTimeout) {
+        // 暂停期间不启动计时器，跑完会触发超时接管
+        if (this.isPaused) {
+            return;
+        }
+        // 这一回合的窗口还没走完就接着走：窗口起点由服务端维护，
+        // 刷新、重连、补快照都只是重发同一扇窗，不该换来新的思考时间
+        if (this.getRemainingThinkingTime() > 0) {
+            this.resumeThinkingTimer(onTimeout);
+            return;
+        }
         this.clearThinkingTimer();
         const startTime = Date.now();
         const playerAtStart = this.currentPlayer;
@@ -794,6 +689,8 @@ class GameState {
         this.thinkingStartTime = startTime;
         this.thinkingTimeRemaining = this.THINKING_TIME;
         this.pausedThinkingTime = 0; // 暂停期间累计的时间
+        // 进度条颜色锁定到本次计时所属玩家
+        this.thinkingTimerOwner = playerAtStart;
 
         // 记录本次计时上下文，避免回合切换/重连导致“旧计时器”误触发
         this._thinkingTimerContext = {
@@ -851,6 +748,15 @@ class GameState {
         const phaseAtStart = this.gamePhase;
         const startTime = this.thinkingStartTime;
 
+        // 续上同一扇窗，上下文要按这颗计时器重建：
+        // 之前若被 clearThinkingTimer 清过，回调会被当成过期而吞掉
+        this._thinkingTimerContext = {
+            startTime,
+            player: playerAtStart,
+            phase: phaseAtStart
+        };
+        this.thinkingTimerOwner = playerAtStart;
+
         this.thinkingTimer = setTimeout(() => {
             if (!this._thinkingTimerContext ||
                 this._thinkingTimerContext.startTime !== startTime ||
@@ -873,17 +779,25 @@ class GameState {
         }, remaining);
     }
 
-    // 完全清除思考时间计时器及状态
+    // 清除思考时间计时器及本地计时状态
     clearThinkingTimer() {
         if (this.thinkingTimer) {
             clearTimeout(this.thinkingTimer);
             this.thinkingTimer = null;
         }
         this._thinkingTimerContext = null;
-        this.thinkingStartTime = null;
         this.thinkingTimeRemaining = 0;
         this.pausedThinkingTime = 0;
         this.pauseStartTime = null;
+        this.thinkingTimerOwner = null;
+        // 不清 thinkingStartTime：它是服务端给这一回合的窗口起点，
+        // 本地停计时器（换渲染、暂停）之后再起时还要靠它接着算，清掉就等于刷新续命
+    }
+
+    /** 换局/离开对局时把窗口起点也清掉 */
+    clearThinkingWindow() {
+        this.clearThinkingTimer();
+        this.thinkingStartTime = null;
     }
 
     // 获取剩余思考时间
@@ -925,14 +839,35 @@ class GameState {
         return Math.min(1, elapsed / this.THINKING_TIME);
     }
 
-    // 获取思考时间常量
-    getThinkingTime() {
-        return this.THINKING_TIME;
-    }
 
     // 是否正在计时
     isThinkingTimerActive() {
         return this.thinkingTimer !== null;
+    }
+
+    /**
+     * 进度条颜色归属：锁定在「计时器启动那一刻」的玩家。
+     * 这是进度条不变色的根本保证——快照会把 currentPlayer 提前推给下家，
+     * 但只要计时器还是上一位玩家的，进度条就维持上一位玩家的颜色。
+     */
+    getThinkingProgressOwner() {
+        return this.thinkingTimerOwner ?? null;
+    }
+
+    /**
+     * 进度条展示归属：掷骰/走子动画期间锁定为「本次掷骰者」，
+     * 避免动画尚未播完时进度条就提前变成下家颜色。
+     */
+    setThinkingProgressDisplayOwner(player) {
+        this.thinkingProgressDisplayOwner = player ?? null;
+    }
+
+    clearThinkingProgressDisplayOwner() {
+        this.thinkingProgressDisplayOwner = null;
+    }
+
+    getThinkingProgressDisplayOwner() {
+        return this.thinkingProgressDisplayOwner ?? null;
     }
 
     // 处理思考时间超时
@@ -949,7 +884,7 @@ class GameState {
 
         // 清除计时器
         this.clearThinkingTimer();
-        // 联机模式：超时托管必须按 playerId 精确同步，由房主代理执行。
+        // 联机模式：超时托管必须按 playerId 精确同步，出手一律由服务端执行。
         // 绝对不要在这里开启本地“全局AI托管”（aiTakeoverManager.enableTakeover），否则会把房主 UI/昵称错误地标记为 AI。
         if (this.isOnlineMultiplayer) {
             try {
@@ -1027,32 +962,6 @@ class GameState {
         };
     }
 
-    // 增加击败次数
-    incrementDefeatCount(attackerPlayer, defeatedPlayer) {
-        if (this.defeatCounts[attackerPlayer] && this.defeatCounts[attackerPlayer][defeatedPlayer] !== undefined) {
-            this.defeatCounts[attackerPlayer][defeatedPlayer]++;
-
-            const newCount = this.defeatCounts[attackerPlayer][defeatedPlayer];
-
-            // 立即更新显示
-            import('./defeatCountDisplay.js').then(({ defeatCountDisplay }) => {
-                defeatCountDisplay.updateDefeatCount(
-                    attackerPlayer,
-                    defeatedPlayer,
-                    newCount
-                );
-            });
-
-            // 在联机模式下同步到其他玩家
-            if (this.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-                window.gameInstance.multiplayerGameManager.syncDefeatCountChange(
-                    attackerPlayer,
-                    defeatedPlayer,
-                    newCount
-                );
-            }
-        }
-    }
 
     // 获取击败次数
     getDefeatCount(attackerPlayer, defeatedPlayer) {
@@ -1060,11 +969,6 @@ class GameState {
             return this.defeatCounts[attackerPlayer][defeatedPlayer];
         }
         return 0;
-    }
-
-    // 获取所有击败次数
-    getAllDefeatCounts() {
-        return this.defeatCounts;
     }
 
     // 获取游戏暂停状态
@@ -1103,7 +1007,6 @@ class GameState {
         }
 
         this.isPaused = paused;
-        console.log(`%c游戏${paused ? '暂停' : '恢复'}`, paused ? 'color:red; font-weight:bold' : 'color:green; font-weight:bold');
     }
     /**
      * 显示加载提示并隐藏游戏控件
@@ -1140,8 +1043,9 @@ class GameState {
             diceDisplay.style.display = 'none';
         }
 
+        // 暂停期间进度条整段隐藏；这里只摘 active，不写内联 display
         if (thinkingProgressContainer) {
-            thinkingProgressContainer.style.display = 'none';
+            thinkingProgressContainer.classList.remove('active');
         }
 
     }
@@ -1184,9 +1088,8 @@ class GameState {
             }
         }
 
-        if (thinkingProgressContainer) {
-            thinkingProgressContainer.style.display = 'block';
-        }
+        // 进度条可见性统一交给渲染器（基于计时器），避免内联 display 盖过 .active
+        window.uiUpdater?._renderThinkingProgressBar?.();
     }
 
     // 切换游戏暂停状态
@@ -1204,16 +1107,6 @@ class GameState {
     // 记录游戏结束时间
     recordGameEndTime() {
         this.gameEndTime = Date.now();
-    }
-
-    // 获取游戏开始时间
-    getGameStartTime() {
-        return this.gameStartTime;
-    }
-
-    // 获取游戏结束时间
-    getGameEndTime() {
-        return this.gameEndTime;
     }
 
     // 获取游戏持续时间（毫秒）
@@ -1237,24 +1130,12 @@ class GameState {
         this.botPlayers = new Set(botPlayers);
     }
 
-    addBotPlayer(player) {
-        this.botPlayers.add(player);
-    }
-
-    removeBotPlayer(player) {
-        this.botPlayers.delete(player);
-    }
-
     isBotPlayer(player) {
         return this.botPlayers.has(player);
     }
 
     getBotPlayers() {
         return Array.from(this.botPlayers);
-    }
-
-    clearBotPlayers() {
-        this.botPlayers.clear();
     }
 
     // AI托管状态管理
@@ -1267,19 +1148,6 @@ class GameState {
         console.log(`AI托管${takeover ? '开启' : '关闭'}`);
     }
 
-    // 玩家昵称管理
-    storeOriginalPlayerName(player, name) {
-        this.originalPlayerNames[player] = name;
-    }
-
-    getOriginalPlayerName(player) {
-        return this.originalPlayerNames[player];
-    }
-
-    clearOriginalPlayerNames() {
-        this.originalPlayerNames = {};
-    }
-
     // AI决策进行中状态管理
     getAIDecisionInProgress() {
         return this.aiDecisionInProgress;
@@ -1287,11 +1155,6 @@ class GameState {
     // 设置AI决策状态
     setAIDecisionInProgress(inProgress) {
         this.aiDecisionInProgress = inProgress;
-
-        // 如果AI决策完成且有待定的安全暂停，执行暂停
-        if (!inProgress && this.pendingSafePause) {
-            this.executePendingSafePause();
-        }
     }
 
     // 三次6惩罚状态管理
@@ -1303,56 +1166,9 @@ class GameState {
         this.isThreeSixesPenaltyActive = active;
     }
 
-    // 棋子移动状态管理
-    getChessMoving() {
-        return this.chessMoving;
-    }
 
     setChessMoving(moving) {
         this.chessMoving = moving;
-
-        // 如果棋子移动完成且有待处理的安全暂停，执行暂停
-        if (!moving && this.pendingSafePause) {
-            this.executePendingSafePause();
-        }
-    }
-
-    // 安全暂停机制
-    getPendingSafePause() {
-        return this.pendingSafePause;
-    }
-
-    setPendingSafePause(pending) {
-        this.pendingSafePause = pending;
-    }
-
-    // 执行待处理的安全暂停
-    executePendingSafePause() {
-        if (this.pendingSafePause) {
-            this.setPendingSafePause(false);
-            
-            // 立即同步设置暂停状态，防止后续逻辑读取到错误的暂停状态
-            this.setIsPaused(true);
-
-            // 导入eventHandler并调用暂停方法的UI更新部分
-            import('./eventHandler.js').then(({ eventHandler }) => {
-                // 重置eventHandler的防抖状态
-                eventHandler.pendingPause = false;
-                // 更新UI和停止计时器
-                eventHandler.updatePauseButtonText();
-                window.uiUpdater.stopThinkingProgressBar();
-                window.gameInfo.addGamePause();
-                
-                // 联机模式下，立即停止所有AI操作和计时器
-                if (window.gameInstance && window.gameInstance.multiplayerGameManager &&
-                    window.gameInstance.multiplayerGameManager.isOnlineMode) {
-                    // 同步暂停状态到其他玩家
-                    window.gameInstance.multiplayerGameManager.syncGamePause();
-                }
-            }).catch(error => {
-                console.error('导入eventHandler失败:', error);
-            });
-        }
     }
 
     /**
@@ -1361,6 +1177,11 @@ class GameState {
     saveProgressSnapshot() {
         // 如果progressDisplay还未初始化，则跳过
         if (!window.gameInstance || !window.gameInstance.progressDisplay) {
+            return;
+        }
+
+        // 联机模式的完成度历史由服务端权威记录并随快照下发，客户端不再采集
+        if (this.isOnlineMultiplayer) {
             return;
         }
 
@@ -1401,11 +1222,6 @@ class GameState {
         }
 
         // console.log(`保存第${this.currentRound}回合完成度快照 (总计${this.progressHistory.length}条):`, snapshot);
-
-        // 在联机模式下，同步完成度历史到服务器（用于重连恢复）
-        if (this.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncProgressHistory(snapshot, this.currentRound);
-        }
     }
 
     /**
@@ -1417,27 +1233,13 @@ class GameState {
         console.log('已清理完成度历史记录');
     }
 
-    // 请求安全暂停
+    /**
+     * 请求暂停：点击当刻生效（等「安全时机」会因错过回调而永远停在「等待暂停...」）。
+     * 进行中的动画不强杀，但暂停期间不放行新的操作、计时器与 AI 动作。
+     */
     requestSafePause() {
-        // 联机模式下，立即暂停，不等待任何操作完成
-        if (this.isOnlineMultiplayer) {
-            this.setIsPaused(true);
-            return true;
-        }
-
-        // 单机/本地模式：检查是否在关键游戏阶段（需要等待完成的阶段）
-        const criticalPhases = ['selecting', 'moving'];
-        const isInCriticalPhase = criticalPhases.includes(this.gamePhase);
-
-        if (this.chessMoving || this.aiDecisionInProgress || isInCriticalPhase) {
-            console.log('棋子正在移动、AI正在决策或处于关键游戏阶段，设置安全暂停等待');
-            this.setPendingSafePause(true);
-            return false; // 返回false表示暂停被延迟
-        } else {
-            console.log('当前可以安全暂停');
-            this.setIsPaused(true);
-            return true; // 返回true表示立即暂停
-        }
+        this.setIsPaused(true);
+        return true;
     }
 }
 

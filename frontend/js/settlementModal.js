@@ -1,7 +1,3 @@
-/**
- * 结算模态框管理类
- * 负责显示游戏结算信息，包括玩家排名、完成度和defeat统计
- */
 import { playerNameManager } from './playerNameManager.js';
 import { activePlayerManager } from './activePlayerManager.js';
 import { reconnectManager } from './reconnectManager.js';
@@ -310,6 +306,28 @@ class SettlementModal {
             this.drawProgressChart();
             this.adjustTableHeaderFontSize();
         }, 0);
+    }
+
+    /**
+     * 统计表表头字号自适应：人多或名字长时收小，免得表头换行把表格撑破。
+     */
+    adjustTableHeaderFontSize() {
+        const container = this.dataAnalysisContainer;
+        if (!container) return;
+
+        const headers = container.querySelectorAll('.dice-stats-table th');
+        if (!headers.length) return;
+
+        const players = activePlayerManager.getActivePlayers();
+        const longestName = players.reduce((max, player) => {
+            const name = getDisplayName(player) || '';
+            return Math.max(max, name.length);
+        }, 0);
+        const crowded = players.length >= 4 || longestName > 6;
+
+        headers.forEach((th) => {
+            th.style.fontSize = crowded ? '11px' : '';
+        });
     }
 
     /**

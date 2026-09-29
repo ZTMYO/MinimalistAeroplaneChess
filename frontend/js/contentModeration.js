@@ -52,7 +52,4 @@ export async function sanitizeUserText(text) {
     return maskText(text);
 }
 
-export function sanitizeUserTextSync(text) {
-    return maskText(text);
-}
 

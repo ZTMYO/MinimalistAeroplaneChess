@@ -1,9 +1,10 @@
 import { playerNameManager } from './playerNameManager.js';
 import { gameState } from './gameState.js';
 
-/**
- * 游戏信息管理模块 - 负责收集和显示游戏过程中的各种信息
- */
+// 同一颗棋子的连续动作：跳子落到自己棋子上接飞棋，再接碰撞奖励。
+// 这些不是「又选了一颗棋子」，战报里要并进同一条。
+const CHAINED_MOVE_TYPES = new Set(['jump', 'fly', 'bonus']);
+
 class GameInfo {
     constructor() {
         this.gameState = gameState;
@@ -15,7 +16,16 @@ class GameInfo {
         this.isChatInteracting = false;
         this.currentPanel = 'game'; // 'game' 或 'chat'
         this.panelSwitchBound = false; // 标记面板切换按钮事件是否已绑定
+        // 静默模式：重建历史战报期间打开，历史事件只补进列表、不弹通知
+        this.silentMode = false;
+        // 最近一条「选择了棋子」的记录，连续动作（跳子/飞棋/奖励）并进它
+        this._lastMoveLine = null;
         this.init();
+    }
+
+    /** 重建历史战报期间禁止弹通知 */
+    setSilentMode(silent) {
+        this.silentMode = Boolean(silent);
     }
 
     init() {
@@ -140,7 +150,8 @@ class GameInfo {
     }
 
     // addMessage 方法（仅调整自动滚动逻辑）
-    addMessage(messageData, skipSync = false) {
+    // skipNotify 用于历史回放：只补面板内容，不重新弹出一堆已过期的事件通知
+    addMessage(messageData, skipSync = false, skipNotify = false) {
         const { type, player } = messageData;
 
         // 判断是聊天消息还是游戏信息
@@ -154,19 +165,13 @@ class GameInfo {
 
         // 只有当 isSkipList = false 时，才将消息添加到右侧面板
         let isSkipList = false;
+        let messageElement = null;
 
         if (type === 'chess_beat') {
             const isSkillModeForList = window.gameInstance?.energyManager?.isSkillModeEnabled();
             if (isSkillModeForList && !messageData.data.isRemoteDiceMove) {
                 isSkipList = true;
             }
-        }
-
-        if (type === 'energy_gain' && messageData.data.source === 'kill') {
-             const isSkillModeForList = window.gameInstance?.energyManager?.isSkillModeEnabled();
-             if (isSkillModeForList && messageData.data.isRemoteDiceMove) {
-                 isSkipList = true;
-             }
         }
 
         // 道具欢乐模式：碰撞奖励消息不再重复显示，由 energy_gain 代替
@@ -182,7 +187,7 @@ class GameInfo {
         }
 
         if (!isSkipList) {
-            const messageElement = document.createElement('div');
+            messageElement = document.createElement('div');
             messageElement.className = 'info-message';
             messageElement.innerHTML = this.formatMessage(messageData);
             // 添加新消息到容器底部
@@ -202,6 +207,11 @@ class GameInfo {
             }
         }
 
+        // 连续动作的合并只认紧邻的上一条，别的消息一来就断开
+        if (type !== 'chess_move') {
+            this._lastMoveLine = null;
+        }
+
         // 在线多人模式下同步游戏信息（除非明确跳过同步）
         if (!skipSync && window.gameInstance && window.gameInstance.multiplayerGameManager &&
             window.gameInstance.multiplayerGameManager.isOnlineMode) {
@@ -219,7 +229,11 @@ class GameInfo {
                 if (messageData.data.skillName === '传送门' && messageData.data.moveType !== 'teleport') {
                     // 如果只是激活传送门（未传送），不提示
                     notificationText = '';
-                } else if (!isNonLocal && messageData.data.skillName !== '遥控骰子' && messageData.data.skillName !== '多面骰子' && messageData.data.skillName !== '传送门') {
+                } else if (messageData.data.skillName === '传送门') {
+                    // 别人传送：提示里要带上「前进了多少格」，光说用了道具看不出发生了什么
+                    // （战报里那两条各写各的：道具一条、选子带距离一条）
+                    notificationText = this.formatTeleportNotification(player, messageData.data);
+                } else if (!isNonLocal && messageData.data.skillName !== '遥控骰子' && messageData.data.skillName !== '多面骰子') {
                     // 其他道具只对非本地玩家提示
                     notificationText = '';
                 }
@@ -275,13 +289,15 @@ class GameInfo {
                     notificationText = `${playerSpan}<span class="action-text"> 获得 </span>${energySpan}`;
                 }
             }
-        } else if (type !== 'skill_usage' && type !== 'energy_gain' && type !== 'chess_beat' && type !== 'collision_bonus' && type !== 'stack_collision' && type !== 'three_sixes_penalty' && type !== 'chess_finish') {
+        } else if (type !== 'skill_usage' && type !== 'skill_result' && type !== 'energy_gain' && type !== 'chess_beat' && type !== 'collision_bonus' && type !== 'stack_collision' && type !== 'three_sixes_penalty' && type !== 'chess_finish') {
             notificationText = '';
         }
 
-        if (notificationText && window.gameInstance?.skillManager) {
+        if (notificationText && !skipNotify && !this.silentMode && window.gameInstance?.skillManager) {
             window.gameInstance.skillManager.showNotification(notificationText);
         }
+
+        return messageElement;
     }
 
     // 格式化消息内容
@@ -319,6 +335,9 @@ class GameInfo {
             case 'skill_usage':
                 return this.formatSkillUsage(player, data);
 
+            case 'skill_result':
+                return this.formatSkillResult(player, data);
+
             case 'energy_gain':
                 return this.formatEnergyGain(player, data.amount, data.source, data.targetPlayer);
 
@@ -347,7 +366,7 @@ class GameInfo {
                 return this.formatGameResume();
 
             case 'chat_message':
-                return this.formatChatMessage(player, data.message, data.playerName);
+                return this.formatChatMessage(player, data.message, data.playerName, data.isSpectatorMessage);
 
             default:
                 return this.formatGenericMessage(messageData);
@@ -409,31 +428,47 @@ class GameInfo {
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
         const actionSpan = `<span class="action-text"> 选择了棋子${chessIndex + 1} </span>`;
 
-        let moveTypeSpan = '';
-        switch (moveType) {
-            case 'launch':
-                moveTypeSpan = `<span class="move-type-launch">[起飞]</span>`;
-                break;
-            case 'teleport':
-                moveTypeSpan = `<span class="skill-name-text">[传送]</span>`;
-                break;
-            case 'move':
-                moveTypeSpan = `<span class="move-type-move">[移动]</span>`;
-                break;
-            case 'jump':
-                moveTypeSpan = `<span class="move-type-jump">[跳子]</span>`;
-                break;
-            case 'fly':
-                moveTypeSpan = `<span class="move-type-fly">[飞棋]</span>`;
-                break;
-            case 'bonus':
-                moveTypeSpan = `<span class="move-type-bonus">[奖励]</span>`;
-                break;
-            default:
-                moveTypeSpan = `<span class="move-type-move">[移动]</span>`;
+        let distanceSpan = '';
+        if (moveType === 'teleport') {
+            // 传送的距离跟在「选了哪颗棋子」这一条后面（道具那条只说用了什么道具）
+            const from = fromPosition === -1 ? 0 : fromPosition;
+            const spaces = toPosition - from;
+            if (spaces > 0) {
+                distanceSpan = `<span class="action-text">，前进了 </span><span class="teleport-distance-text">${spaces}</span><span class="action-text"> 格</span>`;
+            } else if (spaces < 0) {
+                distanceSpan = `<span class="action-text">，后退了 </span><span class="teleport-distance-text">${-spaces}</span><span class="action-text"> 格</span>`;
+            } else {
+                distanceSpan = `<span class="action-text">，位置未变</span>`;
+            }
         }
 
-        return `${playerSpan}${actionSpan}${moveTypeSpan}`;
+        return `${playerSpan}${actionSpan}${this.moveTypeSpan(moveType)}${distanceSpan}`;
+    }
+
+    /** 一颗棋子的连续动作并成一条：跳子→飞棋→奖励 */
+    formatChainedMove(player, chessIndex, moveTypes) {
+        const playerName = this.getPlayerName(player);
+        const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+        const actionSpan = `<span class="action-text"> 选择了棋子${chessIndex + 1} </span>`;
+        const arrow = `<span class="action-text">→</span>`;
+        return `${playerSpan}${actionSpan}${moveTypes.map((type) => this.moveTypeSpan(type)).join(arrow)}`;
+    }
+
+    moveTypeSpan(moveType) {
+        switch (moveType) {
+            case 'launch':
+                return `<span class="move-type-launch">[起飞]</span>`;
+            case 'teleport':
+                return `<span class="skill-name-text">[传送]</span>`;
+            case 'jump':
+                return `<span class="move-type-jump">[跳子]</span>`;
+            case 'fly':
+                return `<span class="move-type-fly">[飞棋]</span>`;
+            case 'bonus':
+                return `<span class="move-type-bonus">[奖励]</span>`;
+            default:
+                return `<span class="move-type-move">[移动]</span>`;
+        }
     }
 
     // 格式化棋子击败消息
@@ -479,6 +514,25 @@ class GameInfo {
         return `${playerSpan}${actionSpan}${diceSpan}${penaltySpan}`;
     }
 
+    /**
+     * 传送门提示（给别人看的那条）：说清是谁用了传送门、往前/往后挪了多少格。
+     * 战报里仍然分两条（道具一条、选子那条带距离），提示只此一条，所以要自带距离。
+     */
+    formatTeleportNotification(player, data) {
+        const playerName = this.getPlayerName(player);
+        const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+        const skillSpan = `<span class="action-text"> 使用了道具 </span><span class="skill-name-text">[传送门]</span>`;
+        const fromPos = data.fromPosition === -1 ? 0 : data.fromPosition;
+        const spaces = data.toPosition - fromPos;
+        if (spaces > 0) {
+            return `${playerSpan}${skillSpan}<span class="action-text">，前进了 </span><span class="teleport-distance-text">${spaces}</span><span class="action-text"> 格</span>`;
+        }
+        if (spaces < 0) {
+            return `${playerSpan}${skillSpan}<span class="action-text">，后退了 </span><span class="teleport-distance-text">${-spaces}</span><span class="action-text"> 格</span>`;
+        }
+        return `${playerSpan}${skillSpan}<span class="action-text">，位置未变</span>`;
+    }
+
     // 格式化叠子碰撞消息
     formatStackCollision(player, targetPlayer, position) {
         const playerName = this.getPlayerName(player);
@@ -522,26 +576,23 @@ class GameInfo {
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
         const skillSpan = `<span class="action-text"> 使用了道具 </span>`;
         const skillNameSpan = `<span class="skill-name-text">[${data.skillName}]</span>`;
-        
+
+        return `${playerSpan}${skillSpan}${skillNameSpan}`;
+    }
+
+    /** 道具结果单独一条（形状与盲盒那条一致：谁 + 使用了 + [道具] + 结果） */
+    formatSkillResult(player, data) {
+        const playerName = this.getPlayerName(player);
+        const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+        const actionSpan = `<span class="action-text"> 使用了 </span>`;
+        const skillNameSpan = `<span class="skill-name-text">[${data.skillName}]</span>`;
+
         let extraInfo = '';
-        if (data.skillName === '遥控骰子' && data.diceValue) {
-            extraInfo = `<span class="action-text">，选择了 </span><span class="dice-special">${data.diceValue}</span><span class="action-text"> 点</span>`;
-        } else if (data.skillName === '多面骰子' && data.diceValue) {
+        if (data.diceValue) {
             extraInfo = `<span class="action-text">，摇到了 </span><span class="dice-special">${data.diceValue}</span><span class="action-text"> 点</span>`;
-        } else if (data.skillName === '传送门' && data.moveType === 'teleport') {
-            const fromPos = data.fromPosition === -1 ? 0 : data.fromPosition;
-            const toPos = data.toPosition;
-            const spaces = toPos - fromPos;
-            if (spaces > 0) {
-                extraInfo = `<span class="action-text">，前进了 </span><span class="teleport-distance-text">${spaces}</span><span class="action-text"> 格</span>`;
-            } else if (spaces < 0) {
-                extraInfo = `<span class="action-text">，后退了 </span><span class="teleport-distance-text">${-spaces}</span><span class="action-text"> 格</span>`;
-            } else {
-                extraInfo = `<span class="action-text">，位置未变</span>`;
-            }
         }
 
-        return `${playerSpan}${skillSpan}${skillNameSpan}${extraInfo}`;
+        return `${playerSpan}${actionSpan}${skillNameSpan}${extraInfo}`;
     }
 
     // 格式化积分获取消息
@@ -636,7 +687,12 @@ class GameInfo {
     }
 
     // 格式化聊天消息
-    formatChatMessage(player, message, playerName = null) {
+    formatChatMessage(player, message, playerName = null, isSpectatorMessage = false) {
+        // 观战者没有玩家编号，用固定灰色昵称区分
+        if (isSpectatorMessage) {
+            return `<span class="spectator-text">${playerName || '游客'}</span><span class="action-text">: </span><span class="chat-message-text">${message}</span>`;
+        }
+
         // 如果player为null，说明是系统消息，直接返回消息内容
         if (player === null || player === undefined) {
             return `<span class="system-message-text">${message}</span>`;
@@ -660,14 +716,27 @@ class GameInfo {
         }, skipSync);
     }
     /**
-      * 添加棋子移动信息
+      * 添加棋子移动信息。
+      * 跳子/飞棋/奖励是同一颗棋子的连续动作，并进上一条，
+      * 免得看起来像「选了两次棋子」。
       */
-    addChessMove(player, chessIndex, moveType = 'move', fromPosition = null, toPosition = null) {
-        this.addMessage({
+    addChessMove(player, chessIndex, moveType = 'move', fromPosition = null, toPosition = null, skipSync = false) {
+        const last = this._lastMoveLine;
+        // 跳子/飞棋/奖励是这颗棋子的后续动作：并进上一条，
+        // 同一颗棋子的连续动作只写一次「选择了棋子N」
+        if (CHAINED_MOVE_TYPES.has(moveType) && last && last.player === player && last.chessIndex === chessIndex
+            && last.element && last.element.isConnected) {
+            last.moveTypes.push(moveType);
+            last.element.innerHTML = this.formatChainedMove(player, chessIndex, last.moveTypes);
+            return;
+        }
+
+        const element = this.addMessage({
             type: 'chess_move',
             player: player,
             data: { chessIndex, moveType, fromPosition, toPosition }
-        });
+        }, skipSync);
+        this._lastMoveLine = { player, chessIndex, moveTypes: [moveType], element };
     }
 
     // 便捷方法：添加棋子击败信息
@@ -698,12 +767,12 @@ class GameInfo {
     }
 
     // 便捷方法：添加叠子阻挡信息
-    addStackBlock(player, targetPlayer) {
+    addStackBlock(player, targetPlayer, skipSync = false) {
         this.addMessage({
             type: 'stack_block',
             player: player,
             data: { targetPlayer }
-        });
+        }, skipSync);
     }
 
     // 便捷方法：添加无法移动信息
@@ -716,11 +785,29 @@ class GameInfo {
     }
 
     // 便捷方法：添加道具使用信息
-    addSkillUsage(player, skillName, extraData = {}, skipSync = false) {
+    addSkillUsage(player, skillName, extraData = {}, skipSync = false, skipNotify = false) {
         this.addMessage({
             type: 'skill_usage',
             player: player,
             data: { skillName, ...extraData }
+        }, skipSync, skipNotify);
+    }
+
+    // 便捷方法：添加道具结果信息（与使用那条成对）
+    addSkillResult(player, skillName, extraData = {}, skipSync = false, skipNotify = false) {
+        this.addMessage({
+            type: 'skill_result',
+            player: player,
+            data: { skillName, ...extraData }
+        }, skipSync, skipNotify);
+    }
+
+    // 便捷方法：添加欢乐模式碰撞奖励信息
+    addCollisionBonus(player, targetPlayer = null, skipSync = false) {
+        this.addMessage({
+            type: 'collision_bonus',
+            player,
+            data: { targetPlayer }
         }, skipSync);
     }
 
@@ -734,21 +821,21 @@ class GameInfo {
     }
 
     // 便捷方法：添加棋子完成信息
-    addChessFinish(player, chessIndex) {
+    addChessFinish(player, chessIndex, skipSync = false) {
         this.addMessage({
             type: 'chess_finish',
             player: player,
             data: { chessIndex }
-        });
+        }, skipSync);
     }
 
     // 便捷方法：添加玩家获胜信息
-    addPlayerWin(player) {
+    addPlayerWin(player, skipSync = false) {
         this.addMessage({
             type: 'player_win',
             player: player,
             data: {}
-        });
+        }, skipSync);
     }
 
     // 便捷方法：添加游戏开始信息
@@ -768,30 +855,22 @@ class GameInfo {
     }
 
     // 便捷方法：添加连投奖励信息
-    addConsecutiveBonus(player) {
+    addConsecutiveBonus(player, skipSync = false) {
         this.addMessage({
             type: 'consecutive_bonus',
             player: player,
             data: {}
-        });
+        }, skipSync);
     }
 
-    // 便捷方法：添加碰撞奖励信息
-    addCollisionBonus(player, targetPlayer) {
-        this.addMessage({
-            type: 'collision_bonus',
-            player: player,
-            data: { targetPlayer }
-        });
-    }
 
     // 便捷方法：添加叠子形成信息
-    addStackFormation(player) {
+    addStackFormation(player, skipSync = false) {
         this.addMessage({
             type: 'stack_formation',
             player: player,
             data: {}
-        });
+        }, skipSync);
     }
 
     // 添加游戏暂停消息
@@ -811,11 +890,11 @@ class GameInfo {
     }
 
     // 便捷方法：添加聊天消息
-    addChatMessage(player, message, playerName = null, skipSync = false) {
+    addChatMessage(player, message, playerName = null, skipSync = false, isSpectatorMessage = false) {
         this.addMessage({
             type: 'chat_message',
             player: player,
-            data: { message, playerName }
+            data: { message, playerName, isSpectatorMessage }
         }, skipSync);
     }
 }

@@ -1,10 +1,12 @@
-/**
- * 道具管理器 - 处理道具UI交互
- */
-
 import { energyManager } from './energyManager.js';
 import { gameState } from './gameState.js';
-import { gameInfo } from './gameInfo.js';
+import { ITEM_COSTS } from '../../shared/engine.mjs';
+import { DICE_SYMBOLS } from './utils.js';
+import { engineAdapter } from './engineAdapter.js';
+
+/** 道具价目只有引擎那一份；界面上的价签也由它写，免得 HTML 里的数字悄悄过期 */
+const priceOf = (skillId) => ITEM_COSTS[skillId] || 0;
+import { enginePlayback } from './enginePlayback.js';
 
 class SkillManager {
     constructor() {
@@ -93,16 +95,7 @@ class SkillManager {
     checkAndShowHint() {
         if (!this.skillBtn) return;
 
-        // 获取本地玩家编号
-        let localPlayer = gameState.getCurrentPlayer();
-        const isOnlineMode = gameState.getIsOnlineMultiplayer();
-
-        if (isOnlineMode) {
-            const multiplayerManager = window.gameInstance?.multiplayerGameManager;
-            if (multiplayerManager) {
-                localPlayer = multiplayerManager.getPlayerNumberByPlayerId(multiplayerManager.playerId);
-            }
-        }
+        const localPlayer = this._panelPlayer();
 
         // 检查是否轮到本地玩家，且能量已满
         const isMyTurn = gameState.getCurrentPlayer() === localPlayer;
@@ -119,25 +112,7 @@ class SkillManager {
         }
     }
 
-    disableForAITakeover() {
-        if (this.skillPanel) {
-            this.closePanel();
-        }
-        this.stopHintTimer();
-        // 让updateButtonVisibility来处理按钮的显示/隐藏
-        this.updateButtonVisibility();
-    }
 
-    enableAfterAITakeover() {
-        // 观战模式或道具模式未启用时，不恢复道具按钮
-        const isSpectator = window.multiplayerGameManager && window.multiplayerGameManager.isSpectator;
-        if (!energyManager.isSkillModeEnabled() || isSpectator) return;
-        
-        this.updateSkillAvailability();
-        this.startHintTimer();
-        // 让updateButtonVisibility来处理按钮的显示/隐藏
-        this.updateButtonVisibility();
-    }
 
     /**
      * 绑定道具项点击事件
@@ -179,28 +154,12 @@ class SkillManager {
      */
     handleSkillClick(skillItem) {
         const skillId = skillItem.dataset.skill;
-        const cost = parseInt(skillItem.dataset.cost);
+        const cost = priceOf(skillId);
 
         console.log(`道具点击: ${skillId}, 消耗: ${cost}积分`);
 
-        // 获取本地玩家编号
-        let localPlayer = 1;
-        const isOnlineMode = gameState.getIsOnlineMultiplayer();
-        const isLocalMultiplayer = gameState.getIsLocalMultiplayer();
-
-        if (isOnlineMode) {
-            // 在线多人模式：通过 multiplayerManager 获取玩家编号
-            const multiplayerManager = window.gameInstance?.multiplayerGameManager;
-            if (multiplayerManager) {
-                localPlayer = multiplayerManager.getPlayerNumberByPlayerId(multiplayerManager.playerId);
-            }
-        } else if (isLocalMultiplayer) {
-            // 本地多人模式：使用当前玩家编号
-            localPlayer = gameState.getCurrentPlayer();
-        } else {
-            // 人机模式：使用当前玩家编号（人类玩家可能不是玩家1）
-            localPlayer = gameState.getCurrentPlayer();
-        }
+        // 看自己那一席：联机=本人，本地多人=当前回合的人，人机=自己的座位
+        const localPlayer = this._panelPlayer();
 
         // 检查是否是当前玩家的回合
         const currentPlayer = gameState.getCurrentPlayer();
@@ -236,7 +195,7 @@ class SkillManager {
         }
 
         // 使用道具
-        this.useSkill(skillId, cost, localPlayer);
+        this.useSkill(skillId, localPlayer);
     }
 
     /**
@@ -260,34 +219,16 @@ class SkillManager {
     }
 
     /**
-     * 使用道具
+     * 使用道具。买道具的账由引擎记：联机由服务端裁决，单机落到本地引擎，
+     * 客户端只负责发起与播放表现（不再自己扣分，也不再往外同步积分）。
      * @param {string} skillId - 道具ID
-     * @param {number} cost - 消耗的积分
      * @param {number} player - 玩家编号
      */
-    useSkill(skillId, cost, player) {
-        // 消耗积分
-        const success = energyManager.consumeEnergy(player, cost);
-        if (!success) {
-            console.error('消耗积分失败');
-            return;
-        }
-
+    useSkill(skillId, player) {
         console.log(`玩家${player}使用道具: ${skillId}`);
 
-        // 记录道具使用次数（用于称号统计）
-        if (gameState.titleStats.skillUseCount[player] !== undefined) {
-            gameState.titleStats.skillUseCount[player]++;
-        }
-
-        // 记录分道具使用次数（用于结算面板统计）
-        if (gameState.skillUsage && gameState.skillUsage[player]) {
-            const skillMap = { 'remote-dice': 'remoteDice', 'teleport': 'teleport', 'polyhedral-dice': 'polyhedralDice', 'mysteryBox': 'mysteryBox' };
-            const skillKey = skillMap[skillId];
-            if (skillKey && gameState.skillUsage[player][skillKey] !== undefined) {
-                gameState.skillUsage[player][skillKey]++;
-            }
-        }
+        // 道具使用次数不在这里记：它由权威事件流统一记录（见 enginePlayback.recordItemUsage），
+        // 各端数字一致，刷新后也能从事件流重建。这里再记一次会重复计数。
 
         // 播放道具音效
         if (audioManager) {
@@ -327,6 +268,14 @@ class SkillManager {
     activateRemoteDice(player) {
         console.log(`玩家${player}激活遥控骰子道具`);
 
+        // 上报激活态：点数还没选，只登记「道具已在手上」，刷新后据此重开面板。
+        // 联机时这一笔账由服务端扣，单机落到本地引擎
+        if (!this.buyItem('remote-dice')) return;
+
+        // 骰子立刻换成遥控骰子的青色（还没投掷也是这个色，别再是默认的灰骰子）
+        gameState.isRemoteDice = true;
+        document.getElementById('diceDisplay')?.classList.add('remote-dice');
+
         let shouldShowPanel = true;
         if (window.gameInfo && window.gameInfo.isNonLocalPlayer) {
             shouldShowPanel = !window.gameInfo.isNonLocalPlayer(player);
@@ -343,13 +292,74 @@ class SkillManager {
     }
 
     /**
+     * 买下道具：联机只上报意图（服务端扣分并把激活态写进快照），
+     * 单机直接落到本地引擎（同一个 item 动作，同一份积分规则）。
+     * @returns {boolean} 是否可以继续这道具的后续流程
+     */
+    buyItem(item) {
+        if (item === 'remote-dice') this._remoteDicePicked = false;
+        if (gameState.getIsOnlineMultiplayer()) {
+            this.reportItemActivation(item);
+            return true;
+        }
+        try {
+            const { events } = engineAdapter.activateItem(item);
+            engineAdapter.projectTo(gameState);
+            // 单机没有快照回来，扣分后的账要立刻落到进度条上
+            energyManager.applySnapshot(engineAdapter.state.energy);
+            this.updateSkillAvailability();
+            return true;
+        } catch (error) {
+            console.error('引擎拒绝购买道具:', error);
+            // 引擎拒的原因不止一种，照实说，别一律报「积分不足」
+            this.showNotification(/未开启道具模式/.test(error?.message || '') ? '本局未开启道具模式' : '积分不足');
+            return false;
+        }
+    }
+
+    /** 取消已激活的道具：预扣的积分退回来（联机由服务端退，单机落到本地引擎） */
+    cancelItem() {
+        // 撤掉遥控骰子：骰面收回默认状态
+        gameState.isRemoteDice = false;
+        document.getElementById('diceDisplay')?.classList.remove('remote-dice');
+
+        if (gameState.getIsOnlineMultiplayer()) {
+            this.reportItemActivation(null);
+            return;
+        }
+        try {
+            engineAdapter.cancelItem();
+            engineAdapter.projectTo(gameState);
+            energyManager.applySnapshot(engineAdapter.state.energy);
+            this.updateSkillAvailability();
+        } catch (error) {
+            // 没有待取消的激活态：无事可做
+        }
+    }
+
+    /** 上报道具激活（单机无服务端，静默跳过）；item 传 null 表示取消激活 */
+    reportItemActivation(item) {
+        // 新的一次激活：选点标记复位，面板该开就开
+        if (item === 'remote-dice') this._remoteDicePicked = false;
+        const manager = window.gameInstance && window.gameInstance.multiplayerGameManager;
+        if (!gameState.getIsOnlineMultiplayer() || !manager) return;
+        if (typeof manager.sendIntent !== 'function') return;
+        manager.sendIntent({ type: 'item', item: item || null });
+    }
+
+    /** 选点意图被服务端拒绝：面板可以重新开，让玩家再选一次 */
+    resetRemoteDiceSelection() {
+        this._remoteDicePicked = false;
+    }
+
+    /**
      * 显示骰子点数选择面板
      * @param {number} player - 玩家编号
      */
     showDiceSelectionPanel(player) {
         // 暂停当前回合的思考时间进度条（掷骰/走子阶段）
         if (window.gameInstance && window.gameInstance.uiUpdater) {
-            window.gameInstance.uiUpdater.stopThinkingProgressBar();
+            window.gameInstance.uiUpdater.holdThinkingProgressBar?.();
         } else if (gameState.clearThinkingTimer) {
             gameState.clearThinkingTimer();
         }
@@ -372,9 +382,6 @@ class SkillManager {
         // 创建骰子点数按钮容器
         const diceContainer = document.createElement('div');
         diceContainer.className = 'dice-selection-container';
-
-        // 骰子符号数组
-        const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
         // 创建骰子点数按钮（1-6）
         for (let i = 1; i <= 6; i++) {
@@ -407,32 +414,31 @@ class SkillManager {
             console.log('聊天输入框显示中，但骰子选择面板仍然可见');
         }
 
-        // 为遥控骰子点数选择阶段启动新的思考时间进度条
-        if (window.gameInstance && window.gameInstance.uiUpdater) {
-            const uiUpdater = window.gameInstance.uiUpdater;
+        this.armDiceSelectionTimeout(player);
+    }
 
-            uiUpdater.startThinkingProgressBar(() => {
-                console.log(`[遥控骰子] 玩家${player}选择点数思考时间到，开启AI托管`);
+    /** 遥控骰子选点的超时：按服务端给的思考窗口计时，超时开 AI 托管 */
+    armDiceSelectionTimeout(player) {
+        const uiUpdater = window.gameInstance && window.gameInstance.uiUpdater;
+        if (!uiUpdater?.startThinkingProgressBar) return;
 
-                const selectionPanel = document.getElementById('diceSelectionPanel');
-                // 如果面板已经被关闭，说明玩家已手动选择或道具被取消
-                if (!selectionPanel) {
-                    return;
-                }
+        uiUpdater.startThinkingProgressBar(() => {
+            console.log(`[遥控骰子] 玩家${player}选择点数思考时间到，开启AI托管`);
 
-                // 超时不再直接随机点数，而是开启AI托管，由AI统一接管当前玩家回合
-                (async () => {
-                    try {
-                        const module = await import('./aiTakeoverManager.js');
-                        if (module && module.aiTakeoverManager && typeof module.aiTakeoverManager.enableTakeover === 'function') {
-                            module.aiTakeoverManager.enableTakeover();
-                        }
-                    } catch (error) {
-                        console.error('遥控骰子选择超时开启AI托管失败:', error);
+            // 面板已经被关掉说明玩家已选好点数，忽略这次超时
+            if (!document.getElementById('diceSelectionPanel')) return;
+
+            (async () => {
+                try {
+                    const module = await import('./aiTakeoverManager.js');
+                    if (module && module.aiTakeoverManager && typeof module.aiTakeoverManager.enableTakeover === 'function') {
+                        module.aiTakeoverManager.enableTakeover();
                     }
-                })();
-            });
-        }
+                } catch (error) {
+                    console.error('遥控骰子选择超时开启AI托管失败:', error);
+                }
+            })();
+        });
     }
 
     /**
@@ -442,46 +448,37 @@ class SkillManager {
      * @param {HTMLElement} panel - 面板元素
      */
     async handleDiceSelection(diceValue, player, panel) {
-        console.log(`玩家${player}选择骰子点数: ${diceValue}`);
+        // 已选点：激活态落地前若再来一份快照，不要再把面板开回来
+        this._remoteDicePicked = true;
+        this._remoteDicePickedValue = diceValue;
 
-        // 移除选择面板
-        if (panel && panel.parentNode) {
-            panel.parentNode.removeChild(panel);
+        // AI 代选不会传 panel，按 id 兜底清掉，避免留下作废的选点面板
+        const panelEl = panel || document.getElementById('diceSelectionPanel');
+        if (panelEl && panelEl.parentNode) {
+            panelEl.parentNode.removeChild(panelEl);
         }
 
-        // 无论是本地玩家还是非本地玩家，都发送带点数的道具使用消息
-        // 以便联机模式下其他玩家能看到对方选择了什么点数
-        this.sendSkillUsageInfo(player, '遥控骰子', { diceValue });
-
-        // 直接更新骰子显示为选择的点数
-        const diceDisplay = document.getElementById('diceDisplay');
-        const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-        if (diceDisplay) {
-            diceDisplay.textContent = DICE_SYMBOLS[diceValue - 1];
-            // 添加遥控骰子红色发光特效
-            diceDisplay.classList.add('remote-dice');
+        // 选完点数照常走掷骰流程（闪烁 → 定格 → 提交意图）：
+        // 遥控骰子只是把点数预先定死，动画与手感跟手投完全一样
+        const dice = window.gameInstance && window.gameInstance.dice;
+        if (dice && typeof dice.rollDice === 'function') {
+            dice.presetDiceValue = diceValue;
+            await dice.rollDice();
+            return;
         }
 
-        // 在线模式下同步骰子显示
-        if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncDiceDisplay(diceValue);
-        }
-
-        // 设置游戏状态中的骰子值
-        gameState.setDiceValue(diceValue);
-
-        // 标记这是遥控骰子（6点不触发连投奖励）
+        // 兜底：没有骰子实例（极端时序）时退回直接提交意图
+        gameState.diceValue = diceValue;
         gameState.isRemoteDice = true;
-
-        // 直接调用handleDiceResult进入棋子移动阶段
-        if (window.gameInstance && window.gameInstance.dice) {
-            await window.gameInstance.dice.handleDiceResult();
+        if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
+            window.gameInstance.multiplayerGameManager.sendIntent({
+                type: 'roll',
+                item: 'remote-dice',
+                value: diceValue
+            });
+            return;
         }
-
-        // 仅当当前玩家不是由AI控制时，才显示提示文字
-        if (!window.botController || !window.botController.isCurrentPlayerBot()) {
-            this.showNotification(`已选择点数: ${diceValue}`);
-        }
+        await this.applyItemRoll(player, diceValue, 6, 'remote-dice');
     }
 
     /**
@@ -490,12 +487,17 @@ class SkillManager {
      */
     activateTeleport(player) {
         console.log(`玩家${player}激活传送门道具`);
+
+        // 买下传送门：联机由服务端扣分并记激活态，单机落到本地引擎。
+        // 买不起就别点亮图标，免得看着能用却选不出落点
+        if (!this.buyItem('teleport')) return;
+
         // 在骰子位置显示传送门图标
         this.showTeleportIcon();
 
-        // 在线模式下同步传送门图标显示
+        // 在线模式下让其他客户端立刻看到图标（收起由快照负责）
         if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncTeleportIcon(true);
+            window.gameInstance.multiplayerGameManager.syncTeleportIcon();
         }
 
         // 设置传送门模式标记
@@ -506,6 +508,9 @@ class SkillManager {
         // 直接进入选择棋子阶段
         gameState.setGamePhase('selecting');
         gameState.setDiceValue(999); // 使用特殊值标记传送门模式，避免与正常骰子值冲突
+
+        // 立刻重画一次：可传送的棋子要按「可移动」那套高亮起来
+        window.gameInstance?.uiUpdater?.updateUI?.();
 
         // 仅当当前玩家不是由AI控制时，才显示提示文字
         if (!window.botController || !window.botController.isCurrentPlayerBot()) {
@@ -525,131 +530,134 @@ class SkillManager {
     async activatePolyhedralDice(player) {
         console.log(`玩家${player}激活多面骰子道具`);
 
-        // 生成1-12的随机点数
-        const diceValue = Math.floor(Math.random() * 12) + 1;
-        console.log(`多面骰子生成点数: ${diceValue}`);
-
-        // 记录多面骰子结果（用于称号统计）
-        if (diceValue > gameState.titleStats.polyhedralMax[player]) {
-            gameState.titleStats.polyhedralMax[player] = diceValue;
-        }
-        if (diceValue < gameState.titleStats.polyhedralMin[player]) {
-            gameState.titleStats.polyhedralMin[player] = diceValue;
-        }
-
-        // 发送游戏信息，同时携带骰子点数
-        this.sendSkillUsageInfo(player, '多面骰子', { diceValue });
-
-        // 显示多面骰子
-        this.showPolyhedralDice(diceValue);
-
-        // 仅当当前玩家不是由AI控制时，才显示提示文字
-        if (!window.botController || !window.botController.isCurrentPlayerBot()) {
-            this.showNotification(`多面骰子摇到: ${diceValue} 点`);
-        }
-
-        // 在线模式下同步多面骰子显示
+        // 联机模式：点数由服务端摇出并下发，本地不自行生成；
+        // 这一掷同时把道具钱扣掉（引擎在 roll 动作里收费）
         if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncPolyhedralDice(diceValue, player);
+            window.gameInstance.multiplayerGameManager.sendIntent({
+                type: 'roll',
+                item: 'polyhedral-dice'
+            });
+            return;
         }
 
-        // 设置游戏状态中的骰子值
-        gameState.setDiceValue(diceValue);
+        // 单机：点数由引擎摇，本地只播表现
+        await this.applyItemRoll(player, null, 12, 'polyhedral-dice');
+    }
 
-        // 标记这是遥控骰子（6点不触发连投奖励）
-        gameState.isRemoteDice = true;
+    /**
+     * 单机道具骰子统一入口：把点数交给共享引擎裁决，再回放事件流。
+     * 引擎的 noBonus 语义保证道具骰子不参与连投奖励与三次 6 计数，与联机一致。
+     * @param {number} player - 玩家编号
+     * @param {number} diceValue - 道具给定的点数
+     * @param {number} maxDice - 点数上限（遥控骰子 6、多面骰 12）
+     * @param {string} item - 道具 id，写进事件流与快照
+     */
+    async applyItemRoll(player, diceValue, maxDice, item = null) {
+        const gameInstance = window.gameInstance;
+        if (!gameInstance || !gameInstance.chessPiece) return;
 
-        // 直接调用handleDiceResult进入棋子移动阶段
-        if (window.gameInstance && window.gameInstance.dice) {
-            await window.gameInstance.dice.handleDiceResult();
+        const chessPiece = gameInstance.chessPiece;
+        chessPiece.gameState.setChessMoving(true);
+        try {
+            const { events } = engineAdapter.itemRoll(diceValue, maxDice, item);
+            // 多面骰：先亮数字牌滚轮 + 投掷音效，再演事件流（联机那条路由快照触发同样的演出）
+            if (item === 'polyhedral-dice') {
+                const rolled = engineAdapter.state.dice;
+                if (rolled > 0) this.showPolyhedralDice(rolled);
+                window.audioManager?.playRollingSound?.();
+            }
+            const shake = await enginePlayback.play(events);
+            engineAdapter.projectTo(chessPiece.gameState);
+            // 道具骰子也可能无子可动（比如遥控骰子选了个奇数）：抖动照播
+            if (shake) await enginePlayback.playDiceShake(shake);
+
+            const state = engineAdapter.state;
+            chessPiece.gameState.isRolling = false;
+            // 道具骰子不参与连投奖励
+            chessPiece.gameState.canReroll = false;
+
+            if (state.phase === 'ended') {
+                chessPiece.gameState.recordGameEndTime();
+                if (window.progressDisplay) {
+                    chessPiece.gameState.saveProgressSnapshot();
+                }
+                setTimeout(() => {
+                    if (window.main && window.main.settlementModal) {
+                        window.main.settlementModal.show(state.winner);
+                    }
+                }, 1000);
+            } else if (state.phase === 'selecting') {
+                // 有可动棋子：停在选子阶段，由玩家选子后走 handleEngineMove
+                chessPiece.uiUpdater.updateUI();
+                chessPiece.triggerBotOperationIfNeeded();
+            } else {
+                // 引擎已自动结束回合（无可动棋子）
+                chessPiece.handleMoveComplete(player);
+            }
+
+            if (gameInstance.uiUpdater) gameInstance.uiUpdater.updateUI();
+        } catch (error) {
+            console.error('引擎拒绝本次道具骰子:', error);
+            engineAdapter.projectTo(chessPiece.gameState);
+            chessPiece.gameState.isRolling = false;
+            if (gameInstance.uiUpdater) gameInstance.uiUpdater.updateUI();
+        } finally {
+            // 引擎扣过道具钱，进度条按权威积分对齐
+            energyManager.applySnapshot(engineAdapter.state.energy);
+            this.updateSkillAvailability();
+            chessPiece.gameState.setChessMoving(false);
         }
     }
 
     /**
-     * 激活盲盒道具
+     * 使用盲盒：开出的积分与放弃回合都由引擎一次算完（联机报告意图、单机落到本地引擎），
+     * 开盒演出由事件流里的 mystery_box 事件驱动，各端看到同一个数。
      * @param {number} player - 玩家编号
      */
     async activateMysteryBox(player) {
         console.log(`玩家${player}激活盲盒道具`);
 
-        // 停止思考进度条
-        if (window.gameInstance && window.gameInstance.uiUpdater) {
-            window.gameInstance.uiUpdater.stopThinkingProgressBar();
-            console.log('[盲盒] 已停止思考进度条');
+        if (window.gameInstance?.uiUpdater) {
+            window.gameInstance.uiUpdater.holdThinkingProgressBar?.();
         }
 
-        // 生成0-40的随机积分
-        const energyGain = Math.floor(Math.random() * 41);
-        console.log(`盲盒开启: ${energyGain}点积分`);
-
-        // 记录盲盒结果（用于称号统计）
-        if (energyGain > gameState.titleStats.mysteryBoxMax[player]) {
-            gameState.titleStats.mysteryBoxMax[player] = energyGain;
-        }
-        if (energyGain < gameState.titleStats.mysteryBoxMin[player]) {
-            gameState.titleStats.mysteryBoxMin[player] = energyGain;
-        }
-
-        // 发送游戏信息 (包含获得的积分值)
-        this.sendSkillUsageInfo(player, '盲盒', { amount: energyGain });
-
-        // 仅当当前玩家不是由AI控制时，才显示提示文字
-        if (!window.botController || !window.botController.isCurrentPlayerBot()) {
-            this.showNotification(`盲盒开启: 获得 ${energyGain}点积分`);
-        }
-
-        // 显示盲盒图标
-        this.showMysteryBoxIcon(player);
-
-        // 在线模式下同步盲盒图标显示
         if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncMysteryBoxIcon(energyGain, player);
+            window.gameInstance.multiplayerGameManager.sendIntent({ type: 'item', item: 'mysteryBox' });
+            return;
         }
 
-        // 等待盲盒闪烁动画完成（2次闪烁，1秒）
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        const gameInstance = window.gameInstance;
+        const chessPiece = gameInstance && gameInstance.chessPiece;
+        if (!chessPiece) return;
 
-        // 移除盲盒图标
-        this.removeMysteryBoxIcon(false);
-
-        // 在线模式下同步移除盲盒图标
-        if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncRemoveMysteryBoxIcon();
+        try {
+            const { events } = engineAdapter.activateItem('mysteryBox');
+            await enginePlayback.play(events);
+            engineAdapter.projectTo(chessPiece.gameState);
+            energyManager.applySnapshot(engineAdapter.state.energy);
+            this.updateSkillAvailability();
+            chessPiece.handleMoveComplete(player);
+            if (gameInstance.uiUpdater) gameInstance.uiUpdater.updateUI();
+        } catch (error) {
+            console.error('引擎拒绝盲盒:', error);
+            engineAdapter.projectTo(chessPiece.gameState);
+            if (gameInstance.uiUpdater) gameInstance.uiUpdater.updateUI();
         }
 
-        // 增加积分
-        energyManager.addEnergy(player, energyGain);
-
-        // 显示积分获得数值动画（带玩家颜色）
-        this.showEnergyGainAnimation(energyGain, player);
-
-        // 在线模式下同步积分数值动画
-        if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            window.gameInstance.multiplayerGameManager.syncEnergyGainAnimation(energyGain, player);
-        }
-
-        // 等待积分数值动画完成（1秒）
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 使用盲盒后跳过当前回合
-        console.log(`玩家${player}使用盲盒后跳过回合`);
-
-        // 切换到下一个玩家
-        // 不传入 triggerBot，避免在 bot 处理期间（isProcessing=true）误触发被跳过
-        // bot 使用盲盒时由 botController 在异步等待完成后自行触发
-        if (window.gameInstance && window.gameInstance.uiUpdater) {
-            const handleThinkingTimeout = window.gameInstance.dice?.handleThinkingTimeoutWrapper?.bind(window.gameInstance.dice);
-            gameState.nextPlayer(window.gameInstance.uiUpdater, handleThinkingTimeout, null, true);
-        } else {
-            gameState.nextPlayer();
+        // 下家若是AI需主动触发其回合；AI 自己用盲盒时 isProcessing 仍为 true，
+        // 会被 triggerBotOperationIfNeeded 的安全守卫跳过，由 botController 收尾时自行接上
+        if (window.eventHandler && typeof window.eventHandler.triggerBotOperationIfNeeded === 'function') {
+            window.eventHandler.triggerBotOperationIfNeeded();
         }
     }
 
     /**
      * 显示多面骰子（1-12的随机点数）
      * @param {number} diceValue - 骰子点数（1-12）
+     * @param {Object} [options]
+     * @param {boolean} [options.instant] - 直接落在最终数字上，不播滚轮（刷新恢复）
      */
-    showPolyhedralDice(diceValue) {
+    showPolyhedralDice(diceValue, { instant = false } = {}) {
         const diceDisplay = document.getElementById('diceDisplay');
         if (!diceDisplay) return;
 
@@ -695,6 +703,18 @@ class SkillManager {
 
         if (!reelStrip) return;
 
+        // 恢复场景直接摆最终数字：重播滚轮没有意义，还会和棋子落位抢注意力
+        if (instant) {
+            reelStrip.style.display = 'none';
+            const finalNum = document.createElement('span');
+            finalNum.className = 'final-number';
+            finalNum.textContent = diceValue;
+            viewport.appendChild(finalNum);
+            this._polyhedralRevealUntil = 0;
+            this._showPolyhedralDiceContainer(polyhedralDice);
+            return;
+        }
+
         // 动态读取实际数字高度和视口尺寸
         const sampleSpan = reelStrip.querySelector('span');
         const itemHeight = sampleSpan ? sampleSpan.offsetHeight : 44;
@@ -726,6 +746,13 @@ class SkillManager {
             }
         }, 1200);
 
+        // 滚轮停稳前不许收牌（0.65s 滚完、1.2s 露数字），收牌由 hidePolyhedralDice 把关
+        this._polyhedralRevealUntil = Date.now() + 1300;
+        this._showPolyhedralDiceContainer(polyhedralDice);
+    }
+
+    /** 亮出多面骰子牌；聊天输入框占用时先藏起来并登记待恢复 */
+    _showPolyhedralDiceContainer(polyhedralDice) {
         const chatInputArea = document.getElementById('chatInputArea');
         const isChatInputVisible = chatInputArea && chatInputArea.style.display === 'flex';
         if (isChatInputVisible) {
@@ -736,32 +763,14 @@ class SkillManager {
         }
     }
 
-    /**
-     * 恢复原始骰子图标（从多面骰子状态）
-     */
-    restoreDiceFromPolyhedral() {
-        const diceDisplay = document.getElementById('diceDisplay');
-        const polyhedralDice = document.getElementById('polyhedralDiceDisplay');
-
-        // 检查聊天输入框是否正在显示，如果是则不恢复骰子显示
-        const chatInputArea = document.getElementById('chatInputArea');
-        const isChatInputVisible = chatInputArea && chatInputArea.style.display === 'flex';
-
-        // 显示骰子（除非聊天输入框正在显示）
-        if (diceDisplay && !isChatInputVisible) {
-            diceDisplay.style.display = 'flex';
-        }
-
-        // 移除多面骰子显示
-        if (polyhedralDice) {
-            polyhedralDice.remove();
-        }
-    }
 
     /**
-     * 显示盲盒图标
+     * 显示盲盒图标（暂停期间不演：演出会压在暂停提示上）
      */
     showMysteryBoxIcon(player) {
+        if (gameState.getIsPaused?.()) return;
+        this.markItemSettlement(1300);
+
         const diceDisplay = document.getElementById('diceDisplay');
         if (!diceDisplay) return;
         const playerColor = getComputedStyle(document.documentElement).getPropertyValue(`--player-${player}-color`).trim() || '#FFD700';
@@ -798,7 +807,6 @@ class SkillManager {
             console.log('[盲盒] 聊天输入框正在显示，盲盒图标已创建但暂时隐藏');
         } else {
             mysteryBoxIcon.style.display = 'flex';
-            console.log('[盲盒] 骰子已隐藏，盲盒图标已显示');
         }
     }
 
@@ -831,6 +839,10 @@ class SkillManager {
      * @param {number} player - 玩家编号（用于设置颜色）
      */
     showEnergyGainAnimation(energyGain, player) {
+        // 暂停期间不演：积分数值会顶开暂停提示
+        if (gameState.getIsPaused?.()) return;
+        this.markItemSettlement(1100);
+
         const diceDisplay = document.getElementById('diceDisplay');
         if (!diceDisplay) return;
 
@@ -881,8 +893,6 @@ class SkillManager {
                 diceDisplay.style.display = 'flex';
             }
         }, 1000);
-
-        console.log('[盲盒] 积分数值动画已显示:', energyGain);
     }
 
     /**
@@ -903,7 +913,6 @@ class SkillManager {
         if (!teleportIcon) {
             teleportIcon = document.createElement('div');
             teleportIcon.id = 'teleportIcon';
-            teleportIcon.className = `dice-icon dice-icon-centered player-${currentPlayer}-border`;
             teleportIcon.innerHTML = `
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                     <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
@@ -918,12 +927,13 @@ class SkillManager {
                 </svg>
             `;
             diceDisplay.parentNode.insertBefore(teleportIcon, diceDisplay);
-        } else {
-            teleportIcon.className = `dice-icon dice-icon-centered player-${currentPlayer}-border`;
         }
 
-        // 添加脉冲动画
-        teleportIcon.classList.add('pulse-animation');
+        // 类名一致就别重写：整段重写等于摘掉再挂上脉冲动画，图标会从头跳一下
+        const wantedClass = `dice-icon dice-icon-centered player-${currentPlayer}-border pulse-animation`;
+        if (teleportIcon.className !== wantedClass) {
+            teleportIcon.className = wantedClass;
+        }
 
         // 检查聊天输入框是否正在显示，如果是则临时隐藏但标记应该显示
         const chatInputArea = document.getElementById('chatInputArea');
@@ -938,57 +948,168 @@ class SkillManager {
         }
     }
 
-    /**
-     * 恢复原始骰子图标
-     */
+    /** 只收传送门图标，不动骰子与其他道具界面 */
+    hideTeleportIcon() {
+        const teleportIcon = document.getElementById('teleportIcon');
+        if (!teleportIcon) return;
+        teleportIcon.style.display = 'none';
+        teleportIcon.style.animation = '';
+    }
+
+    /** 中央位置回到普通骰子：收起传送门图标与多面骰子牌，重复调用无副作用 */
     restoreDiceIcon() {
         const diceDisplay = document.getElementById('diceDisplay');
-        const teleportIcon = document.getElementById('teleportIcon');
-        const polyhedralDice = document.getElementById('polyhedralDiceDisplay');
 
-        // 检查聊天输入框是否正在显示，如果是则不恢复骰子显示
+        this.hideTeleportIcon();
+
+        // 数字牌还在展示点数时先留着，收完自己会把骰子亮回来
+        const polyhedralPending = this.hidePolyhedralDice();
         const chatInputArea = document.getElementById('chatInputArea');
         const isChatInputVisible = chatInputArea && chatInputArea.style.display === 'flex';
-
-        let hasRestored = false;
-
-        // 显示骰子（除非聊天输入框正在显示）
-        if (diceDisplay && !isChatInputVisible) {
-            if (diceDisplay.style.display !== 'flex') {
-                diceDisplay.style.display = 'flex';
-                hasRestored = true;
-            }
-        }
-
-        // 隐藏并移除传送门图标
-        if (teleportIcon) {
-            if (teleportIcon.style.display !== 'none') {
-                teleportIcon.style.display = 'none';
-                teleportIcon.style.animation = '';
-                hasRestored = true;
-            }
-        }
-
-        // 移除多面骰子显示
-        if (polyhedralDice) {
-            polyhedralDice.remove();
-            hasRestored = true;
+        // 暂停期间不许把骰子亮出来，否则会盖在暂停提示上
+        const paused = gameState.getIsPaused?.();
+        if (diceDisplay && !isChatInputVisible && !polyhedralPending && !paused) {
+            diceDisplay.style.display = 'flex';
         }
     }
 
     /**
-     * 发送道具使用信息
-     * @param {number} player - 玩家编号
-     * @param {string} skillName - 道具名称
-     * @param {Object} extraData - 额外的数据（如获得的积分等）
+     * 道具进行中状态的唯一渲染入口：只按权威字段决定该亮什么，重复调用无副作用。
+     * localTurn 表示这是本机这位人类玩家自己的回合。
      */
-    sendSkillUsageInfo(player, skillName, extraData = {}) {
-        // 直接使用已导入的gameInfo
-        if (gameInfo) {
-            gameInfo.addSkillUsage(player, skillName, extraData);
-        } else {
-            console.error('[道具] gameInfo未初始化');
+    renderItemState(state = {}) {
+        this._itemState = {
+            pendingItem: state.pendingItem || null,
+            diceItem: state.diceItem || false,
+            diceValue: state.diceValue || 0,
+            currentPlayer: state.currentPlayer ?? null,
+            localTurn: Boolean(state.localTurn)
+        };
+        this._applyItemState();
+    }
+
+    /** 按最近一次权威字段重画（聊天框收起、暂停恢复这类纯 UI 时机） */
+    refreshItemVisuals() {
+        if (this._itemState) this._applyItemState();
+    }
+
+    _applyItemState() {
+        const { pendingItem, diceItem, diceValue, currentPlayer, localTurn } = this._itemState;
+        // 选点面板只属于本机这位玩家自己的回合；AI 的点数由服务端自己选
+        const remoteDicePending = pendingItem === 'remote-dice';
+        const remoteDiceSelecting = remoteDicePending && localTurn;
+
+        // 已经选完点数的激活态别再开面板：激活快照可能晚于玩家点选到达，
+        // 那时重建面板会盖住骰子，投掷动画就没人看得见了
+        if (!remoteDicePending) {
+            this._remoteDicePicked = false;
+            this._remoteDicePickedValue = null;
         }
+
+        // 传送门：图标全桌可见；只有负责本回合操作的那台机器进入选子态（点数用 999 占位）
+        const teleportPending = pendingItem === 'teleport';
+        if (window.gameInstance) {
+            window.gameInstance.isTeleportMode = teleportPending && localTurn;
+        }
+        if (teleportPending && localTurn) {
+            gameState.setGamePhase?.('selecting');
+            gameState.setDiceValue?.(999);
+        }
+
+        // 中央位置四选一：传送门图标 / 遥控骰子选点面板 / 多面骰子数字牌 / 普通骰子
+        if (teleportPending) {
+            this.removeDiceSelectionPanel();
+            this.hidePolyhedralDice();
+            this.showTeleportIcon();
+        } else if (remoteDicePending) {
+            // 选点期间中央位置归面板，骰子由 updateDiceDisplay 按面板可见性收好
+            this.hideTeleportIcon();
+            this.hidePolyhedralDice();
+            // 只有本机这位玩家才开面板与计时；AI 这一手由服务端完成
+            if (remoteDiceSelecting) {
+                if (currentPlayer !== null && !this._remoteDicePicked && !document.getElementById('diceSelectionPanel')) {
+                    this.showDiceSelectionPanel(currentPlayer);
+                } else if (currentPlayer !== null && !this._remoteDicePicked) {
+                    // 面板已开着：服务端可能刚为这次激活开了新窗（激活会重置思考时间），
+                    // 把选点计时续到新窗上，否则本地会在旧窗到点时提前走 AI 托管
+                    this.armDiceSelectionTimeout(currentPlayer);
+                }
+                // 已选完点数、等点数落地：骰面先停在选的点上，别退回未投掷的 ⚀
+                if (this._remoteDicePicked && this._remoteDicePickedValue) {
+                    gameState.diceValue = this._remoteDicePickedValue;
+                    const diceDisplay = document.getElementById('diceDisplay');
+                    if (diceDisplay) {
+                        diceDisplay.textContent = DICE_SYMBOLS[this._remoteDicePickedValue - 1];
+                    }
+                }
+            } else {
+                this.removeDiceSelectionPanel();
+            }
+        } else if (diceItem === 'polyhedral-dice' && diceValue > 0) {
+            this.removeDiceSelectionPanel();
+            this.hideTeleportIcon();
+            // 牌已在滚或已亮着就不重建（重播滚轮、提前拍出数字）；刷新恢复才补一块静态的
+            if (!document.getElementById('polyhedralDiceDisplay')) {
+                this.showPolyhedralDice(diceValue, { instant: true });
+            }
+        } else {
+            this.removeDiceSelectionPanel();
+            this.restoreDiceIcon();
+        }
+
+        // 遥控骰子的青色骰面：道具拿在手里（还没掷）与掷出的结果都是这个色
+        const diceDisplay = document.getElementById('diceDisplay');
+        const remoteDiceActive = diceItem === 'remote-dice' || remoteDicePending;
+        gameState.isRemoteDice = remoteDiceActive;
+        if (diceDisplay) {
+            diceDisplay.classList.toggle('remote-dice', remoteDiceActive);
+        }
+
+        // 暂停期间统一藏起来并登记，恢复时由 hidePauseIndicator 或下一次渲染亮回来
+        if (gameState.getIsPaused?.()) {
+            ['diceDisplay', 'teleportIcon', 'polyhedralDiceDisplay', 'diceSelectionPanel'].forEach((id) => {
+                const element = document.getElementById(id);
+                if (!element) return;
+                element.dataset.hiddenByPause = 'true';
+                element.style.display = 'none';
+            });
+        }
+    }
+
+    /** 收起遥控骰子的选点面板 */
+    removeDiceSelectionPanel() {
+        document.getElementById('diceSelectionPanel')?.remove();
+    }
+
+    /** 记一段道具结算演出（开盒、积分数值动画）：暂停要等它收场再落 */
+    markItemSettlement(ms) {
+        this._itemSettlingUntil = Math.max(this._itemSettlingUntil || 0, Date.now() + ms);
+    }
+
+    /** 道具结算演出是否还在进行 */
+    isItemSettling() {
+        return Date.now() < (this._itemSettlingUntil || 0);
+    }
+
+    /** 收起多面骰子数字牌；滚轮没停稳时延后收，返回 true 表示收牌已延后 */
+    hidePolyhedralDice() {
+        const polyhedralDice = document.getElementById('polyhedralDiceDisplay');
+        if (!polyhedralDice) return false;
+
+        const revealUntil = this._polyhedralRevealUntil;
+        if (revealUntil && Date.now() < revealUntil) {
+            this._polyhedralRevealUntil = 0;
+            setTimeout(() => {
+                // 期间又掷了一次多面骰子，收牌交给那一轮
+                if (this._polyhedralRevealUntil) return;
+                document.getElementById('polyhedralDiceDisplay')?.remove();
+                this.restoreDiceIcon();
+            }, revealUntil - Date.now() + 50);
+            return true;
+        }
+
+        polyhedralDice.remove();
+        return false;
     }
 
     /**
@@ -1027,48 +1148,37 @@ class SkillManager {
     }
 
     /**
-     * 更新积分显示（显示当前玩家的积分）
+     * 道具面板看谁的积分：联机看自己、本地多人看当前回合的人、人机看自己那一席
+     */
+    _panelPlayer() {
+        if (gameState.getIsOnlineMultiplayer()) {
+            const manager = window.gameInstance && window.gameInstance.multiplayerGameManager;
+            const mine = manager && manager.getPlayerNumberByPlayerId && manager.getPlayerNumberByPlayerId(manager.playerId);
+            if (mine) return mine;
+        } else if (!gameState.getIsLocalMultiplayer?.()) {
+            const seat = window.gameInstance && window.gameInstance.localPlayerColor;
+            if (seat) return seat;
+        }
+        return gameState.getCurrentPlayer();
+    }
+
+    /**
+     * 更新积分显示
      */
     updateEnergyDisplay() {
         if (!this.skillEnergyText) return;
 
-        // 获取当前玩家编号
-        let localPlayer = gameState.getCurrentPlayer();
-        const isOnlineMode = gameState.getIsOnlineMultiplayer();
-
-        // 仅在在线模式下需要获取本地玩家编号
-        if (isOnlineMode) {
-            const multiplayerManager = window.gameInstance?.multiplayerGameManager;
-            if (multiplayerManager) {
-                localPlayer = multiplayerManager.getPlayerNumberByPlayerId(multiplayerManager.playerId);
-            }
-        }
-        // 在本地多人和人机模式下，始终显示当前玩家的积分
-
-        const currentEnergy = energyManager.getEnergy(localPlayer);
+        const currentEnergy = energyManager.getEnergy(this._panelPlayer());
         const maxEnergy = energyManager.maxEnergy;
 
         this.skillEnergyText.textContent = `积分: ${Math.floor(currentEnergy)}/${maxEnergy}`;
     }
 
     /**
-     * 更新道具可用性状态（基于当前玩家的积分）
+     * 更新道具可用性状态
      */
     updateSkillAvailability() {
-        // 获取当前玩家编号
-        let localPlayer = gameState.getCurrentPlayer();
-        const isOnlineMode = gameState.getIsOnlineMultiplayer();
-
-        // 仅在在线模式下需要获取本地玩家编号
-        if (isOnlineMode) {
-            const multiplayerManager = window.gameInstance?.multiplayerGameManager;
-            if (multiplayerManager) {
-                localPlayer = multiplayerManager.getPlayerNumberByPlayerId(multiplayerManager.playerId);
-            }
-        }
-        // 在本地多人和人机模式下，使用当前玩家编号
-
-        const currentEnergy = energyManager.getEnergy(localPlayer);
+        const currentEnergy = energyManager.getEnergy(this._panelPlayer());
 
         const skillItems = document.querySelectorAll('.skill-item');
         skillItems.forEach(item => {

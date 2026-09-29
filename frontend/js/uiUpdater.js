@@ -1,16 +1,16 @@
-/**
- * UI更新模块 - 处理界面更新相关功能
- */
-// 导入依赖模块
-import { gameState } from './gameState.js';
+﻿import { gameState } from './gameState.js';
 import { progressDisplay } from './progressDisplay.js';
-
-// 骰子符号常量
-const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+import { DICE_SYMBOLS } from './utils.js';
+import { engineAdapter } from './engineAdapter.js';
 
 class UIUpdater {
     constructor() {
-        // 初始化UI更新器
+        // 进度条显示时钟（只服务观感，和超时计时器互不干涉）：
+        // 进新阶段归零重走，演出期间冻在原处，演完接着走
+        this._barActive = false;
+        this._barElapsedMs = 0;
+        this._barRunSince = null;
+        this._barFrozenPct = 0;
     }
 
     // 更新UI界面
@@ -33,6 +33,12 @@ class UIUpdater {
         this.updatePlayerAvatarGlow();
         this.updateThinkingProgressBar();
 
+        // 叠子样式按当前棋面重算：叠子被拆开后，留在原地的那颗要恢复普通外观与位置
+        const animation = window.gameInstance && window.gameInstance.animation;
+        if (animation && typeof animation.refreshStackStyles === 'function') {
+            animation.refreshStackStyles();
+        }
+
         // 更新进度显示
         this.updateProgressDisplay();
     }
@@ -53,19 +59,21 @@ class UIUpdater {
     }
 
     // 更新骰子显示
-    updateDiceDisplay(forceDiceValue = null) {
+    // diceOwner：骰子点数归属的玩家编号，用于决定骰子颜色。
+    // 权威快照落地时回合可能已经推进，必须显式传入掷骰者，否则会染成下一个玩家的颜色。
+    updateDiceDisplay(forceDiceValue = null, diceOwner = null) {
         const diceDisplay = document.getElementById('diceDisplay');
         const pauseIndicator = document.getElementById('pauseIndicator');
         if (!diceDisplay) return;
 
         // 定义比普通骰子优先级更高、共用中心位置的UI元素ID及其描述
+        // （遥控骰子的选点面板不在其中：面板开在骰子下方，骰子留在原位正常演动画）
         const highPriorityUIElements = [
             { id: 'loadingIndicator', name: '加载提示' },
             { id: 'chatInputArea', name: '聊天输入框' },
             { id: 'polyhedralDiceDisplay', name: '多面骰子' },
             { id: 'teleportIcon', name: '传送门图标' },
-            { id: 'mysteryBoxIcon', name: '盲盒图标' },
-            { id: 'diceSelectionPanel', name: '遥控骰子面板' }
+            { id: 'mysteryBoxIcon', name: '盲盒图标' }
         ];
 
         // 检查是否有高优先级UI正在显示，如果有则隐藏普通骰子并跳过更新
@@ -95,8 +103,32 @@ class UIUpdater {
             return;
         }
 
-        const { diceValue: stateDiceValue, currentPlayer, gamePhase, isRolling } = gameState;
-        const diceValue = forceDiceValue !== null ? forceDiceValue : stateDiceValue;
+        // 震动期间别按快照终态重绘骰面：抖动是瞬时表现，重绘会把它打断（颜色由定格那一步定好）
+        if (diceDisplay.classList.contains('dice-shake') && forceDiceValue === null) {
+            return;
+        }
+
+        // 三次 6 惩罚演出期间：骰子保持那一刻的「6 + 警告红」，由事件回放挂好，这里不参与
+        if (gameState.getThreeSixesPenaltyActive?.() && forceDiceValue === null) {
+            return;
+        }
+
+      const { diceValue: stateDiceValue, currentPlayer, gamePhase, isRolling } = gameState;
+        let diceValue = forceDiceValue !== null ? forceDiceValue : stateDiceValue;
+
+        // 多面骰子的 7-12 没有对应骰面，交给数字牌表现，避免出现 undefined
+        if (diceValue > DICE_SYMBOLS.length) {
+            diceValue = 0;
+        }
+
+        // 回合已经流转到下一家（或快照已把骰子清空）时，旧点数不能再留在骰面上，
+        // 否则轮到下一家准备投掷时会显示上一家的点数
+        if (diceValue > 0) {
+            const isStaleRoll = gamePhase === 'rolling' && !isRolling && !gameState.getCanReroll();
+            if (isStaleRoll) {
+                diceValue = 0;
+            }
+        }
 
         // 先检查是否有震动效果和已有的重要样式，再清除样式类
         const hasShakeClass = diceDisplay.classList.contains('dice-shake');
@@ -115,6 +147,7 @@ class UIUpdater {
             diceDisplay.classList.add('dice-penalty-warning');
         }
 
+
         // 保留遥控骰子特效（暂停/恢复时不会被擦除）
         if (hasRemoteDiceClass) {
             diceDisplay.classList.add('remote-dice');
@@ -124,19 +157,22 @@ class UIUpdater {
             const newContent = DICE_SYMBOLS[diceValue - 1];
             diceDisplay.textContent = newContent;
             
-            // 重要：由于联机模式中玩家视角不同，显示点数时应该发光并应用对应玩家的颜色样式
-            // 首先清除可能存在的旧玩家样式
+            // 联机模式下各端视角不同，骰子应染成「掷骰者」的颜色并发光。
+            // 掷骰者由调用方显式给出；缺省时退回当前回合玩家。
             diceDisplay.className = diceDisplay.className.replace(/player-\d+/g, '');
-            // 添加基础类和当前状态类
-            diceDisplay.classList.add('dice-icon', 'rolled', `player-${currentPlayer}`);
-            diceDisplay.classList.remove('dice-penalty-warning', 'dice-flashing');
+            diceDisplay.classList.add('dice-icon', 'rolled', `player-${diceOwner ?? currentPlayer}`);
+            diceDisplay.classList.remove('dice-penalty-warning', 'dice-third-penalty', 'dice-flashing');
+
             
             // 显示点数时应该发光
             diceDisplay.classList.add('dice-glowing');
         } else {
-            // 重置为未投掷状态
+            // 重置为未投掷状态（青色只属于遥控骰子这一手，手里还攥着道具时也要保持）
             diceDisplay.textContent = '⚀';
             diceDisplay.classList.add('not-rolled');
+            if (!gameState.isRemoteDice) {
+                diceDisplay.classList.remove('remote-dice');
+            }
 
             // 添加发光效果（当轮到当前玩家且可以掷骰子时）
             // 在未掷出时，只要是rolling阶段就应该发光提示投掷
@@ -146,12 +182,14 @@ class UIUpdater {
                 diceDisplay.classList.remove('dice-glowing');
             }
 
-            if (gamePhase === 'rolling' && !isRolling && gameState.getCanReroll() && gameState.getConsecutiveSixes() === 2) {
-                if (!gameState.isHappyMode()) {
-                    diceDisplay.classList.add('dice-penalty-warning');
-                }
+            // 连出两个 6 之后、准备第三次投掷：就是这一组类（现成的警告红），全桌都看得到。
+            // 警告红只属于这一种状态，不满足就明确摘掉——上面那套「保留已有样式」的逻辑
+            // 会让它一直挂下去，无子可动抖动时就成了「红着抖」
+            if (gamePhase === 'rolling' && !isRolling &&
+                gameState.getConsecutiveSixes() === 2 && !gameState.isHappyMode()) {
+                diceDisplay.className = 'dice-icon dice-penalty-warning not-rolled dice-glowing';
             } else {
-                diceDisplay.classList.remove('dice-penalty-warning');
+                diceDisplay.classList.remove('dice-penalty-warning', 'dice-third-penalty');
             }
         }
 
@@ -168,9 +206,12 @@ class UIUpdater {
             const currentPlayer = gameState.getCurrentPlayer();
             const isOnlineMultiplayer = gameState.getIsOnlineMultiplayer();
 
-            // 导入botController来检查当前玩家是否为bot
-            import('./botController.js').then(({ botController }) => {
-                const isBot = botController.isCurrentPlayerBot();
+            // 当前玩家是不是机器人在替（联机看名单，单机看本地机器人标记）
+            import('./aiPlayers.js').then(({ isAiDriven }) => {
+                const manager = window.gameInstance && window.gameInstance.multiplayerGameManager;
+                const isBot = manager && manager.isOnlineMode
+                    ? isAiDriven(currentPlayer, manager)
+                    : Boolean(gameState.isBotPlayer(currentPlayer) || gameState.getIsAITakeover());
 
                 // 在多人游戏中，检查当前玩家是否是本地玩家或房主代替AI托管玩家操作
                 let isCurrentPlayerLocal = true;
@@ -275,72 +316,16 @@ class UIUpdater {
 
 
 
-    // 显示游戏结束信息
-    showGameEndMessage(winner) {
-        const message = `恭喜玩家 ${winner} 获胜！`;
-        alert(message);
-    }
 
 
-    // 更新游戏状态显示
-    updateGameStatusDisplay() {
-        const statusElement = document.getElementById('game-status');
-        if (statusElement) {
-            const currentPlayer = gameState.getCurrentPlayer();
-            const gamePhase = gameState.getGamePhase();
-            const diceValue = gameState.getDiceValue();
 
-            let statusText = `当前玩家: ${currentPlayer}`;
 
-            switch (gamePhase) {
-                case 'rolling':
-                    statusText += ' - 请掷骰子';
-                    break;
-                case 'selecting':
-                    statusText += ` - 骰子点数: ${diceValue}, 请选择棋子`;
-                    break;
-                case 'moving':
-                    statusText += ' - 棋子移动中...';
-                    break;
-                case 'finished':
-                    const winner = gameState.getWinner();
-                    statusText = `游戏结束 - 玩家 ${winner} 获胜！`;
-                    break;
-                default:
-                    statusText += ' - 等待操作';
-            }
-
-            statusElement.textContent = statusText;
-        }
-    }
-
-    // 更新骰子按钮状态
-    updateDiceButtonState() {
-        const diceButton = document.getElementById('dice-button');
-        if (diceButton) {
-            const gamePhase = gameState.getGamePhase();
-            const isRolling = gameState.getIsRolling();
-
-            diceButton.disabled = gamePhase !== 'rolling' || isRolling;
-            diceButton.textContent = isRolling ? '掷骰中...' : '掷骰子';
-        }
-    }
-
-    // 更新重置按钮状态
-    updateResetButtonState() {
-        const resetButton = document.getElementById('reset-button');
-        if (resetButton) {
-            const gamePhase = gameState.getGamePhase();
-            resetButton.disabled = gamePhase === 'moving';
-        }
-    }
 
     // 高亮可移动的棋子
     highlightMovableChess() {
         const currentPlayer = gameState.getCurrentPlayer();
         const diceValue = gameState.getDiceValue();
         const playerChess = gameState.getPlayerChess();
-        const gamePhase = gameState.getGamePhase();
 
         // 获取当前选中的棋子元素（如果有）
         const selectedChess = gameState.getSelectedChess();
@@ -353,99 +338,136 @@ class UIUpdater {
             }
         });
 
-        // 只有在选择棋子阶段（selecting）才显示高亮提示
-        if (gamePhase !== 'selecting') {
+        // 传送门待选子：能传的是轨道上自己的棋子（起始区和已到终点的传不了），
+        // 用的是和普通可移动棋子同一套高亮
+        const teleportMode = Boolean(window.gameInstance && window.gameInstance.isTeleportMode);
+
+        // 其余情况只有在选择棋子阶段（selecting）才显示高亮提示
+        if (!teleportMode && gameState.getGamePhase() !== 'selecting') {
             return;
         }
 
         // 为可移动的棋子添加高亮
         playerChess[currentPlayer].forEach((chess, index) => {
-            if (this.canChessMove(currentPlayer, index, diceValue)) {
-                if (chess.element) {
-                    chess.element.classList.add('chess-movable');
-                }
+            const highlightable = teleportMode
+                ? chess.position !== -1 && !chess.finished
+                : this.canChessMove(currentPlayer, index, diceValue);
+            if (highlightable && chess.element) {
+                chess.element.classList.add('chess-movable');
             }
         });
     }
 
-    // 检查棋子是否可以移动
+    // 检查棋子是否可以移动：可动规则由共享引擎给出，前端不再自己判一遍
     canChessMove(player, chessIndex, diceValue) {
-        const playerChess = gameState.getPlayerChess();
-        const chess = playerChess[player][chessIndex];
-
-        // 如果棋子已完成，不能移动
-        if (chess.finished) {
-            return false;
-        }
-
-        // 如果棋子在起始区域（position === -1），只有偶数才能出发
-        if (chess.position === -1) {
-            return diceValue % 2 === 0;
-        }
-
-        // 棋子在轨道上，检查是否可以移动
-        // 如果棋子在终点通道（位置51-56），支持反弹机制，任何点数都可以移动
-        if (chess.position >= 51 && chess.position < 56) {
-            return true;
-        }
-
-        // 如果棋子在普通轨道（0-50），可以移动并支持反弹
-        // 注意：不再限制点数+位置不能超过56，因为可以反弹
-        if (chess.position >= 0 && chess.position <= 50) {
-            return true;
-        }
-
-        return false;
+        return engineAdapter.movableFor(diceValue, player).includes(chessIndex);
     }
 
-    // 更新思考时间进度条
+    // 更新思考时间进度条（由 updateUI 调用，是唯一的渲染入口）
     updateThinkingProgressBar() {
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
+        this._renderThinkingProgressBar();
+    }
 
-        if (!progressContainer || !progressBar) {
-            return;
-        }
+    /**
+     * 唯一的进度条渲染函数。进度条始终可见。
+     * 宽度来自显示时钟（见 _progressClockPercent）：进新阶段归零重走，演出期间冻住不回零。
+     * 颜色由计时器归属玩家决定，动画期间锁定本次出手的一家，不提前串色。
+     */
+    _renderThinkingProgressBar() {
+        const container = document.getElementById('thinkingProgressContainer');
+        const bar = document.getElementById('thinkingProgressBar');
+        if (!container || !bar) return;
 
-        // 如果游戏暂停，不要重新显示进度条
+        // 暂停时整段隐藏，不参与渲染
         if (gameState.getIsPaused()) {
+            container.classList.remove('active');
             return;
         }
 
-        const currentPlayer = gameState.getCurrentPlayer();
+        // 动画期间锁定为「本次掷骰者」，动画结束清除后回落到计时器/当前回合玩家
+        const displayOwner = gameState.getThinkingProgressDisplayOwner?.();
+        const owner = displayOwner ?? gameState.getThinkingProgressOwner() ?? gameState.getCurrentPlayer();
+        if (owner === null || owner === undefined) {
+            container.classList.remove('active');
+            return;
+        }
 
-        // 显示进度条并设置玩家颜色
-        progressContainer.className = `thinking-progress-container active player-${currentPlayer}`;
+        container.className = `thinking-progress-container active player-${owner}`;
+        const pct = this._barHeld ? this._barFrozenPct : this._progressClockPercent();
+        bar.style.width = `${pct * 100}%`;
+    }
 
-        // 更新进度条宽度
-        const progress = gameState.getThinkingProgress();
-        // 进度条显示已用时间，从0%到100%
-        const usedProgress = Math.min(100, progress * 100);
-        progressBar.style.width = `${usedProgress}%`;
+    /** 本阶段已经走了多少（0-1）；时钟没开就一直是 0 */
+    _progressClockPercent() {
+        if (!this._barActive) return 0;
+        const total = Number(gameState.THINKING_TIME) || 20000;
+        const elapsed = this._barElapsedMs + (this._barRunSince ? Date.now() - this._barRunSince : 0);
+        return Math.min(1, elapsed / total);
+    }
 
+    /** 进入新阶段：归零，从 0 慢慢走 */
+    resetProgressClock() {
+        this._barActive = true;
+        this._barElapsedMs = 0;
+        this._barRunSince = Date.now();
+        this._barFrozenPct = 0;
+    }
+
+    _clearProgressClock() {
+        this._barActive = false;
+        this._barElapsedMs = 0;
+        this._barRunSince = null;
+        this._barFrozenPct = 0;
+    }
+
+    /**
+     * 显示一个静止的空进度条（0%），颜色为指定玩家。
+     * 用于开局首位玩家尚未操作、AI 回合等不启动回合计时器的场景。
+     */
+    showIdleThinkingProgressBar(playerNumber) {
+        const container = document.getElementById('thinkingProgressContainer');
+        const bar = document.getElementById('thinkingProgressBar');
+        if (!container || !bar) return;
+        if (gameState.getIsPaused()) {
+            container.classList.remove('active');
+            return;
+        }
+        const owner = playerNumber ?? gameState.getCurrentPlayer();
+        if (owner === null || owner === undefined) return;
+        // 静止空条：把显示时钟停掉，免得下次刷新又被时钟的旧进度顶起来
+        this._clearProgressClock();
+        container.className = `thinking-progress-container active player-${owner}`;
+        bar.style.width = '0%';
     }
 
     // 启动思考时间进度条动画
     startThinkingProgressBar(onTimeout) {
+        this._barHeld = false;
         // 只有在联机模式下才启动思考时间倒计时（用于处理玩家掉线或长时间不操作）
         // 单机模式（包括人机对战和本地多人）都不需要自动超时的倒计时
         if (!gameState.getIsOnlineMultiplayer()) {
             return;
         }
 
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
-
-        if (!progressContainer || !progressBar) {
+        // 暂停期间不启动计时，跑完会触发超时接管
+        if (gameState.getIsPaused()) {
             return;
         }
 
-        const currentPlayer = gameState.getCurrentPlayer();
+        const container = document.getElementById('thinkingProgressContainer');
+        if (!container) return;
 
-        // 显示进度条并设置玩家颜色
-        progressContainer.className = `thinking-progress-container active player-${currentPlayer}`;
-        // 在单机模式下，进度条从0%开始，与联机模式保持一致
-        progressBar.style.width = '0%';
+        // 新阶段：显示时钟归零重走（演出耗掉的时间不算进本阶段）
+        this.resetProgressClock();
+
+        // 先把计时器跑起来，它同时锁定了颜色归属玩家
+        gameState.startThinkingTimer(onTimeout);
+
+        // 启动进度条更新循环（循环内会持续刷新宽度）
+        this.updateProgressBarLoop();
+
+        // 计时器就绪后再渲染，颜色即当前玩家
+        this._renderThinkingProgressBar();
 
         // 如果是在线多人模式，同步进度条状态
         if (gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
@@ -453,17 +475,11 @@ class UIUpdater {
             if (!gameState._skipProgressBarStart) {
                 // 只有当前玩家是本地玩家时才同步进度条启动
                 const localPlayerNumber = window.gameInstance.multiplayerGameManager.getPlayerNumberByPlayerId(window.gameInstance.multiplayerGameManager.playerId);
-                if (currentPlayer === localPlayerNumber) {
-                    window.gameInstance.multiplayerGameManager.syncProgressBarStart(currentPlayer);
+                if (gameState.getThinkingProgressOwner() === localPlayerNumber) {
+                    window.gameInstance.multiplayerGameManager.syncProgressBarStart(localPlayerNumber);
                 }
             }
         }
-
-        // 启动游戏状态中的计时器
-        gameState.startThinkingTimer(onTimeout);
-
-        // 启动进度条更新循环
-        this.updateProgressBarLoop();
     }
 
     // 恢复思考时间进度条动画
@@ -473,55 +489,94 @@ class UIUpdater {
             return;
         }
 
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        const progressBar = document.getElementById('thinkingProgressBar');
-
-        if (!progressContainer || !progressBar) {
+        // 暂停期间不恢复计时，超时接管会因此触发
+        if (gameState.getIsPaused()) {
             return;
         }
 
-        const currentPlayer = gameState.getCurrentPlayer();
+        // 暂停的这段时间不算进本阶段：显示时钟从冻结处接着走
+        if (this._barActive && !this._barRunSince) {
+            this._barRunSince = Date.now();
+        }
 
-        // 确保进度条容器显示并设置正确的玩家颜色
-        progressContainer.className = `thinking-progress-container active player-${currentPlayer}`;
-
-        // 恢复游戏状态中的计时器
-        gameState.resumeThinkingTimer(onTimeout);
+        // 恢复游戏状态中的计时器；若此前根本没有计时（如暂停期间刷新），退化为重新开始计时
+        if (gameState.thinkingStartTime) {
+            gameState.resumeThinkingTimer(onTimeout);
+        } else {
+            gameState.startThinkingTimer(onTimeout);
+        }
 
         // 启动进度条更新循环
         this.updateProgressBarLoop();
+
+        // 按新的计时器归属渲染
+        this._renderThinkingProgressBar();
     }
 
     // 暂停思考时间进度条
     pauseThinkingProgressBar() {
+        // 暂停即硬冻结：显示时钟停在原处，恢复后接着走
+        if (this._barRunSince) {
+            this._barElapsedMs += Date.now() - this._barRunSince;
+            this._barRunSince = null;
+        }
+
         // 暂停游戏状态中的计时器，不要完全清除
         gameState.pauseThinkingTimer();
 
         // 停止进度条更新循环
-        if (this.progressUpdateInterval) {
-            clearInterval(this.progressUpdateInterval);
-            this.progressUpdateInterval = null;
+        this._stopProgressBarLoop();
+
+        const container = document.getElementById('thinkingProgressContainer');
+        if (container) {
+            container.classList.remove('active');
         }
     }
 
     // 停止思考时间进度条
     stopThinkingProgressBar() {
-        // 完全清除游戏状态中的计时器
+        this._barHeld = false;
+        // 完全清除游戏状态中的计时器（同时解锁颜色归属）
         gameState.clearThinkingTimer();
+        // 显示时钟也归零：本阶段结束，等下一次开场重新起
+        this._clearProgressClock();
 
         // 停止进度条更新循环
+        this._stopProgressBarLoop();
+
+        // 进度条始终可见：停掉计时器后回到「当前回合玩家的静止空条」
+        this._renderThinkingProgressBar();
+    }
+
+    // 进度条更新循环
+    /**
+     * 演出（掷骰/走子/道具动画）期间：进度条停在原处——显示时钟冻结 + 停渲染循环，
+     * 这样既不归零、也不被别的渲染调用拉走。演出结束由 release/reset 接手。
+     */
+    holdThinkingProgressBar() {
+        this._barHeld = true;
+        if (this._barRunSince) {
+            this._barElapsedMs += Date.now() - this._barRunSince;
+            this._barRunSince = null;
+        }
+        this._barFrozenPct = this._progressClockPercent();
         if (this.progressUpdateInterval) {
             clearInterval(this.progressUpdateInterval);
             this.progressUpdateInterval = null;
         }
-        
-        const progressContainer = document.getElementById('thinkingProgressContainer');
-        if (progressContainer) {
-            progressContainer.classList.remove('active');
-        }
+        gameState.pauseThinkingTimer?.();
     }
 
-    // 进度条更新循环
+    /** 演出结束、还在同一阶段：松开时钟接着走（不清零） */
+    releaseThinkingProgressBar() {
+        this._barHeld = false;
+        if (this._barActive && !this._barRunSince) {
+            this._barRunSince = Date.now();
+        }
+        gameState.resumeThinkingTimer?.(null);
+        this.updateProgressBarLoop();
+    }
+
     updateProgressBarLoop() {
         // 清除之前的循环
         if (this.progressUpdateInterval) {
@@ -537,18 +592,27 @@ class UIUpdater {
                 return;
             }
 
-            if (!gameState.isThinkingTimerActive()) {
-                this.stopThinkingProgressBar();
+            // 演出期间的「暂停」不算结束：保住进度，别在这儿归零
+            if (this._barHeld) {
                 return;
             }
-            const progressBar = document.getElementById('thinkingProgressBar');
-            if (progressBar) {
-                const progress = gameState.getThinkingProgress();
-                // 进度条显示已用时间，从0%到100%
-                const usedProgress = Math.min(100, progress * 100);
-                progressBar.style.width = `${usedProgress}%`;
+
+            // 不在思考阶段（结算、回合交接）就收工，渲染交给下一次快照
+            const phase = gameState.getGamePhase?.();
+            if (phase !== 'rolling' && phase !== 'selecting') {
+                this._stopProgressBarLoop();
+                return;
             }
+
+            this._renderThinkingProgressBar();
         }, 100);
+    }
+
+    _stopProgressBarLoop() {
+        if (this.progressUpdateInterval) {
+            clearInterval(this.progressUpdateInterval);
+            this.progressUpdateInterval = null;
+        }
     }
 
     // 更新进度显示

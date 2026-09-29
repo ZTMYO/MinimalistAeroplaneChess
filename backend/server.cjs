@@ -6,10 +6,19 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
+const {
+  Player,
+  Room,
+  GameSession,
+  RoomManager,
+  roomManager,
+  ROOM_LIFECYCLE,
+  configureRoomManager
+} = require('./roomManager.cjs');
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-const ROOM_CHAT_MAX_MESSAGES = 50;
 
 // 中间件
 app.use(express.json());
@@ -77,259 +86,10 @@ function getBroadcastTarget(playerId) {
   return roomManager.getPlayerRoom(playerId) || null;
 }
 
-// -------------------------- 房间管理类 --------------------------
-class RoomManager {
-  constructor() {
-    this.rooms = new Map(); // roomCode -> Room
-    this.playerRooms = new Map(); // playerId -> roomCode
-    this.gameSessions = new Map(); // gameSessionId -> GameSession
-    this.playerSessions = new Map(); // playerId -> gameSessionId
-    this.playerSpectatingRooms = new Map(); // playerId -> roomCode
-    this.playerConnections = new Map(); // playerId -> WebSocket
-
-    this.roomDestroyTimers = new Map(); // roomCode -> Timer（延迟销毁房间）
-    this.disconnectTimers = new Map(); // playerId -> Timer（延迟处理断开）
-    this.disconnectDebounceTimers = new Map();
-  }
-
-  // 生成4位字母房间号
-  generateRoomCode() {
-    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let code;
-    do {
-      code = Array.from({ length: 4 }, () => letters[Math.floor(Math.random() * letters.length)]).join('');
-    } while (this.rooms.has(code));
-    return code;
-  }
-
-  // 生成4位游戏会话ID（字母+数字）
-  generateGameSessionId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let sessionId;
-    do {
-      const randomStr = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-      sessionId = `game_${randomStr}`;
-    } while (this.gameSessions.has(sessionId));
-    return sessionId;
-  }
-
-  // 创建房间
-  createRoom(hostPlayer, roomName = '') {
-    const roomCode = this.generateRoomCode();
-    const room = new Room(roomCode, hostPlayer, roomName);
-    this.rooms.set(roomCode, room);
-    this.playerRooms.set(hostPlayer.id, roomCode);
-    this.setPlayerConnection(hostPlayer.id, hostPlayer.ws);
-    return room;
-  }
-
-  // 加入房间
-  joinRoom(roomCode, player) {
-    const room = this.rooms.get(roomCode);
-    if (!room) throw new Error('房间不存在');
-
-    // 重连逻辑
-    const existingPlayer = Array.from(room.players.values()).find(p => p.id === player.id);
-    if (existingPlayer) {
-      existingPlayer.ws = player.ws;
-      existingPlayer.isConnected = true;
-      existingPlayer.nickname = player.nickname || existingPlayer.nickname;
-      existingPlayer.emoji = player.emoji || existingPlayer.emoji;
-      this.playerRooms.set(player.id, roomCode);
-      this.setPlayerConnection(player.id, player.ws);
-
-      // 检查房间是否恢复（人类玩家重连）
-      room.checkEmptyRoom();
-
-      return room;
-    }
-
-    // 游戏中无法加入
-    if (room.gameState === 'playing') throw new Error('游戏正在进行中，无法加入新玩家');
-    // 房间满员：计算已占用席位 = 真实玩家 + AI 玩家
-    const aiCount = room.settings?.aiPlayers ? room.settings.aiPlayers.length : 0;
-    const totalPlayerCount = room.players.size + aiCount;
-    if (totalPlayerCount >= 4) throw new Error('房间已满');
-    // 取消房间销毁定时器
-    if (this.roomDestroyTimers.has(roomCode)) {
-      clearTimeout(this.roomDestroyTimers.get(roomCode));
-      this.roomDestroyTimers.delete(roomCode);
-      console.log(`房间 ${roomCode} 取消延迟销毁`);
-    }
-
-    // 如果房间状态为finished，重置为waiting
-    if (room.gameState === 'finished') {
-      room.gameState = 'waiting';
-      room.gameSessionId = null;
-      room.playerReadyStatus = new Map();
-      room.postGameHostId = null;
-      console.log(`房间 ${roomCode} 游戏已结束，重置为等待状态`);
-    }
-
-    // 空房间新玩家成为房主
-    if (room.players.size === 0) {
-      room.host = player;
-      player.isHost = true;
-      console.log(`玩家 ${player.id} (${player.nickname}) 成为空房间 ${roomCode} 房主`);
-    }
-
-    room.addPlayer(player);
-    // 设置新玩家的准备状态（非房主默认为未准备）
-    room.playerReadyStatus.set(player.id, !!player.isHost);
-    this.playerRooms.set(player.id, roomCode);
-    return room;
-  }
-
-  // 获取可加入的公开房间摘要列表
-  listPublicRooms() {
-    const summaries = [];
-    for (const room of this.rooms.values()) {
-      // 仅展示可加入的房间（公开房间不做权限控制）
-      if (room.isPrivate) continue;
-
-      // 使用总席位数（真实玩家 + AI 玩家）判断是否已满
-      const aiCount = room.settings?.aiPlayers ? room.settings.aiPlayers.length : 0;
-      const totalPlayerCount = room.players.size + aiCount;
-      if (totalPlayerCount === 0) continue;
-      if (totalPlayerCount >= 4 && room.gameState !== 'playing') continue;
-
-      summaries.push({
-        code: room.code,
-        name: room.name,
-        pieceCount: room.settings?.pieceCount ?? 4,
-        skillMode: !!(room.settings?.skillMode),
-        happyMode: !!(room.settings?.happyMode),
-        playerCount: totalPlayerCount, // 包含AI玩家的总人数
-        maxPlayers: 4,
-        gameState: room.gameState,
-        createdAt: room.createdAt,
-        playerIds: Array.from(room.players.keys()) // 玩家ID列表，用于前端匹配身份
-      });
-    }
-
-    // 新房间优先
-    summaries.sort((a, b) => b.createdAt - a.createdAt);
-    return summaries;
-  }
-
-  // -------------------------- 统一房间延迟销毁逻辑（避免重复）--------------------------
-  scheduleRoomDestroy(roomCode) {
-    console.log(`房间 ${roomCode} 已空，启动5分钟延迟销毁`);
-    // 清除已有定时器
-    if (this.roomDestroyTimers.has(roomCode)) {
-      clearTimeout(this.roomDestroyTimers.get(roomCode));
-    }
-    // 新建定时器
-    const timer = setTimeout(() => {
-      const room = this.rooms.get(roomCode);
-      if (room && room.players.size === 0) {
-        console.log(`房间 ${roomCode} 5分钟内无人加入，销毁`);
-
-        // 删除游戏会话（如果存在）
-        if (room.gameSessionId) {
-          this.removeGameSession(room.gameSessionId);
-          room.gameSessionId = null;
-          console.log(`同时删除了关联的游戏会话`);
-        }
-
-        this.rooms.delete(roomCode);
-      } else {
-        console.log(`房间 ${roomCode} 延迟期间有玩家加入，取消销毁`);
-      }
-      this.roomDestroyTimers.delete(roomCode);
-    }, 5 * 60 * 1000); // 5分钟
-
-    this.roomDestroyTimers.set(roomCode, timer);
-    console.log(`房间 ${roomCode} 空置计时器已启动（5分钟）`);
-  }
-
-  immediateDestroyRoom(roomCode) {
-    const room = this.rooms.get(roomCode);
-    if (!room) return;
-
-    if (room.gameSessionId) {
-      this.removeGameSession(room.gameSessionId);
-      room.gameSessionId = null;
-    }
-
-    if (this.roomDestroyTimers.has(roomCode)) {
-      clearTimeout(this.roomDestroyTimers.get(roomCode));
-      this.roomDestroyTimers.delete(roomCode);
-    }
-
-    this.rooms.delete(roomCode);
-  }
-
-  // 获取房间
-  getRoom(roomCode) {
-    return this.rooms.get(roomCode);
-  }
-
-  // 获取玩家所在房间
-  getPlayerRoom(playerId) {
-    const roomCode = this.playerRooms.get(playerId);
-    return roomCode ? this.rooms.get(roomCode) : null;
-  }
-
-  // 创建游戏会话
-  createGameSession(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false) {
-    console.log(`创建游戏会话: ${gameSessionId}, 玩家数: ${players.length}, 棋子数: ${pieceCount}, 欢乐模式: ${happyMode}`);
-    const gameSession = new GameSession(gameSessionId, players, pieceCount, roomCode, hostId, skillMode, happyMode);
-    this.gameSessions.set(gameSessionId, gameSession);
-    // 建立玩家-会话映射
-    players.forEach(player => {
-      if (!player.isAI) {
-        this.playerSessions.set(player.id, gameSessionId);
-      }
-    });
-    return gameSession;
-  }
-
-  // 获取游戏会话
-  getGameSession(gameSessionId) {
-    console.log(`查找游戏会话: ${gameSessionId}`);
-    return this.gameSessions.get(gameSessionId);
-  }
-
-  // 获取玩家所在游戏会话
-  getPlayerGameSession(playerId) {
-    const gameSessionId = this.playerSessions.get(playerId);
-    return gameSessionId ? this.getGameSession(gameSessionId) : null;
-  }
-
-  // 删除游戏会话
-  removeGameSession(gameSessionId) {
-    const gameSession = this.gameSessions.get(gameSessionId);
-    if (!gameSession) {
-      console.log(`游戏会话 ${gameSessionId} 不存在，无需删除`);
-      return;
-    }
-
-    console.log(`删除游戏会话: ${gameSessionId}`);
-
-    // 删除所有玩家的会话映射
-    gameSession.players.forEach((player, playerId) => {
-      this.playerSessions.delete(playerId);
-    });
-
-    // 删除游戏会话
-    this.gameSessions.delete(gameSessionId);
-
-    console.log(`游戏会话 ${gameSessionId} 已删除`);
-  }
-
-  // 设置玩家连接
-  setPlayerConnection(playerId, ws) {
-    this.playerConnections.set(playerId, ws);
-    dailyStats.recordPlayerConnected(playerId);
-    // 每次有玩家连接时更新峰值，不依赖 /api/stats 的轮询
-    dailyStats.recordConnectionCount(this.playerConnections.size);
-  }
-
-  // 获取玩家连接
-  getPlayerConnection(playerId) {
-    return this.playerConnections.get(playerId);
-  }
+function requireBroadcastTarget(playerId) {
+  const target = getBroadcastTarget(playerId);
+  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+  return target;
 }
 
 // -------------------------- 每日统计 --------------------------
@@ -383,422 +143,432 @@ class DailyStats {
 
 const dailyStats = new DailyStats();
 
-// -------------------------- 游戏会话类（逻辑保持，优化日志）--------------------------
-class GameSession {
-  constructor(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false) {
-    this.gameSessionId = gameSessionId;
-    // AI玩家不需要连接状态，只有真实玩家才设置为isConnected: true
-    this.players = new Map(players.map(p => [p.id, { ...p, isConnected: p.isAI ? false : true, ws: null }]));
-    this.gameState = 'playing';
-    this.createdAt = Date.now();
-    this.pieceCount = pieceCount;
-    this.roomCode = roomCode;
-    this.hostId = hostId;
-    this.skillMode = skillMode;
-    this.happyMode = happyMode;
-    this.audioLoadedPlayers = new Set(); // 统一管理音频加载状态
-    this.aiTakeoverPlayers = new Set();
-    this.spectators = new Set(); // 观战者集合
+// -------------------------- 服务端权威棋面 --------------------------
+// gameSessionId -> AuthoritySession。规则计算全部在 authority.cjs 里完成，
+// 服务端不再采信客户端上报的骰子点数与棋子位置。
+const authority = require('./authority.cjs');
+const { BotDriver } = require('./botDriver.cjs');
+const authoritySessions = new Map();
 
-    // 初始化游戏数据
-    this.gameData = {
-      gameSessionId: gameSessionId, // 添加gameSessionId以支持重连
-      gameStartTime: Date.now(),
-      currentPlayer: null,
-      gamePhase: 'rolling',
-      diceValue: 0,
-      winner: null,
-      playerChess: {},
-      defeatCounts: {},
-      energyStates: {}, // 道具模式：玩家积分状态
-      pieceCount,
-      happyMode, // 欢乐模式标志
-      // 连投奖励相关状态
-      canReroll: false,
-      consecutiveSixes: 0,
-      justRolledSix: false,
-      // 本回合骰子值是否已被消耗（防止重连后重复移动）
-      diceValueConsumed: false,
-      // 数据分析相关（用于重连恢复）
-      diceStatistics: {}, // 骰子投掷统计
-      progressHistory: [], // 完成度历史记录
-      currentRound: 0, // 当前回合数
-      // 思考时间相关（用于重连恢复进度条）
-      thinkingStartTime: null, // 思考开始时间戳
-      gameOfficiallyStarted: false // 游戏是否正式开始
-    };
+function getAuthoritySession(gameSessionId) {
+  return gameSessionId ? authoritySessions.get(gameSessionId) || null : null;
+}
 
-    // 初始化棋子状态
-    players.forEach(player => {
-      this.gameData.playerChess[player.color] = Array.from({ length: pieceCount }, () => ({
-        position: -1,
-        finished: false
-      }));
-      // 初始化击败计数
-      this.gameData.defeatCounts[player.color] = Object.fromEntries(
-        players.filter(p => p.color !== player.color).map(p => [p.color, 0])
-      );
-      // 初始化积分状态
-      this.gameData.energyStates[player.color] = 0;
-      // 初始化骰子投掷统计
-      this.gameData.diceStatistics[player.color] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-    });
+function dropAuthoritySession(gameSessionId) {
+  if (!gameSessionId) return;
+  botDriver.dropSession(gameSessionId);
+  const waiter = animationWaiters.get(gameSessionId);
+  if (waiter) finishAnimationWait(gameSessionId, waiter);
+  animationAckers.delete(gameSessionId);
+  authoritySessions.delete(gameSessionId);
+}
+
+// 把领域模型需要的外部能力注入进去
+configureRoomManager({
+  getDefaultNickname,
+  dropAuthoritySession,
+  stats: dailyStats
+});
+
+// 把权威快照同步进 gameData，让重连、观战、既有 HTTP 接口都看到同一份棋面
+function mirrorSnapshot(gameSession, snapshot) {
+  const data = gameSession.gameData;
+  const previousPlayer = data.currentPlayer;
+  const previousPhase = data.gamePhase;
+
+  data.currentPlayer = snapshot.currentPlayer;
+  data.gamePhase = snapshot.gamePhase === 'ended' ? 'finished' : snapshot.gamePhase;
+  data.diceValue = snapshot.diceValue;
+  data.winner = snapshot.winner;
+  data.consecutiveSixes = snapshot.consecutiveSixes;
+  data.currentRound = snapshot.round;
+  data.pieceCount = snapshot.pieceCount;
+  if (Array.isArray(snapshot.progressHistory)) {
+    data.progressHistory = snapshot.progressHistory;
+  }
+  for (const color of Object.keys(snapshot.playerChess)) {
+    data.playerChess[color] = snapshot.playerChess[color].map(chess => ({
+      position: chess.position,
+      finished: chess.finished
+    }));
+  }
+  for (const attacker of Object.keys(snapshot.defeatCounts)) {
+    data.defeatCounts[attacker] = { ...snapshot.defeatCounts[attacker] };
   }
 
-  // 广播消息
-  broadcast(message) {
-    let sentCount = 0;
-    this.players.forEach(player => {
-      if (player && !player.isAI) {
-        const mappedSessionId = roomManager.playerSessions.get(player.id);
-        if (mappedSessionId !== this.gameSessionId) {
-          return;
-        }
-      }
-      const ws = roomManager.getPlayerConnection(player.id);
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(message));
-        sentCount++;
-      }
-    });
-
-    // 广播给观战者
-    if (this.spectators) {
-      this.spectators.forEach(spectatorId => {
-        const ws = roomManager.getPlayerConnection(spectatorId);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(message));
-          sentCount++;
-        }
-      });
-    }
-
-    // 只对playerTurnChange消息打印调试日志
-    if (message.type === 'playerTurnChange') {
-      console.log(`[broadcast] playerTurnChange消息已发送给${sentCount}个玩家`);
-    }
-
-    if (message.type === 'forceSettlement' || message.type === 'gameEnd') {
-      console.log(`[broadcast] ${message.type}消息已发送给${sentCount}个玩家`);
-    }
-  }
-
-  // 序列化
-  toJSON() {
-    return {
-      gameSessionId: this.gameSessionId,
-      players: Array.from(this.players.values()).map(p => ({
-        ...p,
-        isHost: p.isHost || false  // 确保包含isHost字段
-      })),
-      gameState: this.gameState,
-      createdAt: this.createdAt,
-      gameData: this.gameData
-    };
+  // 思考窗口只在这里开：换人，或同一人重新进入掷骰阶段（连投 6 重掷）。
+  // 掷出点数后进入选子沿用同一扇窗：那一步不重置进度条。
+  // 刷新、重连、补快照都只是重发同一扇窗，狂刷页面换不来额外思考时间
+  const openedWindow = data.currentPlayer !== previousPlayer
+    || (data.gamePhase === 'rolling' && previousPhase !== 'rolling' && previousPhase !== 'paused');
+  if (openedWindow) {
+    data.thinkingStartTime = Date.now();
+    data.pausedTotalMs = 0;
   }
 }
 
-// -------------------------- 房间类（逻辑保持，优化玩家添加）--------------------------
-class Room {
-  constructor(code, hostPlayer, name = '') {
-    this.code = code;
-    this.name = name || `${hostPlayer.nickname}的房间`;
-    this.isPrivate = false;
-    this.host = hostPlayer;
-    hostPlayer.isHost = true;
-    this.players = new Map();
-    this.playerReadyStatus = new Map(); // playerId -> isReady 准备状态
-    this.gameState = 'waiting';
-    this.gameSessionId = null;
-    this.postGameHostId = null; // 游戏结束后，首次返回房间的玩家ID（用于锁定房主）
-    this.settings = { pieceCount: 4, aiPlayers: [], skillMode: false, happyMode: false };
-    this.spectators = new Set(); // 观战者ID集合
-    this.roomChatHistory = []; // 房间聊天历史（最多50条）
-    this.createdAt = Date.now(); // 房间创建时间
-    this.addPlayer(hostPlayer);
-    // 房主自动准备
-    this.playerReadyStatus.set(hostPlayer.id, true);
-    // 房间空置相关
-    this.emptyRoomTimer = null; // 房间空置计时器
-    this.emptyRoomStartTime = null; // 房间空置开始时间
+/** 把服务端维护的思考窗口带进快照：客户端据此渲染进度条，也据此判定超时 */
+function attachTiming(snapshot, gameData) {
+  snapshot.thinkingStartTime = gameData.thinkingStartTime || null;
+  snapshot.pausedThinkingMs = gameData.pausedTotalMs || 0;
+  return snapshot;
+}
+
+/** 结束暂停：把这段暂停时长折算进去，思考窗口顺延，不因暂停而流失 */
+function accumulatePausedTime(gameData) {
+  if (!gameData || !gameData.pausedAt) return;
+  gameData.pausedTotalMs = (gameData.pausedTotalMs || 0) + (Date.now() - gameData.pausedAt);
+  gameData.pausedAt = null;
+}
+
+/** 思考时间是否已经用完（与前端 gameState.THINKING_TIME 对齐；未正式开局不计时） */
+function isThinkingExpired(gameSession, now) {
+  const data = gameSession.gameData;
+  if (!data || !data.gameOfficiallyStarted || !data.thinkingStartTime || data.isPaused) return false;
+  if (data.gamePhase !== 'rolling' && data.gamePhase !== 'selecting') return false;
+  const elapsed = now - data.thinkingStartTime - (data.pausedTotalMs || 0);
+  return elapsed > THINKING_TIME_MS;
+}
+
+/** 快照是否已经体现出对局推进，用来把「尚未开局」与「进行中」区分开 */
+function hasGameProgress(snapshot) {
+  if (!snapshot) return false;
+  if ((snapshot.round || 0) > 0 || (snapshot.diceValue || 0) > 0) return true;
+  const playerChess = snapshot.playerChess || {};
+  return Object.keys(playerChess).some(color => {
+    const chesses = playerChess[color];
+    return Array.isArray(chesses) && chesses.some(chess => chess && (chess.position !== -1 || chess.finished));
+  });
+}
+
+async function startAuthoritySession(gameSession) {
+  const colors = Array.from(gameSession.players.values()).map(p => p.color);
+  const session = await authority.createAuthoritySession({
+    gameSessionId: gameSession.gameSessionId,
+    colors,
+    pieceCount: gameSession.pieceCount,
+    happy: gameSession.happyMode,
+    skillMode: gameSession.skillMode,
+    // 初始积分：默认 0，测试或自定义开局可用环境变量给一笔启动资金
+    startEnergy: Number(process.env.START_ENERGY) || 0
+  });
+  authoritySessions.set(gameSession.gameSessionId, session);
+  mirrorSnapshot(gameSession, session.snapshot());
+  gameSession.broadcast(attachTiming(session.snapshot(), gameSession.gameData));
+  console.log(`[权威棋面] 会话 ${gameSession.gameSessionId} 已接管，玩家颜色: ${colors.join(',')}`);
+  return session;
+}
+
+function colorOfPlayer(gameSession, playerId) {
+  const player = gameSession.players.get(playerId);
+  return player ? player.color : null;
+}
+
+/**
+ * 解析这次意图真正代表谁。
+ * 托管玩家与 AI 电脑玩家的回合由房主浏览器代理执行，此时 message.playerId 才是被代理者；
+ * 普通玩家只能代表自己，防止伪造他人身份。
+ */
+// 意图只能由玩家本人发起：AI 与托管回合现在由服务端自己驱动（botDriver），
+// 房主不再代打，所以没有「替别人发意图」这回事
+function resolveIntentActor(gameSession, senderId, requestedId) {
+  return senderId;
+}
+
+// 旧协议中会直接改写服务端棋面的消息类型
+const LEGACY_BOARD_REPORTS = new Set([
+  'diceRoll', 'playerTurnChange', 'pieceMove', 'chessMove',
+  'finalMoveResult', 'moveChessToStart', 'moveChessToFinish', 'noMovableChess',
+  'defeatCountChange', 'boardSyncData'
+]);
+
+function isLegacyBoardReport(type) {
+  return LEGACY_BOARD_REPORTS.has(type);
+}
+
+function isAuthorityManaged(playerId) {
+  const gameSession = roomManager.getPlayerGameSession(playerId);
+  return Boolean(gameSession && authoritySessions.has(gameSession.gameSessionId));
+}
+
+function handleSnapshotRequest(ws, playerId) {
+  const gameSession = roomManager.getPlayerGameSession(playerId);
+  // 对局已结束/会话已销毁时客户端的兜底心跳还会来要快照，这不是异常，
+  // 静默忽略即可，报错只会把各端控制台刷满
+  if (!gameSession) return;
+  markGamePage(playerId);
+  const session = getAuthoritySession(gameSession.gameSessionId);
+  if (!session) return;
+  ws.send(JSON.stringify(attachTiming(session.snapshot(), gameSession.gameData)));
+}
+
+// 重连与观战都走同一条补发路径，保证新连上来的人立刻拿到权威棋面
+function sendSnapshotTo(ws, gameSessionId) {
+  const session = getAuthoritySession(gameSessionId);
+  if (!session || !ws || ws.readyState !== 1) return false;
+  const gameSession = roomManager.getGameSession(gameSessionId);
+  ws.send(JSON.stringify(attachTiming(session.snapshot(), gameSession ? gameSession.gameData : {})));
+  return true;
+}
+
+// 页面刚加载完（刷新）时右侧面板是空的，这里把服务端留存的事件流与聊天补回去，
+// 客户端用同一套事件回放层静默重建战报；只是普通的断线重连则面板内容仍在，
+// 客户端不会请求历史，避免重复堆叠。
+function sendGameInfoHistoryTo(ws, gameSession) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const session = getAuthoritySession(gameSession.gameSessionId);
+  ws.send(JSON.stringify({
+    type: 'gameInfoHistory',
+    gameSessionId: gameSession.gameSessionId,
+    events: session ? session.eventLog : [],
+    chat: gameSession.chatHistory || []
+  }));
+}
+
+function handleIntent(ws, playerId, message) {
+  const gameSession = roomManager.getPlayerGameSession(playerId);
+  if (!gameSession) throw new Error('玩家不在任何游戏会话中');
+  markGamePage(playerId);
+  const session = getAuthoritySession(gameSession.gameSessionId);
+  if (!session) throw new Error('本局尚未由服务端接管');
+
+  const actorId = resolveIntentActor(gameSession, playerId, message.playerId);
+  const color = colorOfPlayer(gameSession, actorId);
+  if (color === null) throw new Error('玩家不属于本局');
+
+  const intent = message.intent || { type: message.action };
+
+  // 暂停是对局的冻结状态：客户端漏检（旧页面、超时回调）也推不动棋面
+  if (gameSession.gameData && gameSession.gameData.isPaused) {
+    const rejectWs = roomManager.getPlayerConnection(playerId) || ws;
+    rejectWs.send(JSON.stringify({
+      type: 'intentRejected',
+      gameSessionId: gameSession.gameSessionId,
+      reason: '对局已暂停',
+      intent
+    }));
+    return;
   }
 
-  // 添加玩家（优化颜色分配逻辑）
-  addPlayer(player) {
-    // 获取已被真实玩家和AI玩家占用的颜色
-    const usedColors = [
-      ...Array.from(this.players.values()).map(p => p.color),
-      ...this.settings.aiPlayers.map(ai => ai.color)
-    ];
-    const availableColors = [1, 2, 3, 4].filter(c => !usedColors.includes(c));
-    if (availableColors.length === 0) throw new Error('房间已满');
+  const result = session.applyIntent(color, intent);
 
-    // 房主默认颜色1（如果可用）
-    player.color = player.isHost && availableColors.includes(1) ? 1 : availableColors[0];
-    this.players.set(player.id, player);
-
-    // 初始化准备状态：房主自动准备，非房主默认未准备
-    if (player.isHost) {
-      this.playerReadyStatus.set(player.id, true);
-    } else {
-      this.playerReadyStatus.set(player.id, false);
-    }
+  if (!result.ok) {
+    // 被拒绝时退回请求者，托管方据此知道自己代理的动作没生效
+    const rejectWs = roomManager.getPlayerConnection(playerId) || ws;
+    rejectWs.send(JSON.stringify({
+      type: 'intentRejected',
+      gameSessionId: gameSession.gameSessionId,
+      reason: result.error,
+      intent
+    }));
+    return;
   }
 
-  // 移除玩家
-  removePlayer(playerId) {
-    const player = this.players.get(playerId);
-    if (!player) return { wasHost: false, newHost: this.host };
-
-    const wasHost = this.host.id === playerId;
-    if (wasHost) player.isHost = false;
-
-    this.players.delete(playerId);
-    // 清理准备状态
-    this.playerReadyStatus.delete(playerId);
-
-    // 转移房主权限
-    let newHost = this.host;
-    if (wasHost && this.players.size > 0) {
-      newHost = Array.from(this.players.values())[0];
-      newHost.isHost = true;
-      this.host = newHost;
-      // 新房主自动准备
-      this.playerReadyStatus.set(newHost.id, true);
-      console.log(`房主权限从 ${playerId} 转移到 ${newHost.id} (${newHost.nickname})`);
-      // 广播房主转移
-      this.broadcast({
-        type: 'hostTransferred',
-        newHostId: newHost.id,
-        newHostNickname: newHost.nickname,
-        room: this.toJSON()
-      });
-
-      console.log(`新房主: ${newHost.id} (${newHost.nickname})`);
-    }
-
-    // 检查房间是否已没有人类玩家
-    this.checkEmptyRoom();
-
-    return { wasHost, newHost };
+  // 买道具后玩家要选点/选子，客户端会重置进度条：服务端同步开一扇新窗，
+  // 否则玩家看着满格进度条、服务端却按旧窗口到点代走
+  if (intent.type === 'item' && intent.item && gameSession.gameData) {
+    gameSession.gameData.thinkingStartTime = Date.now();
+    gameSession.gameData.pausedTotalMs = 0;
   }
 
-  // 检查房间是否没有人类玩家在线
-  hasHumanPlayers() {
-    // 遍历所有玩家，只检查非AI玩家是否在线
-    for (const player of this.players.values()) {
-      // 排除AI玩家，只检查人类玩家
-      if (!player.isAI && player.isConnected) {
-        // 交叉验证：确认该玩家确实有真实的 WebSocket 连接
-        const ws = roomManager.getPlayerConnection(player.id);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          return true;
-        }
-        // 有 isConnected 标记但没有真实连接 → 标记已断开
-        player.isConnected = false;
-        player.ws = null;
-        player.disconnectedAt = player.disconnectedAt || Date.now();
+  commitSnapshot(gameSession, result.snapshot);
+}
+
+/** 权威快照落地的唯一出口：镜像进 gameData 后广播，并在对局结束时就地收尾 */
+function commitSnapshot(gameSession, snapshot) {
+  mirrorSnapshot(gameSession, snapshot);
+  // 一旦出现推进痕迹就固化「已正式开始」，让重连/断线处理能区分加载中与进行中
+  if (!gameSession.gameData.gameOfficiallyStarted && hasGameProgress(snapshot)) {
+    gameSession.gameData.gameOfficiallyStarted = true;
+  }
+  gameSession.broadcast(attachTiming(snapshot, gameSession.gameData));
+  if (snapshot.gamePhase === 'ended' && gameSession.gameState === 'playing') {
+    gameSession.gameState = 'finished';
+  }
+  // 轮到 AI 就接着往下推（驱动内部会判断暂停/结束，可安全重复调用）
+  botDriver.kick(gameSession);
+}
+
+
+// -------------------------- 服务端 AI --------------------------
+// 机器人与被托管玩家的回合不再由房主浏览器代打：服务端自己按节奏推，
+// 房主切后台、关页面都不影响，看门狗退回「管人类挂机」的兜底角色
+const isAiDrivenColor = (gameSession, color) => {
+  for (const player of gameSession.players.values()) {
+    if (player.color === color) return Boolean(player.isAI || player.isAITakeover);
+  }
+  return false;
+};
+
+const playerOfColor = (gameSession, color) => {
+  for (const player of gameSession.players.values()) {
+    if (player.color === color) return player;
+  }
+  return null;
+};
+
+const botDriver = new BotDriver({
+  sessionOf: (gameSession) => getAuthoritySession(gameSession.gameSessionId),
+  isAiDriven: isAiDrivenColor,
+  difficultyOf: (gameSession, color) => {
+    const player = playerOfColor(gameSession, color);
+    return (player && player.difficulty) || 'easy';
+  },
+  isPaused: (gameSession) => Boolean(gameSession.gameData && gameSession.gameData.isPaused),
+  isEnded: (gameSession) => gameSession.gameState !== 'playing',
+  applyAction: (gameSession, color, action) => {
+    const session = getAuthoritySession(gameSession.gameSessionId);
+    if (!session || !action) throw new Error('没有可执行的动作');
+    const result = session.applyIntent(color, action);
+    if (!result.ok) throw new Error(result.error);
+    commitSnapshot(gameSession, result.snapshot);
+    return { events: result.snapshot.events, seq: result.snapshot.seq };
+  },
+  settled: (gameSession, seq) => waitForClientsSettled(gameSession, seq)
+});
+
+// -------------------------- 演完回执 --------------------------
+// AI 的下一手要等各端把这一帧演完再出，节奏才跟人操作一样。
+// 认不到回执（有人在刷新）、或者对端在后台（定时器被节流、动画要拖很久）就不等它，
+// 别让整桌陪着慢；那台回前台时会自己拉全量快照追上来。
+const ANIMATION_ACK_TIMEOUT_MS = 2500;
+const animationWaiters = new Map(); // gameSessionId → { seq, pending:Set<playerId>, resolve, timer }
+// 认得出会回执的客户端：从没回过执的（脚本、旧页面）不参与等待，免得每拍都等满超时
+const animationAckers = new Map(); // gameSessionId → Set<playerId>
+// 当前在后台的客户端：它自己报的（visibilityChange），后台期间也回执不了动画，一并摘出去
+const backgroundPlayers = new Set(); // playerId
+// 对局页面上的客户端：只有 game.html 会发这几类消息（回执、周期快照、重连对局、出手）。
+// 大厅页连上 socket 时同样占着 playerConnections，但它不在对局里演动画，
+// 等它等于每拍都要白等满回执超时；离开对局/断开时把这个标记清掉。
+const gamePagePlayers = new Map(); // playerId → 最近一次对局页消息的时间
+const GAME_PAGE_TTL_MS = 60000;
+function markGamePage(playerId) {
+  if (playerId) gamePagePlayers.set(playerId, Date.now());
+}
+function isOnGamePage(playerId) {
+  const at = gamePagePlayers.get(playerId);
+  return Boolean(at && Date.now() - at < GAME_PAGE_TTL_MS);
+}
+
+function connectedHumanIds(gameSession) {
+  const ids = [];
+  for (const [playerId, player] of gameSession.players) {
+    if (player.isAI || backgroundPlayers.has(playerId) || !isOnGamePage(playerId)) continue;
+    const ws = roomManager.getPlayerConnection(playerId);
+    if (ws && ws.readyState === WebSocket.OPEN) ids.push(playerId);
+  }
+  return ids;
+}
+
+/**
+ * 等各端把这一帧演完。
+ * 返回值告诉驱动「是不是真有人回执」：有人回执 → 等回执花掉的时间就是这段演出的时长，
+ * 驱动可以直接接下一拍；没人能回执（脚本、旧页面）→ 返回 false，让驱动按估时表配节奏。
+ */
+function waitForClientsSettled(gameSession, seq) {
+  if (!gameSession || typeof seq !== 'number') return Promise.resolve(false);
+  const ackers = animationAckers.get(gameSession.gameSessionId);
+  const pending = new Set(connectedHumanIds(gameSession).filter((id) => ackers && ackers.has(id)));
+  if (!pending.size) return Promise.resolve(false);
+
+  const key = gameSession.gameSessionId;
+  const previous = animationWaiters.get(key);
+  if (previous) {
+    clearTimeout(previous.timer);
+    previous.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const waiter = { seq, pending, resolve };
+    waiter.timer = setTimeout(() => finishAnimationWait(key, waiter), ANIMATION_ACK_TIMEOUT_MS);
+    animationWaiters.set(key, waiter);
+  });
+}
+
+function finishAnimationWait(key, waiter) {
+  if (animationWaiters.get(key) !== waiter) return;
+  clearTimeout(waiter.timer);
+  animationWaiters.delete(key);
+  // 超时也算「等过了」：某一端卡住/切后台时让它自己追赶，别在它身上再叠一层停顿
+  waiter.resolve(true);
+}
+
+/** 客户端把某一帧演完了 */
+function handleAnimationDone(ws, playerId, message) {
+  const gameSession = roomManager.getPlayerGameSession(playerId);
+  if (!gameSession) return;
+  const key = gameSession.gameSessionId;
+  markGamePage(playerId);
+  if (!animationAckers.has(key)) animationAckers.set(key, new Set());
+  animationAckers.get(key).add(playerId);
+  // 回执自己带了前后台标记：漏收 visibilityChange 时也按它记一份
+  if (message.hidden) backgroundPlayers.add(playerId);
+  else backgroundPlayers.delete(playerId);
+  const waiter = animationWaiters.get(key);
+  if (!waiter || message.seq < waiter.seq) return;
+  // 后台页面的定时器被浏览器节流，它的「演完」会晚上很多，等它等于让整桌陪它慢
+  waiter.pending.delete(playerId);
+  if (!message.hidden && !waiter.pending.size) finishAnimationWait(gameSession.gameSessionId, waiter);
+}
+
+// -------------------------- 回合看门狗 --------------------------
+// 看门狗现在只管人：思考窗口到点就替这位玩家走一步（防挂机、防刷新拖延），
+// 再留一条「空闲过久」的兜底——AI 的回合已由服务端自己驱动（见 botDriver.cjs），
+// 走到这里说明那条链也停了，按最小合法路径把回合交出去。
+const WATCHDOG_INTERVAL_MS = 5000;
+
+/** 单回合思考时长，与前端 gameState.THINKING_TIME 对齐；可用环境变量覆盖，便于测试 */
+const THINKING_TIME_MS = Number(process.env.THINKING_TIME_MS) || 20000;
+
+function startTurnWatchdog() {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [gameSessionId, session] of authoritySessions) {
+      const gameSession = roomManager.getGameSession(gameSessionId);
+      if (!gameSession) {
+        authoritySessions.delete(gameSessionId);
+        continue;
       }
-    }
-    return false;
-  }
+      // 暂停是对局冻结状态，看门狗同样不许代走
+      if (gameSession.gameData && gameSession.gameData.isPaused) continue;
+      // 思考时间用完立刻代走：前端计时器可被刷新或改脚本绕开，
+      // 这里才是「拖延时间拿不到额外回合」的保证
+      const thinkingExpired = isThinkingExpired(gameSession, now);
 
-  // 检查并处理空房间（没有人类玩家）
-  checkEmptyRoom() {
-    if (!this.hasHumanPlayers()) {
-      // 没有人类玩家了
-      console.log(`房间 ${this.code} 已没有人类玩家在线`);
+      if (!thinkingExpired && !session.isStuck(now)) continue;
 
-      // 如果是游戏中，暂停游戏并启动销毁计时器
-      if (this.gameState === 'playing') {
-        console.log(`房间 ${this.code} 游戏已暂停，5分钟后若无人类玩家重连将销毁`);
-        this.startEmptyRoomTimer();
+      const stuckColor = session.state.currentPlayer;
+      const player = playerOfColor(gameSession, stuckColor);
 
-        // 同时更新 gameData 中的暂停状态
-        const session = roomManager.getGameSession(this.gameSessionId);
-        if (session && session.gameData) {
-          session.gameData.isPaused = true;
-          session.gameData.pauseReason = 'all_humans_disconnected';
-          session.gameData.gamePhaseBeforePause = session.gameData.gamePhase;
-          session.gameData.gamePhase = 'paused';
-        }
-
-        // 广播游戏暂停消息
-        this.broadcast({
-          type: 'gameAutoPaused',
-          reason: 'no_human_players',
-          message: '所有人类玩家已离线，游戏已暂停。5分钟内重连可继续游戏。',
-          timestamp: Date.now()
+      // 机器人 / 托管玩家的回合归 botDriver 按节奏走，看门狗只在它那条链真断了
+      //（60 秒没动静）时才兜底；否则会在客户端还在演动画时插一脚，
+      // 代走好几步却只播最后一帧，看着就是「一瞬间过去一手」
+      if (player && (player.isAI || player.isAITakeover)) {
+        if (!session.isStuck(now)) continue;
+      } else if (thinkingExpired && player) {
+        // 真人思考窗口到点：转成 AI 托管，让 botDriver 接手按正常节奏走完这一手，
+        // 各端照常演动画、记战报（昵称上的【Bot】标记也是这么来的）
+        player.isAITakeover = true;
+        gameSession.broadcast({
+          type: 'aiTakeoverChange',
+          playerId: player.id,
+          isActive: true,
+          auto: true,
+          reason: 'thinking_timeout',
+          timestamp: now
         });
-      } else {
-        // 如果是等待中或已结束，直接走立即销毁逻辑
-        console.log(`房间 ${this.code} (状态: ${this.gameState}) 无人类玩家，准备立即销毁`);
-        roomManager.immediateDestroyRoom(this.code);
-      }
-    } else {
-      // 还有人类玩家，取消销毁计时器
-      this.cancelEmptyRoomTimer();
-    }
-  }
-
-  // 启动空房间计时器
-  startEmptyRoomTimer() {
-    // 如果已有计时器，先清除
-    if (this.emptyRoomTimer) {
-      clearTimeout(this.emptyRoomTimer);
-      roomManager.roomDestroyTimers.delete(this.code);
-    }
-
-    this.emptyRoomStartTime = Date.now();
-
-    // 5分钟后销毁房间
-    this.emptyRoomTimer = setTimeout(() => {
-      console.log(`房间 ${this.code} 5分钟内无人类玩家重连，准备销毁`);
-
-      // 广播房间即将销毁的消息
-      this.broadcast({
-        type: 'roomDestroying',
-        reason: 'no_human_players_timeout',
-        message: '5分钟内无人类玩家重连，房间即将销毁',
-        timestamp: Date.now()
-      });
-
-      // 删除游戏会话（如果存在）
-      const gameSessionId = this.gameSessionId;
-      if (gameSessionId) {
-        roomManager.gameSessions.delete(gameSessionId);
-        // 删除所有玩家的会话映射
-        this.players.forEach((player) => {
-          roomManager.playerSessions.delete(player.id);
-        });
-        console.log(`已删除游戏会话: ${gameSessionId}`);
+        botDriver.kick(gameSession);
+        continue;
       }
 
-      // 删除房间本身
-      roomManager.rooms.delete(this.code);
-      // 删除所有玩家的房间映射
-      this.players.forEach((player) => {
-        roomManager.playerRooms.delete(player.id);
-      });
-      console.log(`已删除房间: ${this.code}`);
+      const results = session.advanceStuckTurn();
+      if (!results.length) continue;
 
-      // 清理定时器记录
-      roomManager.roomDestroyTimers.delete(this.code);
-      this.emptyRoomTimer = null;
-      this.emptyRoomStartTime = null;
-    }, 5 * 60 * 1000); // 5分钟
-
-    // 添加到roomManager的定时器映射中以便统计
-    roomManager.roomDestroyTimers.set(this.code, this.emptyRoomTimer);
-    console.log(`房间 ${this.code} 空置计时器已启动（5分钟）`);
-  }
-
-  // 取消空房间计时器
-  cancelEmptyRoomTimer() {
-    if (this.emptyRoomTimer) {
-      clearTimeout(this.emptyRoomTimer);
-      roomManager.roomDestroyTimers.delete(this.code);
-      this.emptyRoomTimer = null;
-      this.emptyRoomStartTime = null;
-      console.log(`房间 ${this.code} 空置计时器已取消`);
-
+      commitSnapshot(gameSession, results[results.length - 1].snapshot);
+      console.log(`[回合看门狗] 玩家 ${stuckColor} ${thinkingExpired ? '思考超时' : '空闲超时'}，服务端代走 ${results.length} 步`);
     }
-  }
-
-  // 更新设置
-  updateSettings(settings) {
-    console.log('[房间配置] 更新设置:', {
-      旧设置: this.settings,
-      新设置: settings,
-      房间号: this.code
-    });
-    this.settings = { ...this.settings, ...settings };
-    console.log('[房间配置] 更新后的设置:', this.settings);
-  }
-
-  appendRoomChatMessage(chatItem) {
-    if (!chatItem || typeof chatItem !== 'object') return;
-    this.roomChatHistory.push(chatItem);
-    if (this.roomChatHistory.length > ROOM_CHAT_MAX_MESSAGES) {
-      this.roomChatHistory = this.roomChatHistory.slice(-ROOM_CHAT_MAX_MESSAGES);
-    }
-  }
-
-  // 广播消息
-  broadcast(message, excludePlayerId = null) {
-    this.players.forEach(player => {
-      if (player.id !== excludePlayerId && player.ws && player.ws.readyState === WebSocket.OPEN) {
-        player.ws.send(JSON.stringify(message));
-      }
-    });
-    // 广播给观战者
-    if (this.spectators) {
-      this.spectators.forEach(spectatorId => {
-        const ws = roomManager.getPlayerConnection(spectatorId);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(message));
-        }
-      });
-    }
-  }
-
-  // 序列化
-  toJSON() {
-    const displayState = (!this.hasHumanPlayers() && (this.gameState === 'playing' || this.gameState === 'waiting')) ? 'cleanup' : this.gameState;
-
-    // 尝试获取关联的游戏会话数据
-    let sessionData = null;
-    if (this.gameSessionId) {
-      const session = roomManager.getGameSession(this.gameSessionId);
-      if (session) {
-        sessionData = session.toJSON();
-      }
-    }
-
-    return {
-      code: this.code,
-      name: this.name,
-      isPrivate: !!this.isPrivate,
-      host: this.host.id,
-      players: Array.from(this.players.values()).map(p => ({
-        id: p.id,
-        nickname: p.nickname,
-        color: p.color,
-        playerNumber: p.color,
-        emoji: p.emoji,
-        isHost: p.id === this.host.id,
-        isAI: !!p.isAI,
-        isReady: this.playerReadyStatus.get(p.id) || false,
-        isConnected: !!p.isConnected,
-        disconnectedAt: p.disconnectedAt
-      })),
-      gameState: this.gameState,
-      displayState: displayState,
-      gameSession: sessionData,
-      playerReadyStatus: Object.fromEntries(this.playerReadyStatus),
-      settings: this.settings,
-      roomChatHistory: this.roomChatHistory
-    };
-  }
+  }, WATCHDOG_INTERVAL_MS);
 }
-
-// -------------------------- 玩家类（统一默认昵称）--------------------------
-class Player {
-  constructor(id, ws, nickname = '', emoji = 'smile') {
-    this.id = id;
-    this.ws = ws;
-    const normalizedNickname = String(nickname == null ? '' : nickname).trim();
-    this.nickname = normalizedNickname || getDefaultNickname(id); // 统一默认昵称
-    this.emoji = emoji;
-    this.color = null;
-    this.isHost = false;
-    this.isConnected = true;
-    this.disconnectedAt = null; // 断开时间戳
-  }
-}
-
-// -------------------------- 全局实例与中间件 --------------------------
-const roomManager = new RoomManager();
 
 /**
  * 房间验证中间件（统一权限校验）
@@ -841,6 +611,11 @@ function handlePlayerDisconnect(playerId) {
 
   // 清理玩家连接映射
   roomManager.playerConnections.delete(playerId);
+  // 前后台标记跟着连接走：断线的人已经不在「等演完」的名单里，别留脏标记
+  backgroundPlayers.delete(playerId);
+  // 对局页标记也摘掉：他要是只开着大厅，后面再断开就不该再往对局里播一条退出
+  const wasOnGamePage = isOnGamePage(playerId);
+  gamePagePlayers.delete(playerId);
 
   // 1. 游戏会话中处理
   let handledInSession = false;
@@ -912,7 +687,8 @@ function handlePlayerDisconnect(playerId) {
               }
             }
 
-            // 广播房主变更消息
+            // 广播房主变更消息（各端会自己渲染一条提示，这里顺带留档供刷新后回放）
+            recordHostChange(gameSession, newHost);
             gameSession.broadcast({
               type: 'hostChanged',
               oldHostId: playerId,
@@ -939,15 +715,11 @@ function handlePlayerDisconnect(playerId) {
         }
       }
 
-      // 广播离线消息
-      gameSession.broadcast({
-        type: 'chatMessage',
-        message: `${player.nickname}退出游戏`,
-        playerNumber: null,
-        playerName: null,
-        isSystemMessage: true,
-        timestamp: Date.now()
-      });
+      // 广播离线消息：已经报过离线的、或者本来就没在对局页面上的（只是大厅那条连接断了）
+      // 都不再往对局里播「退出游戏」——否则回到房间列表再关窗口会白报一条
+      if (!alreadyLeft && wasOnGamePage) {
+        broadcastSystemChat(gameSession, `${player.nickname}退出游戏`);
+      }
       // 广播断开状态（只发送玩家列表，不发送全量 gameData 减轻其他客户端解析负担）
       const playersArray = Array.from(gameSession.players.values()).map(p => ({
         id: p.id, color: p.color, nickname: p.nickname, emoji: p.emoji,
@@ -978,14 +750,7 @@ function handlePlayerDisconnect(playerId) {
             gameSession.gameData.thinkingStartTime = Date.now(); // 重置思考时间
             
             // 广播转移消息
-            gameSession.broadcast({
-              type: 'chatMessage',
-              message: `首发玩家离线，首发权转移给 ${nextHuman.nickname}`,
-              playerNumber: null,
-              playerName: null,
-              isSystemMessage: true,
-              timestamp: Date.now()
-            });
+            broadcastSystemChat(gameSession, `首发玩家离线，首发权转移给 ${nextHuman.nickname}`);
             
             gameSession.broadcast({
               type: 'playerTurnChange',
@@ -1028,6 +793,7 @@ function handlePlayerDisconnect(playerId) {
     const room = roomManager.getRoom(spectatingRoomCode);
     if (room) {
       room.spectators.delete(playerId);
+      room.spectatorNames.delete(playerId);
       if (room.gameSessionId) {
         const gameSession = roomManager.getGameSession(room.gameSessionId);
         if (gameSession) {
@@ -1066,14 +832,7 @@ function handlePlayerDisconnect(playerId) {
       }
 
       // 广播离线消息
-      room.broadcast({
-        type: 'chatMessage',
-        message: `${player.nickname}退出游戏`,
-        playerNumber: null,
-        playerName: null,
-        isSystemMessage: true,
-        timestamp: Date.now()
-      });
+      broadcastSystemChat(room, `${player.nickname}退出游戏`);
       // 广播断开状态
       room.broadcast({
         type: 'playerDisconnected',
@@ -1168,14 +927,7 @@ function forceDetachPlayerFromExistingContexts(playerId, nextRoomCode = null, is
       // 如果是静默迁移，严禁发送任何广播
       if (!isSilentMigration) {
         try {
-          gs.broadcast({
-            type: 'chatMessage',
-            message: `${p?.nickname || playerId}退出游戏`,
-            playerNumber: null,
-            playerName: null,
-            isSystemMessage: true,
-            timestamp: Date.now()
-          });
+          broadcastSystemChat(gs, `${p?.nickname || playerId}退出游戏`);
           const detachPlayers = Array.from(gs.players.values()).map(p => ({
             id: p.id, color: p.color, nickname: p.nickname, emoji: p.emoji,
             isHost: p.isHost || false, isConnected: p.isConnected, isAI: p.isAI
@@ -1232,7 +984,7 @@ wss.on('connection', (ws) => {
 
   ws.on('message', (data) => {
     try {
-      const message = JSON.parse(data);
+      const message = normalizeInboundMessage(JSON.parse(data));
 
       // 初始化玩家ID
       if (!playerId) {
@@ -1410,11 +1162,29 @@ wss.on('connection', (ws) => {
   });
 });
 
+// 收包时统一消息封装：大厅走嵌套 data，对局走平铺，历史上两套并存。
+// 在此一次性拍平，后续所有 handler 只按顶层字段读取，不再各自兼容。
+function normalizeInboundMessage(message) {
+  if (!message || typeof message !== 'object') return message;
+  const payload = message.data;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return message;
+  const { data, ...envelope } = message;
+  return { ...envelope, ...payload, type: envelope.type };
+}
+
 function handleMessage(ws, playerId, message) {
-  console.log(`处理消息类型: ${message.type}, 玩家: ${playerId}`);
+  // 心跳一来一回很频繁，不写日志，免得把真正有用的消息淹掉
+  if (message.type !== 'ping') {
+    console.log(`处理消息类型: ${message.type}, 玩家: ${playerId}`);
+  }
   try {
+    // 棋面已由服务端接管后，旧协议里"客户端上报棋面"的消息一律不再受理，
+    // 否则客户端可以绕过规则直接改写权威棋面。客户端应改发 intent。
+    if (isLegacyBoardReport(message.type) && isAuthorityManaged(playerId)) {
+      console.warn(`[权威棋面] 忽略旧协议消息 ${message.type}（玩家 ${playerId}）`);
+      return;
+    }
     switch (message.type) {
-      // ... (rest of the code remains the same)
       case 'ping':
         try {
           ws.send(JSON.stringify({
@@ -1460,47 +1230,12 @@ function handleMessage(ws, playerId, message) {
       case 'update_emoji':
         handleUpdateEmoji(ws, playerId, message);
         break;
-      case 'diceRoll':
-        handleDiceRoll(ws, playerId, message);
-        break;
-      case 'diceDisplay':
-        handleDiceDisplay(ws, playerId, message);
-        break;
-      case 'fullMoveStart':
-        handleFullMoveStart(ws, playerId, message);
-        break;
-      case 'finalMoveResult':
-        handleFinalMoveResult(ws, playerId, message);
-        break;
       case 'teleportIcon':
-        handleTeleportIcon(ws, playerId, message);
-        break;
-      case 'polyhedralDice':
-        handlePolyhedralDice(ws, playerId, message);
-        break;
-      case 'mysteryBoxIcon':
-        handleMysteryBoxIcon(ws, playerId, message);
-        break;
-      case 'removeMysteryBoxIcon':
-        handleRemoveMysteryBoxIcon(ws, playerId, message);
-        break;
-      case 'energyGainAnimation':
-        handleEnergyGainAnimation(ws, playerId, message);
-        break;
-      case 'diceAnimationStart':
-        handleDiceAnimationStart(ws, playerId, message);
-        break;
-      case 'chessMove':
-        handleChessMove(ws, playerId, message);
+      case 'diceReset':
+        relayDisplay(message.type, playerId, message);
         break;
       case 'progressBarStart':
         handleProgressBarStart(ws, playerId, message);
-        break;
-      case 'diceReset':
-        handleDiceReset(ws, playerId, message);
-        break;
-      case 'pieceMove':
-        handlePieceMove(ws, playerId, message);
         break;
       case 'rejoinRoom':
         handleRejoinRoom(ws, playerId, message);
@@ -1508,11 +1243,19 @@ function handleMessage(ws, playerId, message) {
       case 'rejoinGameSession':
         handleRejoinGameSession(ws, playerId, message);
         break;
-      case 'boardSyncRequest':
-        handleBoardSyncRequest(ws, playerId, message);
+      case 'intent':
+        handleIntent(ws, playerId, message);
         break;
-      case 'boardSyncData':
-        handleBoardSyncData(ws, playerId, message);
+      case 'animationDone':
+        handleAnimationDone(ws, playerId, message);
+        break;
+      case 'visibilityChange':
+        // 前端报前后台：后台页面的动画会被节流，改成不等它演完
+        if (message.hidden) backgroundPlayers.add(playerId);
+        else backgroundPlayers.delete(playerId);
+        break;
+      case 'snapshotRequest':
+        handleSnapshotRequest(ws, playerId);
         break;
       case 'updatePlayer':
         handleUpdatePlayer(ws, playerId, message);
@@ -1551,50 +1294,17 @@ function handleMessage(ws, playerId, message) {
       case 'configure_piece_count':
         handleConfigurePieceCount(ws, playerId, message);
         break;
-      case 'playerTurnChange':
-        handlePlayerTurnChange(ws, playerId, message);
-        break;
-      case 'noMovableChess':
-        handleNoMovableChess(ws, playerId, message);
-        break;
       case 'aiTakeoverChange':
         handleAITakeoverChange(ws, playerId, message);
+        break;
+      case 'audioEnabledChange':
+        handleAudioEnabledChange(ws, playerId, message);
         break;
       case 'nicknameChange':
         handleNicknameChange(ws, playerId, message);
         break;
-      case 'jumpAnimation':
-        handleJumpAnimation(ws, playerId, message);
-        break;
-      case 'flyAnimation':
-        handleFlyAnimation(ws, playerId, message);
-        break;
-      case 'moveChessToStart':
-        handleMoveChessToStart(ws, playerId, message);
-        break;
-      case 'moveChessToFinish':
-        handleMoveChessToFinish(ws, playerId, message);
-        break;
-      case 'stackCollision':
-        handleStackCollision(ws, playerId, message);
-        break;
-      case 'stackBounce':
-        handleStackBounce(ws, playerId, message);
-        break;
-      case 'endpointBounce':
-        handleEndpointBounce(ws, playerId, message);
-        break;
-      case 'energyChange':
-        handleEnergyChange(ws, playerId, message);
-        break;
-      case 'defeatCountChange':
-        handleDefeatCountChange(ws, playerId, message);
-        break;
       case 'gameEnd':
         handleGameEnd(ws, playerId, message);
-        break;
-      case 'newGame':
-        handleNewGame(ws, playerId, message);
         break;
       case 'forceSettlement':
         handleForceSettlement(ws, playerId, message);
@@ -1611,26 +1321,8 @@ function handleMessage(ws, playerId, message) {
       case 'audioLoaded':
         handleAudioLoaded(ws, playerId, message);
         break;
-      case 'loadAudio':
-        handleLoadAudio(ws, playerId, message);
-        break;
       case 'chatMessage':
         handleChatMessage(ws, playerId, message);
-        break;
-      case 'pauseGame':
-        handlePauseGame(ws, playerId, message);
-        break;
-      case 'resumeGame':
-        handleResumeGame(ws, playerId, message);
-        break;
-      case 'settleGame':
-        handleSettleGame(ws, playerId, message);
-        break;
-      case 'progressHistorySync':
-        handleProgressHistorySync(ws, playerId, message);
-        break;
-      case 'diceStatisticsSync':
-        handleDiceStatisticsSync(ws, playerId, message);
         break;
       default:
         console.log(`未知消息类型: ${message.type}`);
@@ -1721,8 +1413,8 @@ function handleCreateRoom(ws, playerId, message) {
   // 确保没有任何残留上下文
   forceDetachPlayerFromExistingContexts(playerId, null, true);
 
-  const emoji = message.data?.emoji || message.emoji;
-  const player = new Player(playerId, ws, message.data?.nickname, emoji);
+  const emoji = message.emoji;
+  const player = new Player(playerId, ws, message.nickname, emoji);
   const room = roomManager.createRoom(player);
   ws.send(JSON.stringify({ type: 'roomCreated', room: room.toJSON() }));
 
@@ -1731,7 +1423,7 @@ function handleCreateRoom(ws, playerId, message) {
 }
 
 function handleJoinRoom(ws, playerId, message) {
-  const roomCode = message.data.roomCode;
+  const roomCode = message.roomCode;
   const room = roomManager.getRoom(roomCode);
   if (!room) {
     ws.send(JSON.stringify({ type: 'error', message: '房间不存在或已被销毁' }));
@@ -1775,16 +1467,16 @@ function handleJoinRoom(ws, playerId, message) {
     roomManager.setPlayerConnection(playerId, ws);
 
     // 只有客户端显式传了 nickname/emoji 才更新（避免用 undefined/空值覆盖）
-    if (message.data && Object.prototype.hasOwnProperty.call(message.data, 'nickname')) {
-      const nicknameStr = (message.data.nickname == null ? '' : String(message.data.nickname));
+    if (Object.prototype.hasOwnProperty.call(message, 'nickname')) {
+      const nicknameStr = (message.nickname == null ? '' : String(message.nickname));
       const trimmed = nicknameStr.trim();
       if (trimmed) {
         existingPlayer.nickname = trimmed;
       }
     }
-    if (message.data && Object.prototype.hasOwnProperty.call(message.data, 'emoji')) {
-      if (message.data.emoji != null) {
-        existingPlayer.emoji = message.data.emoji;
+    if (Object.prototype.hasOwnProperty.call(message, 'emoji')) {
+      if (message.emoji != null) {
+        existingPlayer.emoji = message.emoji;
       }
     }
 
@@ -1829,7 +1521,7 @@ function handleJoinRoom(ws, playerId, message) {
   // 再次确保没有任何残留上下文（针对可能存在的残留 Session）
   forceDetachPlayerFromExistingContexts(playerId, roomCode, true);
 
-  const player = new Player(playerId, ws, message.data?.nickname, message.data?.emoji);
+  const player = new Player(playerId, ws, message.nickname, message.emoji);
   roomManager.joinRoom(roomCode, player);
 
   // 发送加入成功消息
@@ -1856,7 +1548,7 @@ function handleJoinRoom(ws, playerId, message) {
 }
 
 function handleSpectateRoom(ws, playerId, message) {
-  const roomCode = message.data?.roomCode || message.roomCode;
+  const roomCode = message.roomCode;
   const room = roomManager.getRoom(roomCode);
   if (!room) {
     ws.send(JSON.stringify({ type: 'error', message: '房间不存在或已被销毁' }));
@@ -1882,6 +1574,7 @@ function handleSpectateRoom(ws, playerId, message) {
         isReconnect: true
       };
       ws.send(JSON.stringify(response));
+      sendSnapshotTo(ws, room.gameSessionId);
       console.log(`玩家 ${playerId} 已通过观战路径重连游戏`);
       return;
     }
@@ -1897,6 +1590,7 @@ function handleSpectateRoom(ws, playerId, message) {
   roomManager.setPlayerConnection(playerId, ws);
   roomManager.playerSpectatingRooms.set(playerId, roomCode);
   room.spectators.add(playerId);
+  room.spectatorNames.set(playerId, sanitizeText(message.nickname).trim() || spectatorDisplayName(playerId));
 
   if (room.gameSessionId) {
     const gameSession = roomManager.getGameSession(room.gameSessionId);
@@ -1916,123 +1610,135 @@ function handleSpectateRoom(ws, playerId, message) {
     }
   }
   ws.send(JSON.stringify(response));
+  if (room.gameSessionId) sendSnapshotTo(ws, room.gameSessionId);
   console.log(`玩家 ${playerId} 开始观战房间 ${roomCode}`);
 }
 
-// 选择颜色（使用中间件）
+// 选择颜色：四个座位颜色固定，谁坐哪个座位就按哪个颜色参加回合轮转。
+// 座位已被其他玩家占用时，两人交换座位，避免先后入房顺序把座位锁死。
 const handleSelectColor = withRoomValidation((ws, playerId, message, room, player) => {
-  const colorIndex = message.data.colorIndex;
-  // 检查真实玩家和AI玩家占用的颜色
-  const usedColors = [
-    ...Array.from(room.players.values()).filter(p => p.id !== playerId).map(p => p.color),
-    ...room.settings.aiPlayers.map(ai => ai.color)
-  ];
-  if (!usedColors.includes(colorIndex)) {
-    player.color = colorIndex;
-    // 广播更新
-    room.broadcast({
-      type: 'playerUpdated',
-      player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
-      room: room.toJSON()
-    });
-  } else {
-    // 发送错误消息给客户端
-    ws.send(JSON.stringify({
-      type: 'error',
-      message: '该颜色已被占用'
-    }));
+  const colorIndex = Number(message.colorIndex);
+  if (![1, 2, 3, 4].includes(colorIndex)) {
+    ws.send(JSON.stringify({ type: 'error', message: '无效的颜色' }));
+    return;
   }
+
+  // AI座位由房主通过AI配置增删，不参与玩家换座
+  if (room.settings.aiPlayers.some(ai => ai.color === colorIndex)) {
+    ws.send(JSON.stringify({ type: 'error', message: '该颜色已被AI玩家占用' }));
+    return;
+  }
+
+  const occupant = Array.from(room.players.values())
+    .find(p => p.color === colorIndex && p.id !== playerId);
+
+  const previousColor = player.color;
+  if (occupant) {
+    // 换座要求本人原有座位有效，否则会让两人撞到同一个颜色
+    if (![1, 2, 3, 4].includes(previousColor)) {
+      ws.send(JSON.stringify({ type: 'error', message: '当前座位异常，无法换座' }));
+      return;
+    }
+    occupant.color = previousColor;
+  }
+  player.color = colorIndex;
+
+  room.broadcast({
+    type: 'playerUpdated',
+    player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
+    room: room.toJSON()
+  });
 });
+
+// 玩家资料（昵称/表情）在游戏会话或房间两处都可能存在，统一走这条更新与广播路径
+function applyPlayerProfileUpdate(playerId, mutate) {
+  const gameSession = roomManager.getPlayerGameSession(playerId);
+  if (gameSession && gameSession.players.has(playerId)) {
+    mutate(gameSession.players.get(playerId));
+    const player = gameSession.players.get(playerId);
+    gameSession.broadcast({
+      type: 'playerUpdated',
+      player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji }
+    });
+    return true;
+  }
+
+  const room = roomManager.getPlayerRoom(playerId);
+  if (room) {
+    const player = room.players.get(playerId);
+    if (player) {
+      mutate(player);
+      room.broadcast({
+        type: 'playerUpdated',
+        player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
+        room: room.toJSON()
+      });
+    }
+    return true;
+  }
+
+  return false;
+}
 
 // 更新昵称（不使用房间验证中间件，允许玩家在房间外更新）
 function handleUpdateNickname(ws, playerId, message) {
   try {
-    const nickname = message.data?.nickname || message.nickname;
-    const manualInput = message.data?.manualInput === true || message.manualInput === true;
+    const nickname = message.nickname;
+    const manualInput = message.manualInput === true;
     // 确保nickname是字符串，如果为null/undefined则设置为空字符串
     const nicknameStr = (nickname == null ? '' : String(nickname));
     const nextNickname = manualInput ? sanitizeText(nicknameStr) : nicknameStr;
     const newNickname = nextNickname.trim() || getDefaultNickname(playerId);
 
-    // 先尝试在游戏会话中查找玩家
-    const gameSession = roomManager.getPlayerGameSession(playerId);
-    if (gameSession && gameSession.players.has(playerId)) {
-      const player = gameSession.players.get(playerId);
-      player.nickname = newNickname;
-      // 广播更新到游戏会话
-      gameSession.broadcast({
-        type: 'playerUpdated',
-        player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji }
-      });
-      return;
-    }
-
-    // 再尝试在房间中查找玩家
-    const room = roomManager.getPlayerRoom(playerId);
-    if (room) {
-      const player = room.players.get(playerId);
-      if (player) {
-        const oldNickname = player.nickname;
-        const oldDefaultRoomName = `${oldNickname}的房间`;
-        player.nickname = newNickname;
-
-        // 同步更新房间名（仅房主）
-        if (room.host && room.host.id === playerId) {
-          // 只有当房间名仍为默认格式时才跟随昵称更新，避免覆盖自定义房间名
-          if (room.name === oldDefaultRoomName || !room.name) {
-            room.name = `${player.nickname}的房间`;
-          }
+    const updated = applyPlayerProfileUpdate(playerId, (player) => {
+      // 房主昵称变化时，默认房名跟随更新（自定义房名不动）
+      const room = roomManager.getPlayerRoom(playerId);
+      if (room && room.host && room.host.id === playerId) {
+        const oldDefaultRoomName = `${player.nickname}的房间`;
+        if (room.name === oldDefaultRoomName || !room.name) {
+          room.name = `${newNickname}的房间`;
         }
-
-        // 广播更新到房间
-        room.broadcast({
-          type: 'playerUpdated',
-          player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
-          room: room.toJSON()
-        });
       }
-      return;
-    }
+      player.nickname = newNickname;
+    });
 
-    // 玩家不在任何房间或游戏会话中，只更新连接映射中的玩家信息
-    // 注意：这种情况下无法广播更新，因为玩家不在任何房间中
-    console.log(`玩家 ${playerId} 更新昵称为 ${newNickname}（不在房间中）`);
+    if (!updated) {
+      console.log(`玩家 ${playerId} 更新昵称为 ${newNickname}（不在房间中）`);
+    }
   } catch (error) {
     console.error('更新昵称失败:', error);
     ws.send(JSON.stringify({ type: 'error', message: '更新昵称失败' }));
   }
 }
 
+// 昵称变化只负责把显示名转发给同局其他人，权威昵称仍由 update_nickname 写入
+function handleNicknameChange(ws, playerId, message) {
+  const target = requireBroadcastTarget(playerId);
+
+  // 房主可代理由其托管的玩家发起改名
+  const targetPlayerId = message.playerId || playerId;
+  const manualInput = message.manualInput === true;
+  const rawNickname = message.nickname == null ? '' : String(message.nickname);
+  const nextNickname = manualInput ? sanitizeText(rawNickname) : rawNickname;
+
+  target.broadcast({
+    type: 'nicknameChange',
+    playerId: targetPlayerId,
+    nickname: nextNickname,
+    timestamp: message.timestamp
+  });
+}
+
 function handleUpdateEmoji(ws, playerId, message) {
   try {
-    const emoji = message.data?.emoji ?? message.emoji;
-
-    const gameSession = roomManager.getPlayerGameSession(playerId);
-    if (gameSession && gameSession.players.has(playerId)) {
-      const player = gameSession.players.get(playerId);
+    const emoji = message.emoji;
+    const updated = applyPlayerProfileUpdate(playerId, (player) => {
       player.emoji = emoji;
-      gameSession.broadcast({
-        type: 'playerUpdated',
-        player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji }
-      });
-      return;
-    }
+    });
 
-    const room = roomManager.getPlayerRoom(playerId);
-    if (room) {
-      const player = room.players.get(playerId);
-      if (player) {
-        player.emoji = emoji;
-        room.broadcast({
-          type: 'playerUpdated',
-          player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
-          room: room.toJSON()
-        });
-      }
-      return;
+    if (!updated) {
+      console.log(`玩家 ${playerId} 更新emoji为 ${emoji}（不在房间中）`);
     }
-
-    console.log(`玩家 ${playerId} 更新emoji为 ${emoji}（不在房间中）`);
   } catch (error) {
     console.error('更新表情失败:', error);
     ws.send(JSON.stringify({ type: 'error', message: '更新表情失败' }));
@@ -2040,7 +1746,7 @@ function handleUpdateEmoji(ws, playerId, message) {
 }
 
 const handleUpdateRoomName = withRoomValidation((ws, playerId, message, room) => {
-  const name = message.data?.name ?? message.name;
+  const name = message.name;
   const nameStr = (name == null ? '' : String(name));
   const newName = nameStr.trim();
 
@@ -2054,7 +1760,7 @@ const handleUpdateRoomName = withRoomValidation((ws, playerId, message, room) =>
 }, true);
 
 const handleUpdateRoomPrivacy = withRoomValidation((ws, playerId, message, room) => {
-  const isPrivate = !!(message.data?.isPrivate ?? message.isPrivate);
+  const isPrivate = !!message.isPrivate;
   room.isPrivate = isPrivate;
   room.broadcast({ type: 'roomPrivacyUpdated', isPrivate, room: room.toJSON() });
 }, true);
@@ -2095,7 +1801,7 @@ const handleReturnToRoom = withRoomValidation((ws, playerId, message, room, play
 
 // 踢出玩家（需要房主权限）
 const handleKickPlayer = withRoomValidation((ws, playerId, message, room) => {
-  const targetId = message.data?.playerId || message.playerId;
+  const targetId = message.playerId;
   if (!targetId) throw new Error('缺少目标玩家ID');
   if (targetId === playerId) throw new Error('不能踢出自己');
 
@@ -2140,6 +1846,7 @@ function handleLeaveRoom(ws, playerId, message = {}, isSilentMigration = false) 
     const room = roomManager.getRoom(spectatingRoomCode);
     if (room) {
       room.spectators.delete(playerId);
+      room.spectatorNames.delete(playerId);
       if (room.gameSessionId) {
         const gameSession = roomManager.getGameSession(room.gameSessionId);
         if (gameSession) {
@@ -2193,9 +1900,9 @@ function handleLeaveRoom(ws, playerId, message = {}, isSilentMigration = false) 
   }
 
   // 检查是否是游戏结束后离开
-  const isGameEnded = message.data?.reason === 'game_ended' || message.reason === 'game_ended';
+  const isGameEnded = message.reason === 'game_ended';
 
-  const leaveReason = message.data?.reason || message.reason;
+  const leaveReason = message.reason;
   const isHardLeave = leaveReason === 'return_home' || leaveReason === 'quit_game' || leaveReason === 'user_quit_game';
 
   // 游戏进行中：leave_room 视为“软掉线/可重连离开”，不移除玩家、不销毁会话
@@ -2288,6 +1995,7 @@ function handleLeaveRoom(ws, playerId, message = {}, isSilentMigration = false) 
             }
           }
 
+          recordHostChange(gameSession, newHost);
           gameSession.broadcast({
             type: 'hostChanged',
             oldHostId: playerId,
@@ -2323,15 +2031,7 @@ function handleLeaveRoom(ws, playerId, message = {}, isSilentMigration = false) 
       room.broadcast({ type: 'playerLeft', playerId, room: room.toJSON() });
     } else {
       console.log(`房间 ${roomCode} 已无人类玩家，立即销毁`);
-      if (room.gameSessionId) {
-        roomManager.removeGameSession(room.gameSessionId);
-        room.gameSessionId = null;
-      }
-      if (roomManager.roomDestroyTimers.has(roomCode)) {
-        clearTimeout(roomManager.roomDestroyTimers.get(roomCode));
-        roomManager.roomDestroyTimers.delete(roomCode);
-      }
-      roomManager.rooms.delete(roomCode);
+      roomManager.immediateDestroyRoom(roomCode);
     }
 
     try {
@@ -2364,22 +2064,7 @@ function handleLeaveRoom(ws, playerId, message = {}, isSilentMigration = false) 
   } else {
     // 如果没有人类玩家了（只剩AI或全空），立即销毁
     console.log(`房间 ${roomCode} 已无人类玩家，立即销毁`);
-
-    // 删除游戏会话（如果存在）
-    if (room.gameSessionId) {
-      roomManager.removeGameSession(room.gameSessionId);
-      room.gameSessionId = null;
-      console.log(`同时删除了关联的游戏会话`);
-    }
-
-    // 清除延迟销毁定时器（如果有）
-    if (roomManager.roomDestroyTimers.has(roomCode)) {
-      clearTimeout(roomManager.roomDestroyTimers.get(roomCode));
-      roomManager.roomDestroyTimers.delete(roomCode);
-    }
-
-    // 从房间列表中删除
-    roomManager.rooms.delete(roomCode);
+    roomManager.immediateDestroyRoom(roomCode);
   }
 
   // 发送离开确认（在广播之后）
@@ -2420,7 +2105,7 @@ function handleUpdatePlayer(ws, playerId, message) {
 
 // 更新房间设置（需要房主权限）
 const handleUpdateSettings = withRoomValidation((ws, playerId, message, room) => {
-  room.updateSettings(message.data.settings || message.settings); // 兼容两种格式
+  room.updateSettings(message.settings);
   room.broadcast({ type: 'settingsUpdated', settings: room.settings, room: room.toJSON() });
 }, true);
 
@@ -2439,7 +2124,7 @@ function handleToggleReady(ws, playerId, message) {
     }
 
     // 更新准备状态
-    const isReady = message.data?.isReady ?? false;
+    const isReady = message.isReady ?? false;
     room.playerReadyStatus.set(playerId, isReady);
 
     console.log(`玩家 ${playerId} 准备状态更新为: ${isReady}`);
@@ -2501,6 +2186,8 @@ function handleStartGame(ws, playerId) {
     emoji: p.emoji,
     isAI: false,
     isAITakeover: false,
+    // 沿用房间上记录的音效偏好，保证换局后仍能恢复
+    audioEnabled: p.audioEnabled,
     isHost: p.id === room.host.id  // 设置房主标志
   }));
   const aiPlayers = room.settings.aiPlayers.map(ai => ({
@@ -2572,13 +2259,18 @@ function handleStartGame(ws, playerId) {
     room: room.toJSON()
   });
 
+  // 交给服务端权威层接管棋面：此后骰子与位置由服务端计算
+  startAuthoritySession(gameSession).catch(error => {
+    console.error(`[权威棋面] 会话 ${gameSessionId} 初始化失败:`, error);
+  });
+
   // 每日统计：记录游戏开始
   dailyStats.recordGameStarted();
 }
 
 // 添加AI玩家（需要房主权限）
 const handleAddAIPlayer = withRoomValidation((ws, playerId, message, room) => {
-  const { colorIndex, difficulty } = message.data;
+  const { colorIndex, difficulty } = message;
   const usedColors = [...Array.from(room.players.values()).map(p => p.color), ...room.settings.aiPlayers.map(ai => ai.color)];
   if (usedColors.includes(colorIndex)) throw new Error('该颜色已被占用');
 
@@ -2625,7 +2317,7 @@ const handleAddAIPlayer = withRoomValidation((ws, playerId, message, room) => {
 
 // 移除AI玩家（需要房主权限）
 const handleRemoveAIPlayer = withRoomValidation((ws, playerId, message, room) => {
-  const { colorIndex } = message.data;
+  const { colorIndex } = message;
   const aiIndex = room.settings.aiPlayers.findIndex(ai => ai.color === colorIndex);
   if (aiIndex === -1) throw new Error('AI玩家不存在');
 
@@ -2652,7 +2344,7 @@ const handleRemoveAIPlayer = withRoomValidation((ws, playerId, message, room) =>
 
 // 更新AI难度（需要房主权限）
 const handleUpdateAIDifficulty = withRoomValidation((ws, playerId, message, room) => {
-  const { colorIndex, difficulty } = message.data;
+  const { colorIndex, difficulty } = message;
   const aiPlayer = room.settings.aiPlayers.find(ai => ai.color === colorIndex);
   if (!aiPlayer) throw new Error('AI玩家不存在');
 
@@ -2693,487 +2385,32 @@ const handleUpdateAIDifficulty = withRoomValidation((ws, playerId, message, room
 }, true);
 
 // 掷骰子（使用通用广播目标）
-function handleDiceRoll(ws, playerId, message) {
-  // 优先获取GameSession
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  const target = gameSession || getBroadcastTarget(playerId);
 
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+// 展示类消息只是把发送者的表现转发给同局其他人，字段直接透传，不需服务端裁决
+const DISPLAY_RELAYS = {
+  teleportIcon: [], // 只是「有人开了传送门」的信号，图标显隐由快照裁决
+  progressBarStart: [],
+  diceReset: []
+};
 
-  // 取消骰子动画的 fallback 定时器（如果存在），避免重复处理
-  if (gameSession && gameSession._diceRollFallbackTimer) {
-    clearTimeout(gameSession._diceRollFallbackTimer);
-    gameSession._diceRollFallbackTimer = null;
-  }
+function relayDisplay(type, playerId, message) {
+  const target = requireBroadcastTarget(playerId);
 
-  // 更新游戏状态（仅游戏会话）
-  if (gameSession && gameSession.gameData) {
-    // 防串号：只允许当前回合玩家掷骰。客户端不同步时忽略非法掷骰，避免污染连投计数。
-    if (message.player !== undefined && gameSession.gameData.currentPlayer != null && message.player !== gameSession.gameData.currentPlayer) {
-      console.warn(`[diceRoll] 忽略非当前玩家掷骰: msg.player=${message.player}, currentPlayer=${gameSession.gameData.currentPlayer}, playerId=${playerId}`);
-      return;
-    }
-
-    gameSession.gameData.diceValue = message.diceValue;
-    gameSession.gameData.gamePhase = 'moving';
-    gameSession.gameData.diceValueConsumed = false; // 新骰子值已就绪
-    
-    // 首个操作后，标记游戏正式开始
-    if (!gameSession.gameData.gameOfficiallyStarted) {
-      gameSession.gameData.gameOfficiallyStarted = true;
-      console.log(`[diceRoll] 首发玩家 ${message.player} 已操作，游戏正式开始`);
-    }
-
-    // 处理连投奖励逻辑
-    if (message.diceValue === 6) {
-      gameSession.gameData.consecutiveSixes = (gameSession.gameData.consecutiveSixes || 0) + 1;
-      console.log(`玩家连续摇到${gameSession.gameData.consecutiveSixes}次6`);
-
-      // 检查是否连续摇到3次6
-      if (gameSession.gameData.consecutiveSixes >= 3) {
-        if (gameSession.gameData.happyMode) {
-          // 欢乐模式：跳过惩罚，连投奖励，继续选棋移动
-          console.log('[欢乐模式] 跳过三次6惩罚，连投奖励');
-          gameSession.gameData.consecutiveSixes = 0;
-          gameSession.gameData.canReroll = true;
-          gameSession.gameData.justRolledSix = true;
-        } else {
-          // 经典模式：惩罚，所有棋子返回起点
-          console.log('连续摇到3次6，所有棋子返回起点！');
-          gameSession.gameData.canReroll = false;
-          gameSession.gameData.justRolledSix = false;
-          // 重置连续6的计数
-          gameSession.gameData.consecutiveSixes = 0;
-
-          // 广播三次6惩罚消息
-          gameSession.broadcast({
-            type: 'threeSixesPenalty',
-            player: message.player,
-            timestamp: Date.now()
-          });
-
-          // 同步更新服务器端的棋子状态，将受惩罚玩家的所有棋子送回基地
-          const penalizedPlayer = message.player;
-          if (gameSession.gameData.playerChess[penalizedPlayer]) {
-            for (let i = 0; i < gameSession.gameData.playerChess[penalizedPlayer].length; i++) {
-              gameSession.gameData.playerChess[penalizedPlayer][i].position = -1;
-              gameSession.gameData.playerChess[penalizedPlayer][i].finished = false;
-            }
-            console.log(`[threeSixesPenalty] 更新服务器棋子状态: 玩家${penalizedPlayer} 所有棋子已回基地`);
-          }
-
-          // 延迟切换到下一个玩家
-          setTimeout(() => {
-            // 获取所有在线玩家
-            const onlinePlayers = Array.from(gameSession.players.values())
-              .map(p => p.color)
-              .sort((a, b) => a - b);
-
-            console.log(`在线玩家列表: [${onlinePlayers.join(', ')}]`);
-
-            if (onlinePlayers.length > 0) {
-              // 找到当前玩家在列表中的索引
-              let currentIndex = onlinePlayers.indexOf(message.player);
-
-              // 如果当前玩家不在在线列表中（已断线），从第一个在线玩家开始
-              if (currentIndex === -1) {
-                currentIndex = -1; // 下一个索引将是0
-              }
-
-              // 计算下一个玩家
-              const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-              const nextPlayer = onlinePlayers[nextIndex];
-
-              console.log(`切换到玩家${nextPlayer}，重置游戏阶段为rolling`);
-
-              // 更新游戏状态
-              gameSession.gameData.currentPlayer = nextPlayer;
-              gameSession.gameData.gamePhase = 'rolling';
-              gameSession.gameData.diceValue = 0;
-              gameSession.gameData.canReroll = false;
-              gameSession.gameData.justRolledSix = false;
-              gameSession.gameData.consecutiveSixes = 0;
-
-              // 广播玩家切换消息
-              gameSession.broadcast({
-                type: 'playerTurnChange',
-                newPlayer: nextPlayer,
-                gamePhase: 'rolling',
-                reason: 'player_disconnected',
-                timestamp: Date.now()
-              });
-
-              console.log(`回合切换完成：玩家${nextPlayer}，阶段：rolling`);
-            } else {
-              console.log(`[警告] 没有在线玩家，无法切换`);
-            }
-          }, 1000);
-        }
-      } else {
-        // 摇到6但未达到3次，可以重新投骰
-        gameSession.gameData.canReroll = true;
-        gameSession.gameData.justRolledSix = true;
-      }
-    } else {
-      // 没有摇到6，重置连续6的计数
-      gameSession.gameData.consecutiveSixes = 0;
-      gameSession.gameData.canReroll = false;
-      gameSession.gameData.justRolledSix = false;
-    }
-
-    console.log(`更新游戏状态: 骰子值=${message.diceValue}, canReroll=${gameSession.gameData.canReroll}, consecutiveSixes=${gameSession.gameData.consecutiveSixes}`);
-  }
-
-  // 广播结果（保留player字段用于显示正确的玩家昵称）
-  target.broadcast({
-    type: 'diceRoll',
-    playerId,
-    player: message.player, // 传递玩家编号，确保显示正确的昵称
-    diceValue: message.diceValue,
-    consecutiveSixes: gameSession?.gameData?.consecutiveSixes || 0, //同步计数状态，避免前端重复计数
-    canReroll: gameSession?.gameData?.canReroll || false, //同步是否可以重投的状态
-    justRolledSix: gameSession?.gameData?.justRolledSix || false, //同步是否刚摇到6的状态
-    timestamp: message.timestamp
-  });
+  const payload = { type, playerId };
+  for (const field of DISPLAY_RELAYS[type]) payload[field] = message[field];
+  payload.timestamp = message.timestamp;
+  target.broadcast(payload);
 }
 
-// 骰子动画开始（使用通用广播目标）
-// 处理遥控骰子的骰子显示同步
-function handleDiceDisplay(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'diceDisplay',
-    playerId,
-    diceValue: message.diceValue,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理整回合移动开始消息（意图同步）
-function handleFullMoveStart(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 立即标记骰子值已被消耗，防止玩家在移动动画过程中刷新页面后利用 diceValueConsumed=false
-  // 重复选择棋子进行多次移动（见 restoreGameState 特殊处理2）
-  if (target.gameData && message.player !== undefined && message.chessIndex !== undefined) {
-    target.gameData.diceValueConsumed = true;
-
-    // 不要更新 chessData.position，避免重连后棋子恢复到错误位置
-    // boardSync 联动另一位在线玩家的真实状态进行纠正
-    const chessData = target.gameData.playerChess?.[message.player]?.[message.chessIndex];
-    let computedTarget = message.targetPosition;
-    if (chessData) {
-      if (computedTarget === undefined && typeof message.fromPosition === 'number' && typeof message.diceValue === 'number') {
-        computedTarget = message.fromPosition >= 0
-          ? Math.min(message.fromPosition + message.diceValue, 56)
-          : 0;
-      }
-      // 不再更新 chessData.position——等待 syncFinalMoveResult 或 boardSync 纠正
-      console.log(`[fullMoveStart] 记录移动: 玩家${message.player}棋子${message.chessIndex} 位置${chessData.position} 骰子${message.diceValue}`);
-    }
-
-    // _pendingMove 记录移动意图，防止重选和切换回合
-    target.gameData._pendingMove = {
-      player: message.player,
-      chessIndex: message.chessIndex,
-      targetPosition: computedTarget,
-      timestamp: Date.now()
-    };
-  }
-
-  target.broadcast({
-    type: 'fullMoveStart',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    diceValue: message.diceValue,
-    fromPosition: message.fromPosition,
-    targetPosition: message.targetPosition,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理整回合移动最终结果消息（兜底校验）
-function handleFinalMoveResult(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 如果是游戏会话，更新服务器端的棋子状态
-  if (target.gameData && target.gameData.playerChess) {
-    // 标记骰子值已被消耗（重连后不可再用同一骰子值选棋）
-    target.gameData.diceValueConsumed = true;
-    // 清除待处理移动标记（finalMoveResult 到达说明移动已完成）
-    delete target.gameData._pendingMove;
-
-    const player = message.player;
-    const chessIndex = message.chessIndex;
-    const finalPosition = message.finalPosition;
-    
-    // 更新移动的棋子位置
-    if (target.gameData.playerChess[player]?.[chessIndex]) {
-      target.gameData.playerChess[player][chessIndex].position = finalPosition;
-      if (finalPosition === 56) {
-        target.gameData.playerChess[player][chessIndex].finished = true;
-      } else if (finalPosition === -1) {
-        target.gameData.playerChess[player][chessIndex].finished = false;
-      }
-      console.log(`[finalMoveResult] 更新服务器棋子状态: 玩家${player}棋子${chessIndex} 位置=${finalPosition}`);
-    }
-
-    // 更新被 beat 的棋子位置
-    if (message.beatenChesses && Array.isArray(message.beatenChesses)) {
-      for (const bc of message.beatenChesses) {
-        if (target.gameData.playerChess[bc.player]?.[bc.chessIndex]) {
-          target.gameData.playerChess[bc.player][bc.chessIndex].position = -1;
-          target.gameData.playerChess[bc.player][bc.chessIndex].finished = false;
-          console.log(`[finalMoveResult] 更新服务器被beat棋子: 玩家${bc.player}棋子${bc.chessIndex} 回家`);
-        }
-      }
-    }
-  }
-
-  target.broadcast({
-    type: 'finalMoveResult',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    finalPosition: message.finalPosition,
-    beatenChesses: message.beatenChesses,
-    extraInfo: message.extraInfo,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理传送门图标显示同步
-function handleTeleportIcon(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'teleportIcon',
-    playerId,
-    show: message.show,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理多面骰子显示同步
-function handlePolyhedralDice(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'polyhedralDice',
-    playerId,
-    diceValue: message.diceValue,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理盲盒图标显示同步
-function handleMysteryBoxIcon(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'mysteryBoxIcon',
-    playerId,
-    energyGain: message.energyGain,
-    playerNumber: message.playerNumber,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理移除盲盒图标同步
-function handleRemoveMysteryBoxIcon(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'removeMysteryBoxIcon',
-    playerId,
-    timestamp: message.timestamp
-  });
-}
-
-// 处理积分获得数值动画同步
-function handleEnergyGainAnimation(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'energyGainAnimation',
-    playerId,
-    energyGain: message.energyGain,
-    player: message.player,
-    timestamp: message.timestamp
-  });
-}
-
-function handleDiceAnimationStart(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 如果消息携带了骰子值，立即进行完整的骰子结果处理
-  // 这样即使投掷者在 500ms 动画期间刷新页面，服务端和其他客户端已有骰子值和正确状态
-  if (message.diceValue !== undefined && message.diceValue !== null) {
-    const gameSession = roomManager.getPlayerGameSession(playerId);
-    if (gameSession && gameSession.gameData) {
-      // 防串号：只允许当前回合玩家掷骰
-      if (gameSession.gameData.currentPlayer != null && message.triggerPlayerNumber !== undefined && message.triggerPlayerNumber !== gameSession.gameData.currentPlayer) {
-        console.warn(`[diceAnimationStart] 忽略非当前玩家掷骰: msg.triggerPlayerNumber=${message.triggerPlayerNumber}, currentPlayer=${gameSession.gameData.currentPlayer}`);
-        return;
-      }
-
-      // === 保存骰子结果核心状态 ===
-      gameSession.gameData.diceValue = message.diceValue;
-      gameSession.gameData.gamePhase = 'moving';
-      gameSession.gameData.diceValueConsumed = false;
-
-      // 首个操作后，标记游戏正式开始
-      if (!gameSession.gameData.gameOfficiallyStarted) {
-        gameSession.gameData.gameOfficiallyStarted = true;
-        console.log(`[diceAnimationStart] 首发玩家 ${message.triggerPlayerNumber} 已操作，游戏正式开始`);
-      }
-
-      // 设置 fallback 定时器：1秒后如果 diceRoll 没到，自动补发结果给其他客户端
-      // 防止投掷者刷新导致其他客户端一直闪烁
-      if (gameSession._diceRollFallbackTimer) {
-        clearTimeout(gameSession._diceRollFallbackTimer);
-      }
-      gameSession._diceRollFallbackTimer = setTimeout(() => {
-        if (!gameSession) return;
-
-        // 检查：如果骰子值已被消耗（玩家已移动或无法移动），说明游戏已推进，不再补发
-        if (gameSession.gameData?.gamePhase === 'moving' && !gameSession.gameData?.diceValueConsumed) {
-          const diceVal = gameSession.gameData.diceValue;
-          const currentPlayer = message.triggerPlayerNumber;
-          console.log(`[Fallback] 玩家${currentPlayer}的 diceRoll 超时，自动补发结果给其他客户端`);
-
-          target.broadcast({
-            type: 'diceRoll',
-            playerId,
-            player: currentPlayer,
-            diceValue: diceVal,
-            consecutiveSixes: gameSession.gameData.consecutiveSixes || 0,
-            canReroll: gameSession.gameData.canReroll || false,
-            justRolledSix: gameSession.gameData.justRolledSix || false,
-            timestamp: Date.now()
-          });
-
-          // Fallback 额外处理：如果骰子值无法移动任何棋子（且无连投奖励），自动切换玩家
-          // 投掷者刷新页面导致 syncDiceRoll 未到达，服务端需在此推进游戏状态
-          if (!gameSession.gameData.canReroll) {
-            const chessArray = gameSession.gameData.playerChess?.[currentPlayer];
-            if (chessArray && Array.isArray(chessArray)) {
-              const canLaunch = diceVal % 2 === 0;
-              const hasMovable = chessArray.some(c => {
-                if (c.finished) return false;
-                const pos = c.position;
-                if (pos === undefined || pos === null || pos === -1) return canLaunch;
-                if (pos >= 0 && pos <= 50) return true;
-                if (pos >= 51 && pos < 56) return true;
-                return false;
-              });
-
-              if (!hasMovable) {
-                console.log(`[Fallback] 玩家${currentPlayer}骰子点数${diceVal}无法移动任何棋子，自动切换`);
-
-                // 标记骰子值已消耗
-                gameSession.gameData.diceValueConsumed = true;
-
-                // 广播无法移动消息
-                target.broadcast({
-                  type: 'noMovableChess',
-                  player: currentPlayer,
-                  diceValue: diceVal,
-                  timestamp: Date.now(),
-                  playerId
-                });
-
-                // 计算并切换到下一个玩家（逻辑参考 handleNoMovableChess）
-                const allPlayers = Array.from(gameSession.players.values());
-                const onlinePlayers = allPlayers
-                  .map(p => p.color)
-                  .sort((a, b) => a - b);
-                if (onlinePlayers.length > 0) {
-                  let currentIndex = onlinePlayers.indexOf(currentPlayer);
-                  if (currentIndex === -1) currentIndex = -1;
-                  const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-                  const nextPlayer = onlinePlayers[nextIndex];
-
-                  gameSession.gameData.currentPlayer = nextPlayer;
-                  gameSession.gameData.gamePhase = 'rolling';
-                  gameSession.gameData.diceValue = 0;
-                  gameSession.gameData.canReroll = false;
-                  gameSession.gameData.justRolledSix = false;
-                  gameSession.gameData.consecutiveSixes = 0;
-
-                  setTimeout(() => {
-                    gameSession.broadcast({
-                      type: 'playerTurnChange',
-                      newPlayer: nextPlayer,
-                      timestamp: Date.now()
-                    });
-                  }, 600);
-                }
-              }
-            }
-          }
-        }
-
-        gameSession._diceRollFallbackTimer = null;
-      }, 1000);
-    }
-  }
-
-  // 广播骰子动画开始（包含 triggerPlayerNumber 用于客户端动画逻辑）
-  target.broadcast({
-    type: 'diceAnimationStart',
-    playerId: message.triggerPlayerId || playerId,
-    triggerPlayerNumber: message.triggerPlayerNumber,
-    diceValue: message.diceValue,
-    timestamp: message.timestamp
-  });
-}
-
-// 进度条开始（使用通用广播目标）
 function handleProgressBarStart(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 保存思考开始时间到游戏数据（用于重连恢复）
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (gameSession && gameSession.gameData) {
-    gameSession.gameData.thinkingStartTime = message.timestamp || Date.now();
-    console.log(`[进度条] 保存思考开始时间: ${gameSession.gameData.thinkingStartTime}`);
-  }
-
-  target.broadcast({
-    type: 'progressBarStart',
-    playerId,
-    timestamp: message.timestamp
-  });
-}
-
-// 骰子重置（使用通用广播目标）
-function handleDiceReset(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'diceReset',
-    playerId,
-    timestamp: message.timestamp
-  });
+  // 只转发显示；思考窗口由服务端维护（见 mirrorSnapshot），
+  // 收客户端上报的时间等于把「本回合还剩多久」交给客户端自己说了算
+  relayDisplay('progressBarStart', playerId, message);
 }
 
 function handleRejoinRoom(ws, playerId, message) {
-  const roomCode = message.data?.roomCode || message.roomCode;
-  const isReady = message.data?.isReady ?? message.isReady;
+  const roomCode = message.roomCode;
+  const isReady = message.isReady;
 
   const room = roomManager.getRoom(roomCode);
   if (!room) {
@@ -3239,15 +2476,8 @@ function handleRejoinRoom(ws, playerId, message) {
       room: room.toJSON()
     }, playerId); // 排除当前玩家
 
-    // 广播“回来了”系统消息
-    room.broadcast({
-      type: 'chatMessage',
-      message: `${player.nickname}回来了`,
-      playerNumber: null,
-      playerName: null,
-      isSystemMessage: true,
-      timestamp: Date.now()
-    }, playerId);
+    // 广播“回来了”系统消息（排除本人）
+    broadcastSystemChat(room, `${player.nickname}回来了`, playerId);
   }
 }
 
@@ -3264,11 +2494,14 @@ function handleRejoinGameSession(ws, playerId, message) {
     return;
   }
 
+  // 重新进对局页面：从现在起这台要参与「等演完」，离开/断开时清掉
+  markGamePage(playerId);
+
   // 重连冷却限制：防止玩家通过频繁刷新页面干扰其他玩家游戏流程
   // 2秒内多次重连跳过非必要的重复处理，但连接状态（ws、isConnected、disconnectedAt）必须更新
-  if (!roomManager._rejoinCooldowns) roomManager._rejoinCooldowns = new Map();
+  if (!roomManager.rejoinCooldowns) roomManager.rejoinCooldowns = new Map();
   const now = Date.now();
-  const lastRejoin = roomManager._rejoinCooldowns.get(playerId) || 0;
+  const lastRejoin = roomManager.getRejoinCooldown(playerId);
   if (now - lastRejoin < 2000) {
     console.log(`玩家 ${playerId} 重连过于频繁（${now - lastRejoin}ms内），跳过完整重连处理`);
 
@@ -3297,10 +2530,7 @@ function handleRejoinGameSession(ws, playerId, message) {
       }
 
       // 取消断线去抖定时器（如果有）
-      if (gameSession._disconnectDebounceTimers?.has(playerId)) {
-        clearTimeout(gameSession._disconnectDebounceTimers.get(playerId));
-        gameSession._disconnectDebounceTimers.delete(playerId);
-      }
+      roomManager.clearPlayerTimers(playerId);
     }
 
     // 广播给其他玩家：该玩家已重连
@@ -3310,64 +2540,16 @@ function handleRejoinGameSession(ws, playerId, message) {
       timestamp: Date.now()
     });
 
-    // 冷却路径也检测待处理移动，防止 _pendingMove 卡死
-    const coolingPlayer = gameSession.players.get(playerId);
-    const coolingGd = gameSession.gameData;
-    if (coolingPlayer && coolingGd && coolingGd._pendingMove && coolingGd.currentPlayer === coolingPlayer.color && !coolingPlayer.isAI) {
-      const pending = coolingGd._pendingMove;
-      console.log(`[重连冷却] 检测到玩家${coolingPlayer.color}的移动未完成(棋子${pending.chessIndex})，清理状态`);
-      // 不再推进棋子位置——boardSync 会从参考玩家纠正
-      delete coolingGd._pendingMove;
-      coolingGd.diceValueConsumed = false;
-      coolingGd.diceValue = 0;
-      coolingGd.canReroll = false;
-      coolingGd.justRolledSix = false;
-      coolingGd.consecutiveSixes = 0;
-      // 切换到下一玩家
-      const allPlayers = Array.from(gameSession.players.values());
-      const onlinePlayers = allPlayers.map(p => p.color).sort((a, b) => a - b);
-      if (onlinePlayers.length > 0) {
-        const currentIndex = onlinePlayers.indexOf(coolingPlayer.color);
-        const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-        const nextPlayer = onlinePlayers[nextIndex];
-        coolingGd.currentPlayer = nextPlayer;
-        coolingGd.gamePhase = 'rolling';
-        console.log(`[重连冷却] 切换到玩家${nextPlayer}`);
-        // 延迟广播回合切换
-        setTimeout(() => {
-          gameSession.broadcast({
-            type: 'playerTurnChange',
-            newPlayer: nextPlayer,
-            timestamp: Date.now()
-          });
-        }, 600);
-      }
-    }
-
     // 仍然发送最新游戏数据给重连玩家
     ws.send(JSON.stringify({ type: 'gameSessionConnected', playerId, gameSessionId, gameSession: gameSession.toJSON() }));
-    
-    // 冷却路径也触发棋盘同步
-    setTimeout(() => {
-      for (const [id, p] of gameSession.players) {
-        if (id !== playerId && !p.isAI && p.isConnected) {
-          const pws = roomManager.getPlayerConnection(id);
-          if (pws && pws.readyState === WebSocket.OPEN) {
-            pws.send(JSON.stringify({
-              type: 'boardSyncRequest',
-              targetPlayerId: playerId,
-              timestamp: Date.now()
-            }));
-            console.log(`[棋盘同步] 冷却重连后请求玩家${id}发送棋盘状态给${playerId}`);
-            break;
-          }
-        }
-      }
-    }, 500);
-    
+    sendSnapshotTo(ws, gameSessionId);
+    if (message.needsHistory) {
+      sendGameInfoHistoryTo(ws, gameSession);
+    }
+
     return;
   }
-  roomManager._rejoinCooldowns.set(playerId, now);
+  roomManager.markRejoin(playerId, now);
 
   // 重新关联会话
   roomManager.playerSessions.set(playerId, gameSessionId);
@@ -3414,15 +2596,11 @@ function handleRejoinGameSession(ws, playerId, message) {
       console.log(`[重连] 游戏处于自动暂停状态，检测到人类玩家${playerId}重连，自动恢复游戏`);
       gameSession.gameData.isPaused = false;
       delete gameSession.gameData.pauseReason;
+      accumulatePausedTime(gameSession.gameData);
       if (gameSession.gameData.gamePhase === 'paused') {
         gameSession.gameData.gamePhase = gameSession.gameData.gamePhaseBeforePause || 'rolling';
       }
-      // 重置进度条时间（当前玩家为谁就重置谁）
-      if (player && player.color === gameSession.gameData.currentPlayer) {
-        const newThinkingStartTime = Date.now();
-        gameSession.gameData.thinkingStartTime = newThinkingStartTime;
-        console.log(`[重连] 暂停恢复后重置进度条时间: ${newThinkingStartTime}`);
-      }
+      const resumedSession = getAuthoritySession(gameSession.gameSessionId);
       // 广播游戏恢复消息给所有玩家（包括重连者将会在 gameSessionConnected 中同步）
       gameSession.broadcast({
         type: 'gameResumed',
@@ -3430,6 +2608,10 @@ function handleRejoinGameSession(ws, playerId, message) {
         reason: 'human_player_reconnected',
         timestamp: Date.now()
       });
+      // 恢复后补一份权威快照，让各端立刻对齐阶段（markResumed 同时重置看门狗计时）
+      if (resumedSession) {
+        commitSnapshot(gameSession, resumedSession.markResumed());
+      }
     }
 
   }
@@ -3449,50 +2631,6 @@ function handleRejoinGameSession(ws, playerId, message) {
     }
   });
 
-  // === 检测待处理移动完成状态：如果玩家在移动中刷新（fullMoveStart已执行但finalMoveResult未到），自动推进 ===
-  const gd = gameSession.gameData;
-  if (player && gd && gd._pendingMove && gd.currentPlayer === player.color && !player.isAI) {
-    const pending = gd._pendingMove;
-    console.log(`[重连] 检测到玩家${player.color}的移动未完成(棋子${pending.chessIndex})，清理状态`);
-
-    // 不再推进棋子位置——boardSync 会从参考玩家纠正
-    delete gd._pendingMove;
-
-    // 统一重置所有回合状态（不区分是否连投奖励，避免与客户端 restoreGameState 或 playerTurnChange 的并发冲突）
-    gd.diceValueConsumed = false;
-    gd.diceValue = 0;
-    gd.canReroll = false;
-    gd.justRolledSix = false;
-    gd.consecutiveSixes = 0;
-
-    // 切换到下一个玩家
-    const allPlayers = Array.from(gameSession.players.values());
-    const onlinePlayers = allPlayers
-      .map(p => p.color)
-      .sort((a, b) => a - b);
-
-    if (onlinePlayers.length > 0) {
-      let currentIndex = onlinePlayers.indexOf(player.color);
-      if (currentIndex === -1) currentIndex = -1;
-      const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-      const nextPlayer = onlinePlayers[nextIndex];
-
-      gd.currentPlayer = nextPlayer;
-      gd.gamePhase = 'rolling';
-
-      console.log(`[重连] 检测到移动未完成，切换到玩家${nextPlayer}`);
-
-      // 延迟广播回合切换，确保 gameSessionConnected 先到达客户端完成 restoreGameState
-      setTimeout(() => {
-        gameSession.broadcast({
-          type: 'playerTurnChange',
-          newPlayer: nextPlayer,
-          timestamp: Date.now()
-        });
-      }, 600);
-    }
-  }
-
   // 发送重连确认
   console.log(`[重连] 发送gameSessionConnected给玩家${playerId}，currentPlayer=${gameSession.gameData.currentPlayer}`);
   ws.send(JSON.stringify({
@@ -3502,6 +2640,10 @@ function handleRejoinGameSession(ws, playerId, message) {
     gameSession: gameSession.toJSON(),
     audioLoadedPlayers: Array.from(gameSession.audioLoadedPlayers) // 同步已加载玩家列表
   }));
+  sendSnapshotTo(ws, gameSessionId);
+  if (message.needsHistory) {
+    sendGameInfoHistoryTo(ws, gameSession);
+  }
 
   // 如果所有人（包括重连者之前记录的状态）都已经加载完音频，
   // 补发一个 allAudioLoaded 信号给重连玩家，确保其 UI 能正常关闭
@@ -3515,24 +2657,6 @@ function handleRejoinGameSession(ws, playerId, message) {
       isResync: true
     }));
   }
-
-  // 重连后自动触发棋盘同步：找另一个在线玩家发状态给重连者
-  setTimeout(() => {
-    for (const [id, p] of gameSession.players) {
-      if (id !== playerId && !p.isAI && p.isConnected) {
-        const pws = roomManager.getPlayerConnection(id);
-        if (pws && pws.readyState === WebSocket.OPEN) {
-          pws.send(JSON.stringify({
-            type: 'boardSyncRequest',
-            targetPlayerId: playerId,
-            timestamp: Date.now()
-          }));
-          console.log(`[棋盘同步] 重连后自动请求玩家${id}发送棋盘状态给${playerId}`);
-          break;
-        }
-      }
-    }
-  }, 500);
 
   // 广播重连（只发送玩家列表，不发送全量 gameData 减轻其他客户端解析负担）
   console.log(`[重连] 玩家${playerId}重连成功，广播playerReconnected给其他玩家`);
@@ -3568,44 +2692,10 @@ function handleRejoinGameSession(ws, playerId, message) {
   // 发送重连消息
   if (wasDisconnected && player) {
     console.log(`[重连] 玩家${playerId}断开时长${disconnectDuration}ms，广播“回来了”系统消息`);
-
-    for (const [otherPlayerId] of gameSession.players) {
-      if (otherPlayerId === playerId) continue;
-      const otherWs = roomManager.getPlayerConnection(otherPlayerId);
-      if (otherWs && otherWs.readyState === WebSocket.OPEN) {
-        otherWs.send(JSON.stringify({
-          type: 'chatMessage',
-          message: `${player.nickname}回来了`,
-          playerNumber: null,
-          playerName: null,
-          isSystemMessage: true,
-          timestamp: Date.now()
-        }));
-      }
-    }
+    broadcastSystemChat(gameSession, `${player.nickname}回来了`, playerId);
   }
 
-  // 如果重连时存在未消耗的骰子值（玩家在骰子动画过程中刷新），补发 diceRoll 给重连者
-  // 让重连客户端立即看到正确的骰子状态，无需等待 fallback 定时器（1秒后）
-  // 注意：不修改 gameData 中的 canReroll/justRolledSix/consecutiveSixes，
-  // 这些值已由 handleDiceRoll 正确设置。restoreGameState 也通过 diceValueConsumed
-  // 正确区分"刚掷完未移动"和"移动完成可重投"两种状态。
-  if (gameSession.gameData && gameSession.gameData.diceValue > 0 &&
-      gameSession.gameData.gamePhase === 'moving' && !gameSession.gameData.diceValueConsumed &&
-      player && player.color === gameSession.gameData.currentPlayer) {
-    const dd = gameSession.gameData;
-    console.log(`[重连] 检测到未消耗骰子值 ${dd.diceValue}（canReroll=${!!dd.canReroll} consecutiveSixes=${dd.consecutiveSixes||0}），补发 diceRoll 给玩家${playerId}`);
-    ws.send(JSON.stringify({
-      type: 'diceRoll',
-      playerId,
-      player: dd.currentPlayer,
-      diceValue: dd.diceValue,
-      consecutiveSixes: dd.consecutiveSixes || 0,
-      canReroll: dd.canReroll || false,
-      justRolledSix: dd.justRolledSix || false,
-      timestamp: Date.now()
-    }));
-  }
+  // 骰子/阶段等棋面状态统一由上面的 sendSnapshotTo 权威快照恢复，无需额外补发
 
   // 检查当前房主是否在线，如果不在线且当前重连的是真实玩家，则接管房主
   // 仅在游戏稳定期（开始15秒后）才允许重连者主动接管，防止开局加载时的竞争
@@ -3641,6 +2731,7 @@ function handleRejoinGameSession(ws, playerId, message) {
           }
         }
 
+        recordHostChange(gameSession, player);
         gameSession.broadcast({
           type: 'hostChanged',
           oldHostId: currentHost ? currentHost.id : null,
@@ -3654,24 +2745,9 @@ function handleRejoinGameSession(ws, playerId, message) {
   }
 }
 
-function handleRoomPanelMessage(ws, playerId, message) {
-  const roomCode = roomManager.playerRooms.get(playerId);
-  if (!roomCode) throw new Error('玩家不在任何房间中');
-
-  const room = roomManager.getRoom(roomCode);
-  if (!room) throw new Error('房间不存在');
-
-  room.broadcast({
-    type: 'roomPanelMessage',
-    playerId,
-    message: sanitizeText(message.data?.message || message.message),
-    timestamp: Date.now()
-  });
-}
-
 // 配置棋子数量（需要房主权限）
 const handleConfigurePieceCount = withRoomValidation((ws, playerId, message, room) => {
-  const { pieceCount } = message.data;
+  const { pieceCount } = message;
   if (![1, 2, 3, 4].includes(pieceCount)) throw new Error('无效的棋子数量');
 
   room.settings.pieceCount = pieceCount;
@@ -3679,319 +2755,30 @@ const handleConfigurePieceCount = withRoomValidation((ws, playerId, message, roo
   room.broadcast({ type: 'pieceCountConfigured', pieceCount, room: room.toJSON() });
 }, true);
 
-// 玩家回合切换（使用通用广播目标）
-function handlePlayerTurnChange(ws, playerId, message) {
-  let newPlayer = message.newPlayer ?? (message.data?.newPlayer ?? undefined);
-  const timestamp = message.timestamp ?? (message.data?.timestamp ?? Date.now());
-  const forceEndTurn = !!(message.forceEndTurn ?? message.data?.forceEndTurn);
-  const reason = message.reason ?? message.data?.reason;
-  if (newPlayer === undefined) throw new Error('缺少newPlayer属性');
-
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 更新游戏状态（仅游戏会话）
-  if (target instanceof GameSession && target.gameData) {
-    // 检查是否有连投奖励
-    if (!forceEndTurn && target.gameData.canReroll && target.gameData.justRolledSix) {
-      // 如果有连投奖励，保持当前玩家不变
-      console.log(`玩家${target.gameData.currentPlayer}摇到6点，获得连投奖励，保持回合`);
-      target.gameData.gamePhase = 'rolling';
-      target.gameData.diceValue = 0;
-      target.gameData.justRolledSix = false; // 重置justRolledSix状态
-    } else {
-      // 正常切换到下一个玩家（不跳过离线玩家，由AI托管处理）
-      target.gameData.currentPlayer = newPlayer;
-      target.gameData.gamePhase = 'rolling';
-      target.gameData.diceValue = 0;
-      target.gameData.diceValueConsumed = false; // 新玩家回合，骰子未消耗
-      // 重置连投奖励状态
-      target.gameData.canReroll = false;
-      target.gameData.justRolledSix = false;
-      // 关键：回合交接时必须清空连6计数，避免串到下一个玩家（例如道具结束回合直接切人）
-      target.gameData.consecutiveSixes = 0;
-      console.log(`更新游戏状态: 当前玩家=${newPlayer}${forceEndTurn ? `, forceEndTurn=true, reason=${reason}` : ''}`);
-    }
-  }
-
-  // 广播回合切换
-  target.broadcast({ type: 'playerTurnChange', newPlayer, timestamp });
-}
-
-// 处理无法移动状态同步
-function handleNoMovableChess(ws, playerId, message) {
-  const player = message.player ?? (message.data?.player ?? undefined);
-  const diceValue = message.diceValue ?? (message.data?.diceValue ?? undefined);
-  const timestamp = message.timestamp ?? (message.data?.timestamp ?? Date.now());
-
-  if (player === undefined) throw new Error('缺少player属性');
-  if (diceValue === undefined) throw new Error('缺少diceValue属性');
-
-  // 优先获取GameSession（确保使用正确的玩家列表）
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  const target = gameSession || getBroadcastTarget(playerId);
-
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  console.log(`玩家${player}无法移动，骰子点数${diceValue}, target类型: ${gameSession ? 'GameSession' : 'Room'}`);
-
-
-  // 广播无法移动消息
-  target.broadcast({ type: 'noMovableChess', player, diceValue, timestamp, playerId });
-
-  // 只有GameSession才有完整的玩家列表（包括AI bot）
-  if (gameSession && gameSession.gameData) {
-    // 标记骰子值已消耗（当前玩家已用完本回合的骰子）
-    gameSession.gameData.diceValueConsumed = true;
-
-    // 获取所有在线玩家的color列表并排序（包括AI和在线的人类玩家）
-    const allPlayers = Array.from(gameSession.players.values());
-    console.log(`[调试] 所有玩家:`, allPlayers.map(p => ({ id: p.id, color: p.color, isAI: p.isAI, isConnected: p.isConnected })));
-
-    const onlinePlayers = allPlayers
-      .map(p => p.color)
-      .sort((a, b) => a - b);
-
-    console.log(`玩家${player}无法移动，在线玩家列表: [${onlinePlayers.join(', ')}]`);
-
-    // 如果没有在线玩家，不切换
-    if (onlinePlayers.length === 0) {
-      console.log(`[警告] 没有在线玩家，无法切换`);
-      return;
-    }
-
-    // 找到当前玩家在列表中的索引
-    let currentIndex = onlinePlayers.indexOf(player);
-
-    // 如果当前玩家不在在线列表中（已断线），从第一个在线玩家开始
-    if (currentIndex === -1) {
-      console.log(`当前玩家${player}已离线，从第一个在线玩家开始`);
-      currentIndex = -1; // 下一个索引将是0
-    }
-
-    // 计算下一个玩家（循环到列表中的下一个）
-    const nextIndex = (currentIndex + 1) % onlinePlayers.length;
-    const nextPlayer = onlinePlayers[nextIndex];
-
-    console.log(`玩家${player}无法移动，自动切换到玩家${nextPlayer}`);
-
-    // 更新游戏状态
-    gameSession.gameData.currentPlayer = nextPlayer;
-    gameSession.gameData.gamePhase = 'rolling';
-    gameSession.gameData.diceValue = 0;
-    gameSession.gameData.canReroll = false;
-    gameSession.gameData.justRolledSix = false;
-    gameSession.gameData.consecutiveSixes = 0;
-
-    // 延迟广播玩家切换消息，等待骰子震动动画结束（0.5秒）
-    setTimeout(() => {
-      console.log(`[延迟广播] 发送playerTurnChange消息，newPlayer=${nextPlayer}`);
-      gameSession.broadcast({
-        type: 'playerTurnChange',
-        newPlayer: nextPlayer,
-        timestamp: Date.now()
-      });
-      console.log(`[延迟广播] playerTurnChange消息已发送`);
-    }, 600);
-  } else {
-    console.log(`[警告] 无法自动切换玩家: 没有GameSession或gameData`);
-  }
-}
-
-// 棋子移动（使用游戏会话中间件）
-const handlePieceMove = withGameSessionValidation((ws, playerId, message, gameSession) => {
-  const { pieceId, fromPosition, toPosition, timestamp } = message;
-  // 解析玩家颜色和棋子索引
-  const playerColor = Math.floor(pieceId / 4) + 1;
-  const chessIndex = pieceId % 4;
-
-  // 更新棋子状态
-  if (gameSession.gameData.playerChess[playerColor]?.[chessIndex]) {
-    gameSession.gameData.playerChess[playerColor][chessIndex].position = toPosition;
-    // 终点/起点状态更新
-    if (toPosition === 56) {
-      gameSession.gameData.playerChess[playerColor][chessIndex].finished = true;
-    } else if (toPosition === -1) {
-      gameSession.gameData.playerChess[playerColor][chessIndex].finished = false;
-    }
-    console.log(`更新棋子状态: 玩家${playerColor}棋子${chessIndex} 从${fromPosition}到${toPosition}`);
-  }
-
-  // 广播移动结果
-  gameSession.broadcast({
-    type: 'pieceMove',
-    playerId,
-    fromPosition,
-    toPosition,
-    pieceId,
-    timestamp
-  });
-});
-
-// AI托管切换（使用通用广播目标）
-function handleAITakeoverChange(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 这里的 message.playerId 才是被托管的玩家ID，playerId 是发送请求的玩家ID（通常是房主代理发送的）
-  const targetPlayerId = message.playerId || playerId;
-
-  // 更新服务器端的玩家AI托管状态
-  if (target.players && target.players.has(targetPlayerId)) {
-    const player = target.players.get(targetPlayerId);
-    player.isAITakeover = message.isActive;
-    console.log(`更新玩家 ${targetPlayerId} 的AI托管状态: ${message.isActive}`);
-  }
-
-  target.broadcast({
-    type: 'aiTakeoverChange',
-    playerId: targetPlayerId,
-    isActive: message.isActive,
-    auto: message.auto,
-    reason: message.reason,
-    timestamp: message.timestamp
-  });
-}
-
-// 昵称切换（使用通用广播目标）
-function handleNicknameChange(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 支持代理修改昵称
-  const targetPlayerId = message.playerId || playerId;
-  const manualInput = message.data?.manualInput === true || message.manualInput === true;
-  const rawNickname = message.nickname == null ? '' : String(message.nickname);
-  const nextNickname = manualInput ? sanitizeText(rawNickname) : rawNickname;
-
-  target.broadcast({
-    type: 'nicknameChange',
-    playerId: targetPlayerId,
-    nickname: nextNickname,
-    timestamp: message.timestamp
-  });
-}
-
-// 棋子移动（游戏内）
-const handleChessMove = withGameSessionValidation((ws, playerId, message, gameSession) => {
-  const { player, chessIndex, position, fromPosition, toPosition, moveType, timestamp } = message;
-  // 更新棋子状态
-  if (gameSession.gameData.playerChess[player]?.[chessIndex]) {
-    gameSession.gameData.playerChess[player][chessIndex].position = position;
-    if (position === 56) {
-      gameSession.gameData.playerChess[player][chessIndex].finished = true;
-    }
-    console.log(`更新棋子状态: 玩家${player}棋子${chessIndex} 到${position}${moveType ? ` (${moveType})` : ''}`);
-  }
-
-  // 广播移动结果
-  gameSession.broadcast({
-    type: 'chessMove',
-    playerId,
-    player,
-    chessIndex,
-    position,
-    fromPosition: fromPosition !== undefined ? fromPosition : undefined,
-    toPosition: toPosition !== undefined ? toPosition : undefined,
-    moveType: moveType || undefined,
-    gameSessionId: gameSession.gameSessionId,
-    timestamp
-  });
-});
-
-// 跳子动画（使用通用广播目标）
-function handleJumpAnimation(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'jumpAnimation',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    startPosition: message.startPosition,
-    targetPosition: message.targetPosition,
-    timestamp: message.timestamp
-  });
-}
-
-// 飞棋动画（使用通用广播目标）
-function handleFlyAnimation(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'flyAnimation',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    startPosition: message.startPosition,
-    targetPosition: message.targetPosition,
-    timestamp: message.timestamp
-  });
-}
 
 // 游戏信息同步（使用通用广播目标，避免回显给发送者）
+// 战报的正史由服务端事件流留档（authority.eventLog）承担，这里只做实时转发，
+// 不再复制一份消息，避免刷新回放与实时消息叠加出重复。
 function handleGameInfo(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+  const target = requireBroadcastTarget(playerId);
 
-  const broadcastMsg = JSON.stringify({
+  // 战报由发送方本地先渲染一次，这里排除发送者避免重复
+  target.broadcast({
     type: 'gameInfo',
     playerId,
     messageData: message.messageData,
     timestamp: message.timestamp
-  });
-
-  // 广播给其他玩家，但不包括发送者自己（避免重复显示）
-  if (target instanceof GameSession) {
-    target.players.forEach(player => {
-      // 跳过发送者自己
-      if (player.id === playerId) return;
-
-      const playerWs = roomManager.getPlayerConnection(player.id);
-      if (playerWs && playerWs.readyState === WebSocket.OPEN) {
-        playerWs.send(broadcastMsg);
-      }
-    });
-    // 广播给观战者
-    if (target.spectators) {
-      target.spectators.forEach(spectatorId => {
-        const spectatorWs = roomManager.getPlayerConnection(spectatorId);
-        if (spectatorWs && spectatorWs.readyState === WebSocket.OPEN) {
-          spectatorWs.send(broadcastMsg);
-        }
-      });
-    }
-  } else if (target instanceof Room) {
-    target.players.forEach(player => {
-      // 跳过发送者自己
-      if (player.id === playerId) return;
-
-      if (player.ws && player.ws.readyState === WebSocket.OPEN) {
-        player.ws.send(broadcastMsg);
-      }
-    });
-    // 广播给观战者
-    if (target.spectators) {
-      target.spectators.forEach(spectatorId => {
-        const spectatorWs = roomManager.getPlayerConnection(spectatorId);
-        if (spectatorWs && spectatorWs.readyState === WebSocket.OPEN) {
-          spectatorWs.send(broadcastMsg);
-        }
-      });
-    }
-  }
+  }, playerId);
 }
 
 // 游戏暂停（使用通用广播目标）
 function handleGamePause(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+  const target = requireBroadcastTarget(playerId);
 
   if (target instanceof GameSession && target.gameData) {
     target.gameData.isPaused = true;
     target.gameData.pauseReason = 'manual';
+    target.gameData.pausedAt = Date.now();
     target.gameData.gamePhaseBeforePause = target.gameData.gamePhase;
     target.gameData.gamePhase = 'paused';
   }
@@ -4005,12 +2792,13 @@ function handleGamePause(ws, playerId, message) {
 
 // 游戏继续（使用通用广播目标）
 function handleGameResume(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+  const target = requireBroadcastTarget(playerId);
+  const session = target instanceof GameSession ? getAuthoritySession(target.gameSessionId) : null;
 
   if (target instanceof GameSession && target.gameData) {
     target.gameData.isPaused = false;
     delete target.gameData.pauseReason;
+    accumulatePausedTime(target.gameData);
     if (target.gameData.gamePhase === 'paused') {
       target.gameData.gamePhase = target.gameData.gamePhaseBeforePause || 'rolling';
     }
@@ -4021,417 +2809,227 @@ function handleGameResume(ws, playerId, message) {
     playerId,
     timestamp: message.timestamp
   });
+
+  // 暂停期间各端的本地阶段可能被冻在半截（刷新回来的客户端会停在 waiting），
+  // 补一份权威快照让所有人立刻对齐，而不是等 25 秒心跳
+  if (session) {
+    commitSnapshot(target, session.markResumed());
+    botDriver.kick(target);
+  }
 }
 
-// 棋子回归起点（使用游戏会话中间件）
-const handleMoveChessToStart = withGameSessionValidation((ws, playerId, message, gameSession) => {
-  const { player, chessIndex, reason, timestamp } = message;
-  // 更新棋子状态
-  if (gameSession.gameData.playerChess[player]?.[chessIndex]) {
-    gameSession.gameData.playerChess[player][chessIndex].position = -1;
-    gameSession.gameData.playerChess[player][chessIndex].finished = false;
-    console.log(`更新棋子状态: 玩家${player}棋子${chessIndex} 回归起点`);
+// AI托管切换（房主代理发送，message.playerId 才是被托管的玩家）
+function handleAITakeoverChange(ws, playerId, message) {
+  const target = requireBroadcastTarget(playerId);
+  const targetPlayerId = message.playerId || playerId;
+
+  // isAITakeover 是权威层判定「谁能代理这个玩家发起 intent」的依据
+  if (target.players && target.players.has(targetPlayerId)) {
+    target.players.get(targetPlayerId).isAITakeover = message.isActive;
   }
 
-  // 广播结果
-  gameSession.broadcast({
-    type: 'moveChessToStart',
-    playerId,
-    player,
-    chessIndex,
-    reason,
-    timestamp
-  });
-});
-
-// 棋子到达终点（使用游戏会话中间件）
-const handleMoveChessToFinish = withGameSessionValidation((ws, playerId, message, gameSession) => {
-  const { player, chessIndex, timestamp } = message;
-  // 更新棋子状态
-  if (gameSession.gameData.playerChess[player]?.[chessIndex]) {
-    gameSession.gameData.playerChess[player][chessIndex].position = 56;
-    gameSession.gameData.playerChess[player][chessIndex].finished = true;
-    console.log(`更新棋子状态: 玩家${player}棋子${chessIndex} 到达终点`);
-  }
-
-  // 广播结果
-  gameSession.broadcast({
-    type: 'moveChessToFinish',
-    playerId,
-    player,
-    chessIndex,
-    timestamp
-  });
-});
-
-// 叠子碰撞（使用通用广播目标）
-function handleStackCollision(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
   target.broadcast({
-    type: 'stackCollision',
-    playerId,
-    player: message.player,
-    targetPlayer: message.targetPlayer,
-    stackedChesses: message.stackedChesses,
-    collisionPosition: message.collisionPosition,
+    type: 'aiTakeoverChange',
+    playerId: targetPlayerId,
+    isActive: message.isActive,
+    auto: message.auto,
+    reason: message.reason,
     timestamp: message.timestamp
   });
+
+  // 托管开关一变就重排一拍：开着托管又正轮到他（比如刚掷完骰子在选子），
+  // AI 要立刻接手，别干等思考窗口——原来就是这个空档，看着像卡住了
+  if (target instanceof GameSession) botDriver.kick(target);
 }
 
-// 叠子反弹（使用通用广播目标）
-function handleStackBounce(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
+// 音效开关（玩家自己的偏好，落在会话与房间上以便刷新/重连恢复）
+function handleAudioEnabledChange(ws, playerId, message) {
+  const target = requireBroadcastTarget(playerId);
+  const enabled = !!message.enabled;
 
-  target.broadcast({
-    type: 'stackBounce',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    startPosition: message.startPosition,
-    endPosition: message.endPosition,
-    bounceSteps: message.bounceSteps,
-    timestamp: message.timestamp
-  });
-}
-
-// 终点反弹（使用通用广播目标）
-function handleEndpointBounce(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  target.broadcast({
-    type: 'endpointBounce',
-    playerId,
-    player: message.player,
-    chessIndex: message.chessIndex,
-    startPosition: message.startPosition,
-    endPosition: message.endPosition,
-    bounceSteps: message.bounceSteps,
-    timestamp: message.timestamp
-  });
-}
-
-/**
- * 处理积分变化（道具模式）
- */
-function handleEnergyChange(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  const player = message.player;
-  const energy = message.energy;
-  const delta = message.delta || 0;
-
-  if (player === undefined) throw new Error('缺少player属性');
-  if (energy === undefined) throw new Error('缺少energy属性');
-
-  console.log(`[积分同步] 玩家${player}积分变化: ${energy} (${delta > 0 ? '+' : ''}${delta})`);
-
-  // 如果是游戏会话，更新gameData中的积分状态
   const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (gameSession && gameSession.gameData && gameSession.gameData.energyStates) {
-    gameSession.gameData.energyStates[player] = energy;
-    console.log(`[积分状态] 已保存玩家${player}的积分: ${energy}`);
+  if (gameSession && gameSession.players.has(playerId)) {
+    gameSession.players.get(playerId).audioEnabled = enabled;
+  }
+  const room = roomManager.getPlayerRoom(playerId);
+  if (room && room.players.has(playerId)) {
+    room.players.get(playerId).audioEnabled = enabled;
   }
 
-  // 广播积分变化消息
   target.broadcast({
-    type: 'energyChange',
+    type: 'audioEnabledChange',
     playerId,
-    player,
-    energy,
-    delta,
-    source: message.source,
-    targetPlayer: message.targetPlayer,
-    targetChessIndex: message.targetChessIndex,
+    enabled,
     timestamp: message.timestamp || Date.now()
   });
 }
 
-/**
- * 处理击败计数变化
- */
-function handleDefeatCountChange(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  const attackerPlayer = message.attackerPlayer;
-  const defeatedPlayer = message.defeatedPlayer;
-  const count = message.count;
-
-  if (attackerPlayer === undefined) throw new Error('缺少attackerPlayer属性');
-  if (defeatedPlayer === undefined) throw new Error('缺少defeatedPlayer属性');
-  if (count === undefined) throw new Error('缺少count属性');
-
-  console.log(`[击败计数同步] 玩家${attackerPlayer}击败玩家${defeatedPlayer}，计数: ${count}`);
-
-  // 如果是游戏会话，更新gameData中的击败计数
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (gameSession && gameSession.gameData && gameSession.gameData.defeatCounts) {
-    if (!gameSession.gameData.defeatCounts[attackerPlayer]) {
-      gameSession.gameData.defeatCounts[attackerPlayer] = {};
-    }
-    gameSession.gameData.defeatCounts[attackerPlayer][defeatedPlayer] = count;
-    console.log(`[击败计数状态] 已保存玩家${attackerPlayer}对玩家${defeatedPlayer}的击败计数: ${count}`);
-  }
-
-  // 广播击败计数变化消息
-  target.broadcast({
-    type: 'defeatCountChange',
-    playerId,
-    attackerPlayer,
-    defeatedPlayer,
-    count,
-    timestamp: message.timestamp || Date.now()
-  });
-}
-
-/**
- * 处理骰子统计数据同步
- */
-function handleDiceStatisticsSync(ws, playerId, message) {
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (!gameSession) {
-    console.log(`[骰子统计同步] 玩家${playerId}不在游戏会话中，忽略`);
-    return;
-  }
-
-  const { player, diceValue, count } = message;
-
-  if (player === undefined || diceValue === undefined || count === undefined) {
-    console.log(`[骰子统计同步] 缺少必要参数: player=${player}, diceValue=${diceValue}, count=${count}`);
-    return;
-  }
-
-  // 更新服务器端的骰子统计数据
-  if (!gameSession.gameData.diceStatistics[player]) {
-    gameSession.gameData.diceStatistics[player] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-  }
-  gameSession.gameData.diceStatistics[player][diceValue] = count;
-
-  console.log(`[骰子统计同步] 玩家${player}骰子${diceValue}点计数更新为${count}`);
-}
-
-/**
- * 处理完成度历史记录同步
- */
-function handleProgressHistorySync(ws, playerId, message) {
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (!gameSession) {
-    console.log(`[完成度历史同步] 玩家${playerId}不在游戏会话中，忽略`);
-    return;
-  }
-
-  const { snapshot, currentRound } = message;
-
-  if (!snapshot) {
-    console.log(`[完成度历史同步] 缺少snapshot参数`);
-    return;
-  }
-
-  // 检查是否已经存在相同回合的快照（防止重复记录）
-  const existingIndex = gameSession.gameData.progressHistory.findIndex(s => s.round === snapshot.round);
-  if (existingIndex !== -1) {
-    console.log(`[完成度历史同步] 回合${snapshot.round}的快照已存在，跳过重复记录`);
-    return;
-  }
-
-  // 更新服务器端的完成度历史记录
-  gameSession.gameData.progressHistory.push(snapshot);
-
-  // 限制历史记录数量，防止内存溢出（与前端保持一致，最多500条）
-  if (gameSession.gameData.progressHistory.length > 500) {
-    gameSession.gameData.progressHistory.shift();
-  }
-
-  // 更新当前回合数
-  if (currentRound !== undefined) {
-    gameSession.gameData.currentRound = currentRound;
-  }
-
-  console.log(`[完成度历史同步] 保存第${currentRound}回合快照，总计${gameSession.gameData.progressHistory.length}条`);
-}
-
-// 游戏结束（使用通用广播目标）
-function handleGameEnd(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 重要：先广播，再清理会话映射。
-  // 否则 removeGameSession 会清空 playerSessions，导致 GameSession.broadcast 由于映射校验而不发送给任何人。
+// 先广播，再清理会话映射。
+// 否则 removeGameSession 会清空 playerSessions，导致 GameSession.broadcast 由于映射校验而不发送给任何人。
+function broadcastEndPayload(target, payload) {
   try {
     if (target && target.players && typeof target.players.forEach === 'function') {
       const connectionSnapshot = [];
       target.players.forEach(p => {
         const conn = roomManager.getPlayerConnection(p.id);
-        connectionSnapshot.push({
-          playerId: p.id,
-          isAI: !!p.isAI,
-          wsOpen: !!(conn && conn.readyState === WebSocket.OPEN)
-        });
+        connectionSnapshot.push({ playerId: p.id, isAI: !!p.isAI, wsOpen: !!(conn && conn.readyState === WebSocket.OPEN) });
       });
-      console.log(`[gameEnd] broadcast snapshot:`, connectionSnapshot);
+      console.log(`[${payload.type}] broadcast snapshot:`, connectionSnapshot);
     }
   } catch (e) {
     // ignore
   }
+
+  const gameData = target && target.gameData ? target.gameData : {};
   target.broadcast({
+    ...payload,
+    gameStartTime: gameData.gameStartTime,
+    progressHistory: gameData.progressHistory,
+    currentRound: gameData.currentRound
+  });
+}
+
+// 结算后统一收尾：终止会话、清理掉线玩家、必要时销毁空房间
+function finalizeGameRoom(playerId, logLabel) {
+  const room = roomManager.getPlayerRoom(playerId);
+  if (!room || room.gameState !== 'playing') return;
+
+  console.log(`房间 ${room.code} ${logLabel}，状态改为 finished`);
+  room.gameState = 'finished';
+
+  if (room.gameSessionId) {
+    roomManager.removeGameSession(room.gameSessionId);
+    room.gameSessionId = null;
+  }
+
+  try {
+    const offlinePlayerIds = [];
+    for (const [pid, p] of room.players) {
+      if (p && p.isConnected === false) offlinePlayerIds.push(pid);
+    }
+
+    if (offlinePlayerIds.length > 0) {
+      console.log(`房间 ${room.code} ${logLabel}后清理已掉线玩家:`, offlinePlayerIds);
+      for (const offlineId of offlinePlayerIds) {
+        room.removePlayer(offlineId);
+        roomManager.playerRooms.delete(offlineId);
+      }
+      if (room.players.size > 0) {
+        room.broadcast({ type: 'roomUpdated', room: room.toJSON() });
+      }
+    }
+  } catch (e) {
+    console.error(`${logLabel}后清理离线玩家时出错:`, e);
+  }
+
+  if (room.players.size === 0) {
+    console.log(`房间 ${room.code} ${logLabel}后无玩家，加入清理队列`);
+    roomManager.scheduleRoomDestroy(room.code);
+  }
+
+  dailyStats.recordGameFinished();
+}
+
+// 游戏结束
+function handleGameEnd(ws, playerId, message) {
+  const target = requireBroadcastTarget(playerId);
+  broadcastEndPayload(target, {
     type: 'gameEnd',
     playerId,
     winnerPlayer: message.winnerPlayer,
     titleStats: message.titleStats || undefined,
-    gameStartTime: target && target.gameData ? target.gameData.gameStartTime : undefined,
-    progressHistory: target && target.gameData ? target.gameData.progressHistory : undefined,
-    currentRound: target && target.gameData ? target.gameData.currentRound : undefined,
     timestamp: message.timestamp
   });
-
-  // 获取房间并将状态改为已结算
-  const room = roomManager.getPlayerRoom(playerId);
-  if (room && room.gameState === 'playing') {
-    console.log(`房间 ${room.code} 游戏正常结束，状态改为 finished`);
-    room.gameState = 'finished';
-
-    // 删除游戏会话
-    if (room.gameSessionId) {
-      roomManager.removeGameSession(room.gameSessionId);
-      room.gameSessionId = null;
-    }
-
-    // 清理已掉线玩家，避免游戏结束后留下僵尸玩家/僵尸房间
-    try {
-      const offlinePlayerIds = [];
-      for (const [pid, p] of room.players) {
-        if (p && p.isConnected === false) {
-          offlinePlayerIds.push(pid);
-        }
-      }
-
-      if (offlinePlayerIds.length > 0) {
-        console.log(`房间 ${room.code} 游戏结束后清理已掉线玩家:`, offlinePlayerIds);
-        for (const offlineId of offlinePlayerIds) {
-          room.removePlayer(offlineId);
-          roomManager.playerRooms.delete(offlineId);
-        }
-
-        // 广播一次最新房间状态（仍在线的玩家需要看到头像/人数更新）
-        if (room.players.size > 0) {
-          room.broadcast({ type: 'roomUpdated', room: room.toJSON() });
-        }
-      }
-    } catch (e) {
-      console.error('游戏结束后清理离线玩家时出错:', e);
-    }
-
-    // 如果房间已空（所有玩家已离线），立即进入清理队列
-    if (room.players.size === 0) {
-      console.log(`房间 ${room.code} 游戏结束且无玩家，加入清理队列`);
-      roomManager.scheduleRoomDestroy(room.code);
-    }
-
-    // 每日统计：记录游戏完成
-    dailyStats.recordGameFinished();
-  }
+  finalizeGameRoom(playerId, '游戏结束');
 }
 
-// 强制结算（使用通用广播目标）
+// 强制结算
 function handleForceSettlement(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 重要：先广播，再清理会话映射。
-  // 否则 removeGameSession 会清空 playerSessions，导致 GameSession.broadcast 由于映射校验而不发送给任何人。
-  try {
-    if (target && target.players && typeof target.players.forEach === 'function') {
-      const connectionSnapshot = [];
-      target.players.forEach(p => {
-        const conn = roomManager.getPlayerConnection(p.id);
-        connectionSnapshot.push({
-          playerId: p.id,
-          isAI: !!p.isAI,
-          wsOpen: !!(conn && conn.readyState === WebSocket.OPEN)
-        });
-      });
-      console.log(`[forceSettlement] broadcast snapshot:`, connectionSnapshot);
-    }
-  } catch (e) {
-    // ignore
-  }
-  target.broadcast({
+  const target = requireBroadcastTarget(playerId);
+  broadcastEndPayload(target, {
     type: 'forceSettlement',
     playerId,
     rankings: message.rankings,
     titleStats: message.titleStats || undefined,
-    gameStartTime: target && target.gameData ? target.gameData.gameStartTime : undefined,
-    progressHistory: target && target.gameData ? target.gameData.progressHistory : undefined,
-    currentRound: target && target.gameData ? target.gameData.currentRound : undefined,
     timestamp: message.timestamp
   });
+  finalizeGameRoom(playerId, '被房主强制结算');
+}
 
-  // 获取房间并将状态改为已结算
-  const room = roomManager.getPlayerRoom(playerId);
-  if (room && room.gameState === 'playing') {
-    console.log(`房间 ${room.code} 被房主强制结算，状态改为 finished`);
-    room.gameState = 'finished';
+/**
+ * 房主变更只留档、不广播：各端收到 hostChanged 后会自己渲染一条本地提示，
+ * 这里再播一遍就重复了；但那份提示是客户端本地生成的，刷新即丢，所以补一条历史。
+ */
+function recordHostChange(gameSession, newHost) {
+  if (!gameSession || !newHost) return;
+  gameSession.recordChat({
+    type: 'chatMessage',
+    message: `${newHost.nickname} 成为了新房主`,
+    playerNumber: null,
+    playerName: null,
+    isSystemMessage: true,
+    timestamp: Date.now()
+  });
+}
 
-    // 删除游戏会话
-    if (room.gameSessionId) {
-      roomManager.removeGameSession(room.gameSessionId);
-      room.gameSessionId = null;
-    }
+/**
+ * 系统提示（退出/回来了/首发权转移…）：广播的同时在会话或房间的聊天历史里留一份。
+ * 原来只广播不留档，刷新后这些行就没了（右侧面板里只剩玩家聊天）。
+ */
+function broadcastSystemChat(target, messageText, excludePlayerId = null) {
+  const payload = {
+    type: 'chatMessage',
+    message: messageText,
+    playerNumber: null,
+    playerName: null,
+    isSystemMessage: true,
+    timestamp: Date.now()
+  };
+  if (target instanceof GameSession) target.recordChat(payload);
+  else if (target instanceof Room) target.appendRoomChatMessage(payload);
+  target.broadcast(payload, excludePlayerId);
+}
 
-    // 清理已掉线玩家，避免强制结算后留下僵尸玩家/僵尸房间
-    try {
-      const offlinePlayerIds = [];
-      for (const [pid, p] of room.players) {
-        if (p && p.isConnected === false) {
-          offlinePlayerIds.push(pid);
-        }
-      }
-
-      if (offlinePlayerIds.length > 0) {
-        console.log(`房间 ${room.code} 强制结算后清理已掉线玩家:`, offlinePlayerIds);
-        for (const offlineId of offlinePlayerIds) {
-          room.removePlayer(offlineId);
-          roomManager.playerRooms.delete(offlineId);
-        }
-
-        if (room.players.size > 0) {
-          room.broadcast({ type: 'roomUpdated', room: room.toJSON() });
-        }
-      }
-    } catch (e) {
-      console.error('强制结算后清理离线玩家时出错:', e);
-    }
-
-    // 如果房间已空（所有玩家已离线），立即进入清理队列
-    if (room.players.size === 0) {
-      console.log(`房间 ${room.code} 强制结算后无玩家，加入清理队列`);
-      roomManager.scheduleRoomDestroy(room.code);
-    }
-
-    // 每日统计：记录游戏完成
-    dailyStats.recordGameFinished();
-  }
+// 观战者没填昵称时拿 playerId 兜底，前缀换成中文，面板里不至于露出一串英文 ID
+function spectatorDisplayName(playerId) {
+  return String(playerId).replace(/^player_/, '玩家_');
 }
 
 // 处理聊天消息
 function handleChatMessage(ws, playerId, message) {
-  const target = getBroadcastTarget(playerId);
-  if (!target) throw new Error('玩家不在任何房间或游戏会话中');
-
-  // 获取玩家信息
-  const player = target.players.get(playerId);
-  if (!player) throw new Error('找不到玩家信息');
-
-  const rawMessage = message?.data?.message ?? message?.message ?? '';
+  const rawMessage = message?.message ?? '';
   const sanitizedMessage = sanitizeText(rawMessage);
   if (!String(sanitizedMessage).trim()) {
     return;
   }
+
+  // 观战者不在 playerRooms / playerSessions 里，只能借观战映射定位房间；
+  // 广播与留档沿用房间/会话既有通道，观战席位已在两者的 broadcast 投递范围内
+  const spectatingRoomCode = roomManager.playerSpectatingRooms.get(playerId);
+  if (spectatingRoomCode) {
+    const room = roomManager.getRoom(spectatingRoomCode);
+    if (!room) throw new Error('观战房间不存在');
+    const gameSession = room.gameSessionId ? roomManager.getGameSession(room.gameSessionId) : null;
+    const chatPayload = {
+      type: 'chatMessage',
+      playerId,
+      playerNumber: null,
+      playerName: room.spectatorNames.get(playerId) || spectatorDisplayName(playerId),
+      message: sanitizedMessage,
+      isSpectatorMessage: true,
+      timestamp: message?.timestamp || Date.now()
+    };
+    if (gameSession) gameSession.recordChat(chatPayload);
+    else room.appendRoomChatMessage({ ...chatPayload, isSystemMessage: false });
+    (gameSession || room).broadcast(chatPayload);
+    return;
+  }
+
+  const target = requireBroadcastTarget(playerId);
+
+  // 获取玩家信息
+  const player = target.players.get(playerId);
+  if (!player) throw new Error('找不到玩家信息');
 
   const chatPayload = {
     type: 'chatMessage',
@@ -4439,7 +3037,7 @@ function handleChatMessage(ws, playerId, message) {
     playerNumber: player.color, // 统一用color（1-4）
     playerName: sanitizeText(player.nickname),
     message: sanitizedMessage,
-    timestamp: message?.data?.timestamp || message?.timestamp || Date.now()
+    timestamp: message?.timestamp || Date.now()
   };
 
   // 在房间阶段写入房间聊天历史（保留最近50条）
@@ -4452,6 +3050,9 @@ function handleChatMessage(ws, playerId, message) {
       timestamp: chatPayload.timestamp,
       isSystemMessage: false
     });
+  } else if (target instanceof GameSession) {
+    // 对局内聊天同样留一份，刷新/重连后可回放
+    target.recordChat(chatPayload);
   }
 
   // 广播聊天消息
@@ -4800,8 +3401,15 @@ function cleanupOrphanedResources() {
         emptyRoomsToClean.push(roomCode);
         console.log(`  发现无人类玩家的僵尸房间 (${room.gameState}): ${roomCode}`);
       } else {
-        // 如果是游戏中，但空置时间超过了 6 分钟（5分钟正常定时器+1分钟宽限），作为兜底清理
-        if (room.emptyRoomStartTime && (NOW - room.emptyRoomStartTime > 6 * 60 * 1000)) {
+        // 游戏中房间先靠延迟销毁定时器，这里兜底定时器丢失：以「全员离线自动暂停的时刻」
+        // 为起点，超过销毁窗口还没走掉就强制清理（定时器跑过会把自己从表里摘掉，不能只看它）
+        const session = roomManager.getGameSession(room.gameSessionId);
+        const pausedAt = session?.gameData?.pausedAt || 0;
+        const destroyEntry = roomManager.roomDestroyTimers.get(roomCode);
+        const deadline = ROOM_LIFECYCLE.EMPTY_ROOM_DESTROY_MS + 60 * 1000;
+        const overdueByTimer = destroyEntry?.startedAt && NOW - destroyEntry.startedAt > deadline;
+        const overdueByPause = pausedAt && NOW - pausedAt > deadline;
+        if (overdueByTimer || overdueByPause) {
           emptyRoomsToClean.push(roomCode);
           console.log(`  发现空置超时的僵尸游戏房间 (${room.gameState}): ${roomCode}`);
         }
@@ -4820,24 +3428,7 @@ function cleanupOrphanedResources() {
     const room = roomManager.rooms.get(roomCode);
     if (!room) continue;
 
-    // 清理房间销毁定时器
-    if (roomManager.roomDestroyTimers.has(roomCode)) {
-      clearTimeout(roomManager.roomDestroyTimers.get(roomCode));
-      roomManager.roomDestroyTimers.delete(roomCode);
-    }
-
-    // 删除游戏会话（如果还存在）
-    if (room.gameSessionId) {
-      roomManager.removeGameSession(room.gameSessionId);
-    }
-
-    // 清理玩家映射（虽然玩家已经为0，但确保清理干净）
-    room.players.forEach(player => {
-      roomManager.playerRooms.delete(player.id);
-    });
-
-    // 删除房间
-    roomManager.rooms.delete(roomCode);
+    roomManager.immediateDestroyRoom(roomCode);
     cleanedRooms++;
   }
 
@@ -4850,58 +3441,9 @@ function cleanupOrphanedResources() {
   };
 }
 
-// 棋盘状态同步请求：转发给另一个在线玩家
-function handleBoardSyncRequest(ws, playerId, message) {
-  const gameSession = roomManager.getPlayerGameSession(playerId);
-  if (!gameSession) {
-    ws.send(JSON.stringify({ type: 'error', message: '游戏会话不存在' }));
-    return;
-  }
-
-  // 找一个其他在线真实玩家作为参考
-  for (const [id, p] of gameSession.players) {
-    if (id !== playerId && !p.isAI && p.isConnected) {
-      const pws = roomManager.getPlayerConnection(id);
-      if (pws && pws.readyState === WebSocket.OPEN) {
-        pws.send(JSON.stringify({
-          type: 'boardSyncRequest',
-          targetPlayerId: playerId,
-          timestamp: Date.now()
-        }));
-        console.log(`[棋盘同步] 请求玩家${id}发送棋盘状态给${playerId}`);
-        return;
-      }
-    }
-  }
-
-  // 没有其他玩家，通知重连者跳过
-  ws.send(JSON.stringify({
-    type: 'boardSyncData',
-    playerChess: null,
-    noOtherPlayer: true,
-    timestamp: Date.now()
-  }));
-}
-
-// 棋盘状态同步响应：转发给目标玩家
-function handleBoardSyncData(ws, playerId, message) {
-  const targetPlayerId = message.targetPlayerId;
-  const targetWs = roomManager.getPlayerConnection(targetPlayerId);
-  if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-    targetWs.send(JSON.stringify({
-      type: 'boardSyncData',
-      playerChess: message.playerChess,
-      noOtherPlayer: false,
-      timestamp: Date.now()
-    }));
-    console.log(`[棋盘同步] 转发玩家${playerId}的棋盘状态给${targetPlayerId}`);
-  } else {
-    console.warn(`[棋盘同步] 无法转发给${targetPlayerId}：连接状态=${targetWs ? targetWs.readyState : 'null'}`);
-  }
-}
-
 // -------------------------- 静态文件服务 --------------------------
-app.use(express.static('.'));
+app.use(express.static(path.resolve(__dirname, '../frontend')));
+app.use('/shared', express.static(path.resolve(__dirname, '../shared')));
 
 // -------------------------- 定时清理任务 --------------------------
 /**
@@ -4936,4 +3478,7 @@ server.listen(PORT, () => {
 
   // 启动自动清理任务
   startAutoCleanup();
+
+  // 启动回合看门狗，兜底被浏览器节流而停摆的对局
+  startTurnWatchdog();
 });

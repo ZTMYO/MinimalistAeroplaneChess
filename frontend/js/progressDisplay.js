@@ -1,6 +1,3 @@
-/**
- * 完成进度显示模块 - 负责计算和显示玩家的游戏完成进度
- */
 class ProgressDisplay {
     constructor() {
         this.progressPanel = null;
@@ -185,23 +182,6 @@ class ProgressDisplay {
         });
     }
 
-    // 获取玩家排名
-    getPlayerRanking(gameState) {
-        const progressData = [];
-        
-        for (let player = 1; player <= 4; player++) {
-            const progress = this.calculatePlayerProgress(player, gameState);
-            progressData.push({
-                player: player,
-                progress: progress
-            });
-        }
-
-        // 按进度排序
-        progressData.sort((a, b) => b.progress - a.progress);
-        
-        return progressData;
-    }
 
     // 检查是否有玩家获胜（进度达到100%）
     checkWinner(gameState) {

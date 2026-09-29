@@ -1,4 +1,3 @@
-// 击败次数显示模块
 class DefeatCountDisplay {
     constructor() {
         this.defeatCountElements = {};
@@ -59,16 +58,6 @@ class DefeatCountDisplay {
         }
     }
 
-    // 更新所有击败次数显示
-    updateAllDefeatCounts(defeatCounts) {
-        for (let player = 1; player <= 4; player++) {
-            for (let opponent = 1; opponent <= 4; opponent++) {
-                if (player !== opponent && defeatCounts[player] && defeatCounts[player][opponent] !== undefined) {
-                    this.updateDefeatCount(player, opponent, defeatCounts[player][opponent]);
-                }
-            }
-        }
-    }
 
     // 重置所有击败次数显示
     resetAllDefeatCounts() {

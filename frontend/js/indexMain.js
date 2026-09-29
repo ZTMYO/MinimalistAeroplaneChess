@@ -321,10 +321,73 @@ class PlayerSetup {
         const container = document.getElementById('localHumanColorOptions');
         if (!container || !this.localMultiplayerConfig) return;
         const selected = this.localMultiplayerConfig.humanColors || new Set();
+        const canRemoveHuman = selected.size > 2;
+        const playersById = new Map((this.localMultiplayerConfig.players || []).map(p => [p.id, p]));
+
         container.querySelectorAll('.color-option').forEach(opt => {
             const color = parseInt(opt.dataset.player);
-            opt.classList.toggle('selected', selected.has(color));
+            const player = playersById.get(color);
+            const isAI = !!(player && player.isAI === true);
+            const isHuman = selected.has(color);
+
+            opt.classList.toggle('selected', isHuman || isAI);
+
+            const circle = opt.querySelector('.color-circle');
+            if (!circle) return;
+
+            const existingEmoji = circle.querySelector('.multiplayer-emoji');
+            const existingBadge = circle.querySelector('.kick-player-btn');
+
+            if (!isHuman && !isAI) {
+                if (existingEmoji) existingEmoji.remove();
+                if (existingBadge) existingBadge.remove();
+                return;
+            }
+
+            const svgMarkup = isAI ? this.getEmojiSvg('bot') : this.getHumanEmojiSvg(color, player);
+            if (svgMarkup) {
+                if (existingEmoji) {
+                    existingEmoji.innerHTML = svgMarkup;
+                } else {
+                    const emojiEl = document.createElement('div');
+                    emojiEl.className = 'multiplayer-emoji';
+                    emojiEl.innerHTML = svgMarkup;
+                    circle.appendChild(emojiEl);
+                }
+            }
+
+            // AI 座位随时可移除；真人座位需保留至少 2 人，不足时不渲染无效按钮
+            if (existingBadge) existingBadge.remove();
+            if (isAI || canRemoveHuman) {
+                const badge = this.createRemoveSeatBadge(isAI ? '移除AI玩家' : '移除该玩家');
+                badge.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (isAI) this.removeLocalBot(color);
+                    else this.toggleLocalHumanColor(color);
+                });
+                circle.appendChild(badge);
+            }
         });
+    }
+
+    getEmojiSvg(key) {
+        const emoji = this.emojis && this.emojis[key];
+        return emoji ? emoji.svg : '';
+    }
+
+    getHumanEmojiSvg(color, player) {
+        const storedIndex = this.playerEmojiIndices ? this.playerEmojiIndices[color] : null;
+        const emojiIndex = storedIndex != null ? storedIndex : (player ? player.emojiIndex : 0);
+        const item = this.emojiList && this.emojiList[emojiIndex || 0];
+        return item ? item.svg : this.getEmojiSvg(defaultEmoji);
+    }
+
+    createRemoveSeatBadge(title = '移除该玩家') {
+        const badge = document.createElement('div');
+        badge.className = 'kick-player-btn';
+        badge.title = title;
+        badge.innerHTML = '<svg t="1777870303975" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5679" width="30" height="30"><path d="M85.333333 512a64 64 0 0 1 64-64h725.333334a64 64 0 0 1 0 128h-725.333334A64 64 0 0 1 85.333333 512z" fill="currentColor" p-id="5680"></path></svg>';
+        return badge;
     }
 
     toggleLocalHumanColor(color) {
@@ -454,21 +517,6 @@ class PlayerSetup {
         player.aiEmojiKey = 'bot';
     }
 
-    // 把本地AI的表情渲染到玩家设置行（emojiPreview/emojiName）
-    applyLocalAIEmojiToPlayerSetupItem(container, player) {
-        if (!container || !player || player.isAI !== true) return;
-
-        const emojiPreview = container.querySelector(`#emojiPreview${player.id}`);
-        const emojiName = container.querySelector(`#emojiName${player.id}`);
-        const key = player.aiEmojiKey || 'bot';
-
-        if (emojiPreview && this.emojis && this.emojis[key]) {
-            emojiPreview.innerHTML = this.emojis[key].svg;
-        }
-        if (emojiName) {
-            emojiName.textContent = this.emojiNames[key] || key;
-        }
-    }
 
     // 生成玩家设置组件
     generatePlayersSetup(playerCount) {
@@ -634,6 +682,8 @@ class PlayerSetup {
                 container.appendChild(addOption);
             }
         });
+
+        this.updateLocalHumanColorSelectionUI();
     }
 
     addLocalBot(playerNum) {
@@ -786,6 +836,8 @@ class PlayerSetup {
                 if (playerData) {
                     playerData.emojiIndex = this.playerEmojiIndices[playerIndex];
                 }
+
+                this.updateLocalHumanColorSelectionUI();
             }
         };
 
@@ -1610,7 +1662,8 @@ class PlayerSetup {
             activeBots: Array.from(this.activeBots),
             botDifficulties: Object.fromEntries(this.botDifficulties),
             username: username,
-            skillMode: skillMode
+            skillMode: skillMode,
+            happyMode: happyMode
         };
         sessionStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
 
@@ -1696,7 +1749,8 @@ class PlayerSetup {
                 }
                 return result;
             })(),
-            skillMode: skillMode
+            skillMode: skillMode,
+            happyMode: happyMode
         };
         sessionStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
 

@@ -1,7 +1,3 @@
-/**
- * 称号管理器 - 负责计算和分配玩家结算称号
- * 称号优先级：概率称号 > 唯一称号 > 默认称号
- */
 import { activePlayerManager } from './activePlayerManager.js';
 
 class TitleManager {

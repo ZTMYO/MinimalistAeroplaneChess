@@ -1,25 +1,10 @@
-/**
- * 积分管理器 - 处理道具模式下的积分系统
- * 仅在联机模式且启用道具模式时生效
- */
-
 import { gameState } from './gameState.js';
+import { ENERGY_MAX } from '../../shared/engine.mjs';
 
 class EnergyManager {
     constructor() {
         this.skillModeEnabled = false;
-        this.maxEnergy = 100;
-
-        // 新的积分配置
-        this.baseEnergy = 15;           // 基础保底积分
-        this.progressCoefficient = 0.85; // 完成度系数
-
-        // 根据棋子数量的倍率
-        this.pieceCountMultipliers = {
-            2: 1.35,  // 2子模式：1.35倍
-            3: 1.15,  // 3子模式：1.15倍
-            4: 1.0    // 4子模式：1.0倍（基准）
-        };
+        this.maxEnergy = ENERGY_MAX;
 
         this.playerEnergy = {
             1: 0,
@@ -34,15 +19,9 @@ class EnergyManager {
      * 初始化积分系统
      */
     init() {
-        // 检查是否启用道具模式
+        // 检查是否启用道具模式（本地模式读开局配置，联机由服务端下发）
         try {
-            const gameConfigStr = sessionStorage.getItem('gameConfig');
-            if (gameConfigStr) {
-                const gameConfig = JSON.parse(gameConfigStr);
-                this.skillModeEnabled = gameConfig.skillMode === true;
-            } else {
-                this.skillModeEnabled = false;
-            }
+            this.skillModeEnabled = gameState.isSkillModeEnabled();
         } catch (error) {
             console.error('[积分系统] 初始化失败:', error);
             this.skillModeEnabled = false;
@@ -84,34 +63,6 @@ class EnergyManager {
         this.energyDisplay = energyDisplay;
     }
 
-    /**
-     * 计算从击败中获得的积分
-     * 基于被击败玩家损失的完成度百分比
-     * @param {number} targetPlayer - 被击败的玩家编号
-     * @param {number} progressBefore - 击败前的完成度
-     * @param {number} progressAfter - 击败后的完成度
-     * @returns {number} 获得的积分值
-     */
-    calculateEnergyGain(targetPlayer, progressBefore, progressAfter) {
-        if (!this.skillModeEnabled) {
-            return 0;
-        }
-
-        // 计算损失的完成度百分比
-        const progressLoss = progressBefore - progressAfter;
-
-        if (progressLoss <= 0) {
-            console.warn('完成度损失为0或负数，不获得积分');
-            return 0;
-        }
-
-        // 积分转换公式：损失1%完成度 = 1积分
-        const energyGain = progressLoss * this.energyCoefficient;
-
-        console.log(`积分计算: 玩家${targetPlayer} 损失${progressLoss.toFixed(2)}%完成度 -> 获得${energyGain.toFixed(2)}积分`);
-
-        return Math.round(energyGain * 100) / 100; // 保留两位小数
-    }
 
     /**
      * 增加玩家积分
@@ -122,7 +73,7 @@ class EnergyManager {
      * @param {number} targetChessIndex - 被击败的棋子索引（可选）
      * @param {number} delay - 粒子动画延迟（可选）
      */
-    addEnergy(player, amount, source = 'mysteryBox', targetPlayer = null, targetChessIndex = null, delay = 0) {
+    addEnergy(player, amount, source = 'mysteryBox', targetPlayer = null, targetChessIndex = null, delay = 0, skipLineSync = false) {
         if (!this.skillModeEnabled) {
             return;
         }
@@ -136,14 +87,12 @@ class EnergyManager {
             window.gameInstance.gameState.totalEnergyGained[player] += actualAdded;
         }
 
-        console.log(`玩家${player}积分增加: ${oldEnergy.toFixed(1)} -> ${this.playerEnergy[player].toFixed(1)} (+${amount.toFixed(1)}, 实际+${actualAdded.toFixed(1)})`);
-
         // 网络回放模式：不添加消息
         const isReplayMode = window.gameInstance && window.gameInstance.chessPiece && window.gameInstance.chessPiece._isNetworkReplayMode;
         
-        // 发送积分获取的gameInfo消息
+        // 发送积分获取的gameInfo消息（skipLineSync：这条各端都能从事件流自己算出，不必再中转一次）
         if (window.gameInfo && !isReplayMode) {
-            window.gameInfo.addEnergyGain(player, Math.round(amount), false, source, targetPlayer, targetChessIndex);
+            window.gameInfo.addEnergyGain(player, Math.round(amount), skipLineSync, source, targetPlayer, targetChessIndex);
         }
 
         // 更新UI显示
@@ -203,49 +152,25 @@ class EnergyManager {
             }
         }
 
-        // 在线模式下同步到其他客户端
-        this.syncEnergyChange(player, this.playerEnergy[player], amount, source, targetPlayer, targetChessIndex);
-
         // 更新道具可用性
         this.updateSkillAvailability();
     }
 
-    /**
-     * 从击败操作中增加积分（新公式）
-     * @param {number} player - 玩家编号
-     * @param {number} progressLoss - 对手损失的完成度百分比 (0-100)
-     * @param {number} targetPlayer - 被击败的玩家
-     * @param {number} targetChessIndex - 被击败的棋子索引
-     * @param {number} delay - 粒子动画延迟
-     */
-    addEnergyFromBeat(player, progressLoss, targetPlayer = null, targetChessIndex = null, delay = 0) {
-        if (!this.skillModeEnabled) {
-            return;
-        }
-
-        // 获取当前棋子数量
-        const pieceCount = gameState.pieceCount || 4;
-        const multiplier = this.pieceCountMultipliers[pieceCount] || 1.0;
-
-        // 新公式：(基础积分 + 完成度加成) × 棋子数量系数
-        const baseReward = this.baseEnergy;
-        const progressBonus = progressLoss * this.progressCoefficient;
-        const rawEnergy = (baseReward + progressBonus) * multiplier;
-
-        // 确保积分获得不超过上限
-        const energyGain = Math.min(rawEnergy, this.maxEnergy);
-
-        // 调用基础方法增加积分，设置来源为 'kill'
-        this.addEnergy(player, energyGain, 'kill', targetPlayer, targetChessIndex, delay);
+    /** 只写一行积分战报：实时与静默回放共用，数值由引擎随事件给出 */
+    addEnergyLine(player, amount, source, targetPlayer = null, targetChessIndex = null) {
+        if (!this.skillModeEnabled) return;
+        window.gameInfo?.addEnergyGain(player, Math.round(amount), true, source, targetPlayer, targetChessIndex);
     }
 
-    /**
-     * 欢乐模式碰撞奖励积分
-     */
-    addBonusEnergy(player, amount, targetPlayer = null, targetChessIndex = null) {
-        if (!this.skillModeEnabled) return;
-        // 从碰撞的棋子位置发射粒子
-        this.addEnergy(player, amount, 'happy_bonus', targetPlayer, targetChessIndex, 0);
+    /** 按权威快照对齐积分：联机下这是唯一入口，本地不再自己记账也不再上报 */
+    applySnapshot(energy) {
+        if (!this.skillModeEnabled || !energy) return;
+        for (const [player, value] of Object.entries(energy)) {
+            const num = Number(player);
+            if (num >= 1 && num <= 4 && Number.isFinite(value)) {
+                this.setEnergy(num, value);
+            }
+        }
     }
 
     /**
@@ -291,105 +216,12 @@ class EnergyManager {
     }
 
     /**
-     * 消耗积分（使用道具时）
-     * @param {number} player - 玩家编号
-     * @param {number} amount - 消耗的积分值
-     * @returns {boolean} 是否成功消耗
-     */
-    consumeEnergy(player, amount) {
-        if (!this.skillModeEnabled) {
-            return false;
-        }
-
-        if (this.playerEnergy[player] < amount) {
-            console.warn(`玩家${player}积分不足: ${this.playerEnergy[player]} < ${amount}`);
-            return false;
-        }
-
-        this.playerEnergy[player] -= amount;
-        console.log(`玩家${player}消耗积分: ${amount}, 剩余: ${this.playerEnergy[player]}`);
-
-        // 更新UI显示
-        if (this.energyDisplay) {
-            this.energyDisplay.updateEnergyBar(player, this.playerEnergy[player]);
-        }
-
-        // 同步到其他客户端
-        this.syncEnergyChange(player, this.playerEnergy[player], -amount);
-
-        // 更新道具可用性
-        this.updateSkillAvailability();
-
-        return true;
-    }
-
-    /**
      * 重置所有玩家积分
      */
     resetAllEnergy() {
         for (let player = 1; player <= 4; player++) {
             this.playerEnergy[player] = 0;
         }
-    }
-
-    /**
-     * 重置单个玩家积分
-     * @param {number} player - 玩家编号
-     */
-    resetEnergy(player) {
-        this.playerEnergy[player] = 0;
-        if (this.energyDisplay) {
-            this.energyDisplay.updateEnergyBar(player, 0);
-        }
-    }
-
-    /**
-     * 同步积分变化到其他客户端
-     * @param {number} player - 玩家编号
-     * @param {number} energy - 当前积分值
-     * @param {number} change - 变化量
-     * @param {string} source - 积分来源
-     * @param {number} targetPlayer - 目标玩家
-     * @param {number} targetChessIndex - 目标棋子
-     */
-    syncEnergyChange(player, energy, change = 0, source = null, targetPlayer = null, targetChessIndex = null) {
-        if (!this.skillModeEnabled) {
-            return;
-        }
-
-        // 只在在线多人模式下同步到其他客户端
-        // 本地多人和人机模式不需要网络同步
-        if (window.gameInstance && window.gameInstance.multiplayerGameManager &&
-            window.gameInstance.multiplayerGameManager.isOnlineMode) {
-
-            window.gameInstance.multiplayerGameManager.syncEnergyChange(player, energy, change, source, targetPlayer, targetChessIndex);
-        }
-    }
-
-    /**
-     * 获取所有玩家的积分状态（用于断线重连）
-     */
-    getAllEnergyStates() {
-        return { ...this.playerEnergy };
-    }
-
-    /**
-     * 恢复所有玩家的积分状态（用于断线重连）
-     * @param {Object} energyStates - 积分状态对象
-     */
-    restoreAllEnergyStates(energyStates) {
-        if (!energyStates) {
-            return;
-        }
-
-        for (const [player, energy] of Object.entries(energyStates)) {
-            const playerNum = parseInt(player);
-            if (playerNum >= 1 && playerNum <= 4) {
-                this.setEnergy(playerNum, energy);
-            }
-        }
-
-        console.log('积分状态已恢复:', energyStates);
     }
 
     /**

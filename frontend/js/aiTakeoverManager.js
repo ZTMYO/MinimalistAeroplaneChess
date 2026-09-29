@@ -2,12 +2,23 @@ import { gameState } from './gameState.js';
 import { playerNameManager } from './playerNameManager.js';
 import { eventHandler } from './eventHandler.js';
 import { botController } from './botController.js';
-import { updatePageTitle } from './gameMain.js';
 import { skillManager } from './skillManager.js';
-/**
- * AI托管管理器
- * 负责管理AI托管状态、玩家昵称的临时修改等功能
- */
+
+// 不能借 gameMain 的同名函数：它是页面入口，会把「启动一整局」的副作用也带进来
+function updatePageTitle() {
+    const configStr = sessionStorage.getItem('gameConfig');
+    const instance = window.gameInstance;
+    if (configStr && instance) {
+        try {
+            instance.updatePageTitle(JSON.parse(configStr));
+            return;
+        } catch (error) {
+            console.error('更新页面标题失败:', error);
+        }
+    }
+    document.title = '极简飞行棋';
+}
+
 class AITakeoverManager {
     constructor() {
         this.isActive = false;
@@ -199,6 +210,12 @@ class AITakeoverManager {
             if (isMyTurn) {
                 console.log('[AI托管] 主动关闭托管：在自己回合恢复本地交互');
                 this.enableUserInteraction();
+                // 托管期间这台机器是按「代打」画的：本地投掷锁可能还压着、进度条停着，
+                // 只重画 UI 解不开，得按服务端那扇思考窗口续上（暂停再继续之所以能救回来就是这个原因）
+                if (gameState) {
+                    gameState.isRolling = false;
+                }
+                window.uiUpdater?.resumeThinkingProgressBar?.();
                 if (window.uiUpdater) {
                     window.uiUpdater.updateUI();
                 }
@@ -211,10 +228,6 @@ class AITakeoverManager {
         // 简化逻辑：不重新启用用户交互，因为从未禁用过
     }
 
-    /**
-     * 处理来自服务器的托管状态变更（针对本地玩家自身）
-     * 仅更新本地UI和状态，不触发向服务器的同步，避免死循环
-     */
     /**
      * 更新右侧控制按钮的显示/隐藏状态
      */
@@ -233,6 +246,10 @@ class AITakeoverManager {
         }
     }
 
+    /**
+     * 处理来自服务器的托管状态变更（针对本地玩家自身）
+     * 仅更新本地UI和状态，不触发向服务器的同步，避免死循环
+     */
     applyRemoteTakeoverState(isActive) {
         if (this.isActive === isActive) {
             return;
@@ -515,77 +532,25 @@ class AITakeoverManager {
         }
     }
 
-    /**
-     * 禁用用户交互（骰子和棋子点击）
-     */
-    disableUserInteraction() {
-        // 禁用骰子点击
-        const diceElement = document.getElementById('dice');
-        if (diceElement) {
-            diceElement.style.pointerEvents = 'none';
-            diceElement.style.opacity = '0.5';
-        }
-
-        // 禁用棋子点击
-        const chessElements = document.querySelectorAll('.chess');
-        chessElements.forEach(element => {
-            element.style.pointerEvents = 'none';
-            element.style.opacity = '0.7';
-        });
-
-        console.log('用户交互已禁用');
-    }
 
     /**
      * 启用用户交互（骰子和棋子点击）
      */
     enableUserInteraction() {
-        // 启用骰子点击
-        const diceElement = document.getElementById('dice');
+        // 骰子的可用性由 uiUpdater 按回合/托管状态决定（.disabled 会吃掉点击），这里只收回内联样式
+        const diceElement = document.getElementById('diceDisplay');
         if (diceElement) {
-            diceElement.style.pointerEvents = 'auto';
-            diceElement.style.opacity = '1';
+            diceElement.style.pointerEvents = '';
+            diceElement.style.opacity = '';
         }
 
-        // 启用棋子点击
-        const chessElements = document.querySelectorAll('.chess');
-        chessElements.forEach(element => {
-            element.style.pointerEvents = 'auto';
-            element.style.opacity = '1';
+        document.querySelectorAll('#board-svg use[href="#chess"]').forEach(element => {
+            element.style.pointerEvents = '';
+            element.style.opacity = '';
         });
-
-        console.log('用户交互已启用');
     }
 
-    /**
-     * 触发AI操作（如果当前是人类玩家的回合）
-     */
-    triggerAIOperationIfNeeded() {
-        console.log('AI托管：triggerAIOperationIfNeeded被调用', {
-            isActive: this.isActive,
-            botControllerEnabled: botController?.isEnabled,
-            isCurrentPlayerBot: botController?.isCurrentPlayerBot()
-        });
 
-        if (!this.isActive) {
-            console.log('AI托管：托管未激活，跳过操作');
-            return;
-        }
-
-        if (botController && botController.isCurrentPlayerBot()) {
-            console.log('AI托管：当前玩家需要AI操作，触发botController.handleBotTurn()');
-            setTimeout(() => {
-                botController.handleBotTurn();
-            }, 100);
-        }
-    }
-
-    /**
-     * 获取当前托管状态
-     */
-    getIsActive() {
-        return this.isActive;
-    }
 
     /**
      * 重置托管状态（游戏重置时调用）

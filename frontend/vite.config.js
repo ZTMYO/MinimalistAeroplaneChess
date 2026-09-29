@@ -1,4 +1,7 @@
 import { defineConfig } from 'vite'
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 export default defineConfig({
   build: {
@@ -14,6 +17,9 @@ export default defineConfig({
   appType: 'mpa',
   server: {
     ...this?.server,
+    fs: {
+      allow: [projectRoot]
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

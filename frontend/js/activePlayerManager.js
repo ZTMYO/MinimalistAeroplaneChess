@@ -1,7 +1,3 @@
-/**
- * 激活玩家管理器
- * 负责管理哪些玩家参与游戏，控制回合顺序
- */
 class ActivePlayerManager {
     constructor() {
         // 存储激活的玩家编号数组，默认所有玩家都激活
@@ -41,30 +37,7 @@ class ActivePlayerManager {
         return this.activePlayers.includes(playerNumber);
     }
 
-    /**
-     * 获取当前激活玩家
-     * @returns {number} 当前激活玩家编号
-     */
-    getCurrentActivePlayer() {
-        if (this.activePlayers.length === 0) {
-            return 1; // 默认返回玩家1
-        }
-        return this.activePlayers[this.currentActiveIndex];
-    }
 
-    /**
-     * 切换到下一个激活玩家
-     * @returns {number} 下一个激活玩家编号
-     */
-    getNextActivePlayer() {
-        if (this.activePlayers.length === 0) {
-            return 1; // 默认返回玩家1
-        }
-        
-        this.currentActiveIndex = (this.currentActiveIndex + 1) % this.activePlayers.length;
-        const nextPlayer = this.activePlayers[this.currentActiveIndex];
-        return nextPlayer;
-    }
 
     /**
      * 设置当前激活玩家
@@ -122,13 +95,6 @@ class ActivePlayerManager {
         }
     }
 
-    /**
-     * 获取激活玩家数量
-     * @returns {number} 激活玩家数量
-     */
-    getActivePlayerCount() {
-        return this.activePlayers.length;
-    }
 
     /**
      * 重置为默认状态（所有玩家激活）

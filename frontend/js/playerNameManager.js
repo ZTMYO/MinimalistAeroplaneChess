@@ -1,7 +1,3 @@
-/**
- * 玩家名称管理器
- * 负责存储和管理所有玩家的真实名称
- */
 class PlayerNameManager {
     constructor() {
         // 存储玩家名称的映射，键为玩家编号(1-4)，值为玩家名称
@@ -76,13 +72,6 @@ class PlayerNameManager {
         });
     }
 
-    /**
-     * 获取所有玩家名称
-     * @returns {Object} 包含所有玩家名称的对象
-     */
-    getAllPlayerNames() {
-        return { ...this.playerNames };
-    }
 
     /**
      * 重置所有玩家名称为默认值

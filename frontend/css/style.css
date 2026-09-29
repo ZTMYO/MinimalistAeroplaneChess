@@ -29,6 +29,11 @@
     --player-2-border: #e9b489;
     --player-3-border: #a3bfdc;
     --player-4-border: #dd9793;
+    /* 骰面上的玩家色 */
+    --player-1-dice: #35ae61;
+    --player-2-dice: #dd7022;
+    --player-3-dice: #4777c5;
+    --player-4-dice: #fc6666;
     /* 轨道颜色变量 - 深色线条 */
     --track-primary: #3d3530;
     --track-secondary: #5c534e;
@@ -1237,32 +1242,59 @@ body {
     text-shadow: 0 1px 2px rgba(255, 255, 255, 0.05);
 }
 
-/* 遥控骰子特效*/
+/* 遥控骰子特效（颜色见下方「覆盖玩家配色」）*/
 .dice-icon.remote-dice {
-    color: #5bd0d6 !important;
-    text-shadow: 0 2px 2px rgba(86, 86, 86, 0.5) !important;
     scale: 1.05;
 }
 
 /* 骰子已投掷状态 - 玩家颜色 */
 .dice-icon.rolled.player-1 {
-    color: #35ae61;
+    color: var(--player-1-dice);
     text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
 }
 
 .dice-icon.rolled.player-2 {
-    color: #dd7022;
+    color: var(--player-2-dice);
     text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
 }
 
 .dice-icon.rolled.player-3 {
-    color: #4777c5;
+    color: var(--player-3-dice);
     text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
 }
 
 .dice-icon.rolled.player-4 {
-    color: #fc6666;
+    color: var(--player-4-dice);
     text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
+}
+
+.dice-icon.rolled.remote-dice,
+.dice-icon.not-rolled.remote-dice {
+    color: #5bd0d6;
+    text-shadow: 0 2px 2px rgba(86, 86, 86, 0.5);
+}
+
+.dice-icon.not-rolled.dice-penalty-warning,
+.dice-icon.rolled.dice-penalty-warning,
+.dice-icon.not-rolled.dice-third-penalty,
+.dice-icon.rolled.dice-third-penalty,
+.dice-icon.dice-flashing.dice-penalty-warning,
+.dice-icon.dice-flashing.dice-third-penalty {
+    color: rgba(242, 47, 47, 0.95);
+    opacity: 1;
+    filter: none;
+}
+
+/* 待投掷：摇晃提示 */
+.dice-icon.not-rolled.dice-penalty-warning,
+.dice-icon.rolled.dice-penalty-warning {
+    animation: dicePenaltyTremble 0.9s ease-in-out infinite;
+}
+
+/* 投掷中：闪烁优先，红色保留 */
+.dice-icon.dice-flashing.dice-penalty-warning,
+.dice-icon.dice-flashing.dice-third-penalty {
+    animation: diceFlash 0.15s ease-in-out infinite;
 }
 
 /* 多面骰子显示样式 */
@@ -1333,25 +1365,29 @@ body {
     z-index: -1;
 }
 
-/* 多面骰子玩家颜色 */
+/* 多面骰子玩家颜色：与骰面同色同透明度（骰面被 disabled 压到 0.6，数字牌也照着来，两边看着才是一个色） */
 .polyhedral-dice-display.player-1-color {
-    color: var(--player-1-border);
-    border-color: var(--player-1-border);
+    color: var(--player-1-dice);
+    border-color: var(--player-1-dice);
+    opacity: 0.6;
 }
 
 .polyhedral-dice-display.player-2-color {
-    color: var(--player-2-border);
-    border-color: var(--player-2-border);
+    color: var(--player-2-dice);
+    border-color: var(--player-2-dice);
+    opacity: 0.6;
 }
 
 .polyhedral-dice-display.player-3-color {
-    color: var(--player-3-border);
-    border-color: var(--player-3-border);
+    color: var(--player-3-dice);
+    border-color: var(--player-3-dice);
+    opacity: 0.6;
 }
 
 .polyhedral-dice-display.player-4-color {
-    color: var(--player-4-border);
-    border-color: var(--player-4-border);
+    color: var(--player-4-dice);
+    border-color: var(--player-4-dice);
+    opacity: 0.6;
 }
 
 /* 传送门图标样式 */
@@ -1395,22 +1431,12 @@ body {
     animation: diceFlash 0.15s ease-in-out infinite;
 }
 
-.dice-penalty-warning {
-    color: rgba(242, 47, 47, 0.95) !important;
-    animation: dicePenaltyTremble 0.9s ease-in-out infinite;
-}
-
 .pulse-animation {
     animation: pulse 1s infinite;
 }
 
 .mysteryBox-glow-animation {
     animation: mysteryBoxGlow 0.5s ease-in-out 2;
-}
-
-/* 第三次连续 6 投掷过程中的纯红色骰子样式*/
-.dice-third-penalty {
-    color: rgba(242, 47, 47, 0.95) !important;
 }
 
 /* 加载提示样式 */
@@ -1551,15 +1577,18 @@ body {
 .emoji-panel-content {
     padding: 10px;
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    /* 列宽可收缩：纵向滚动条一出现，固定列就会顶出一根粗横条 */
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px;
     max-height: 180px;
     overflow-y: auto;
+    overflow-x: hidden;
 }
 
 /* 自定义滚动条 */
 .emoji-panel-content::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
 }
 
 .emoji-panel-content::-webkit-scrollbar-track {
@@ -1578,7 +1607,8 @@ body {
 
 /* Emoji项样式 */
 .emoji-item {
-    width: 36px;
+    width: auto;
+    min-width: 0;
     height: 36px;
     display: flex;
     align-items: center;
@@ -1650,9 +1680,14 @@ body {
     overflow: hidden;
     position: relative;
     border: 2px solid var(--current-player-color);
-    display: block;
+    /* 可见性只由 .active 决定，避免回合切换动画期间提前露出下一家的颜色 */
+    display: none;
     box-shadow: none;
     transform: translateY(-10px);
+}
+
+.thinking-progress-container.active {
+    display: block;
 }
 
 /* 思考时间进度条 */
@@ -1886,9 +1921,25 @@ body {
     transition: opacity 0.2s ease-out;
 }
 
-/* 传送门：源格子和目标格子高亮 */
-.teleport-grid-highlight {
-    color: var(--bg-light-1) !important;
+/* 传送门：源格与目标格的标记类（无样式，只用来把这两格排除在聚光的“清空”之外） */
+
+/* 传送门聚光：格子逐格清成「无填充」（形状是 fill="currentColor"，把 color 设成背景色即可），
+   每格的过渡延迟由 JS 递增给出，进出两道波纹；源格与目标格不带这个类，保持本色填充 */
+#board-svg.teleport-focus use[data-cpos] {
+    transition: color 0.18s ease;
+}
+
+#board-svg.teleport-focus use.teleport-void {
+    color: var(--bg-light-1);
+}
+
+/* 同期隐去环道上正在跑的其它棋子，只留被传送的那一颗 */
+#board-svg.teleport-focus use[href="#chess"].teleport-dimmed {
+    visibility: hidden;
+}
+
+#board-svg.teleport-focus use[href="#chess"].teleport-spotlight {
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.9));
 }
 
 .no-transition {
@@ -2164,6 +2215,12 @@ use[href="#checkmark"] {
     color: #8fb4c0;
     font-weight: bold;
     font-style: italic;
+}
+
+/* 观战者昵称样式：无座位配色，用灰色区分 */
+.spectator-text {
+    color: #8a8f98;
+    font-weight: bold;
 }
 
 /* 击败文字样式 */
@@ -3044,6 +3101,28 @@ use[href="#checkmark"] {
 .room-chat-toggle-icon {
     width: 18px;
     height: 18px;
+    transform-origin: center;
+}
+
+.room-chat-toggle:hover .room-chat-toggle-icon {
+    animation: room-chat-icon-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes room-chat-icon-pop {
+    0% {
+        transform: scale(1);
+    }
+
+    30% {
+        transform: scale(0.9);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.room-chat-toggle:active .room-chat-toggle-icon {
+    transform: scale(0.9);
 }
 
 .room-chat-unread-badge {
@@ -3225,16 +3304,19 @@ use[href="#checkmark"] {
 .room-chat-emoji-panel-content {
     padding: 6px;
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    /* 同游戏内表情面板：列宽可收缩 + 横向不外溢 */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 4px;
     max-height: 118px;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-width: thin;
     scrollbar-color: var(--border-soft) transparent;
 }
 
 .room-chat-emoji-panel-content::-webkit-scrollbar {
     width: 4px;
+    height: 4px;
 }
 
 .room-chat-emoji-panel-content::-webkit-scrollbar-track {
@@ -3248,7 +3330,8 @@ use[href="#checkmark"] {
 }
 
 .room-chat-emoji-item {
-    width: 26px;
+    width: auto;
+    min-width: 0;
     height: 26px;
     display: flex;
     align-items: center;
@@ -4096,7 +4179,6 @@ use[href="#checkmark"] {
     color: #2d241f;
     border: 2px solid var(--border-light);
     table-layout: fixed;
-    /* 固定布局，确保宽度可控 */
 }
 
 .dice-stats-table thead th {
@@ -4487,6 +4569,13 @@ use[href="#checkmark"] {
 .footer-copyright {
     opacity: 0.8;
 }
+
+.footer-version {
+    opacity: 0.55;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    user-select: all;
+}
 .qq-group-number{
     user-select: all;
 }
@@ -4649,12 +4738,11 @@ use[href="#checkmark"] {
 
 .privacy-toggle-btn:hover {
     font-weight: bold;
+    background: #e9c1df;
 }
-
 .privacy-toggle-btn.active {
     background: #e9c1df;
 }
-
 .room-code-display {
     display: flex;
     align-items: center;
@@ -4822,6 +4910,33 @@ use[href="#checkmark"] {
 
 .player-4-color {
     border-color: var(--player-4-color);
+}
+
+.color-option .player-1-color {
+    --seat-accent: var(--player-1-border);
+    --seat-fill: var(--player-1-fill);
+}
+
+.color-option .player-2-color {
+    --seat-accent: var(--player-2-border);
+    --seat-fill: var(--player-2-fill);
+}
+
+.color-option .player-3-color {
+    --seat-accent: var(--player-3-border);
+    --seat-fill: var(--player-3-fill);
+}
+
+.color-option .player-4-color {
+    --seat-accent: var(--player-4-border);
+    --seat-fill: var(--player-4-fill);
+}
+
+.color-option:not(.selected):hover .color-circle {
+    transform: translateY(-2px) scale(1.08);
+    background: var(--seat-fill);
+    border-color: var(--seat-accent);
+    box-shadow: 0 8px 16px -8px var(--seat-accent);
 }
 
 .color-option.selected .color-circle {
@@ -5089,6 +5204,15 @@ use[href="#checkmark"] {
     transition: all 0.3s ease;
     width: 100%;
     box-sizing: border-box;
+}
+
+.player-setup-row .username-input-group {
+    width: auto;
+    max-width: 160px;
+}
+
+.player-setup-row .username-input {
+    padding-right: 10px;
 }
 
 .form-input:focus {
@@ -5382,7 +5506,7 @@ use[href="#checkmark"] {
     background: transparent;
     border-radius: var(--radius-base);
     cursor: pointer;
-    transition: all 1s ease;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease;
     border: 1px solid transparent;
     min-height: 72px;
 }
@@ -5412,6 +5536,7 @@ use[href="#checkmark"] {
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
 }
 
 .black-icon {
@@ -5424,6 +5549,37 @@ use[href="#checkmark"] {
     color: transparent;
     font-size: 0.9rem;
     height: 1.2em;
+}
+
+.bot-add-option .player-1-color {
+    --bot-accent: var(--player-1-border);
+    --bot-fill: var(--player-1-fill);
+}
+
+.bot-add-option .player-2-color {
+    --bot-accent: var(--player-2-border);
+    --bot-fill: var(--player-2-fill);
+}
+
+.bot-add-option .player-3-color {
+    --bot-accent: var(--player-3-border);
+    --bot-fill: var(--player-3-fill);
+}
+
+.bot-add-option .player-4-color {
+    --bot-accent: var(--player-4-border);
+    --bot-fill: var(--player-4-fill);
+}
+
+.bot-add-option .color-circle:hover {
+    background: var(--bot-fill);
+    border-color: var(--bot-accent);
+    box-shadow: 0 8px 18px -8px var(--bot-accent);
+}
+
+.bot-add-option .color-circle:hover .add-icon {
+    color: var(--bot-accent);
+    transform: rotate(90deg);
 }
 
 /* 已添加的AI玩家样式 */
@@ -5613,6 +5769,13 @@ use[href="#checkmark"] {
     border: 2px solid rgba(247, 160, 153, 0.6);
 }
 
+.energy-item {
+    border: 2px solid rgba(244, 141, 137, 0.6);
+}
+
+.props-item {
+    border: 2px solid rgba(184, 120, 196, 0.6);
+}
 .finish-item {
     border: 2px solid rgba(166, 216, 183, 0.6);
 }
@@ -5667,6 +5830,14 @@ use[href="#checkmark"] {
 /* 终点子内容容器 */
 .finish-sub-item {
     background: rgba(166, 216, 183, 0.15);
+}
+
+.energy-sub-item {
+    background: rgba(244, 141, 137, 0.15);
+}
+
+.props-sub-item {
+    background: rgba(184, 120, 196, 0.15);
 }
 
 /* 撞机详情 */
@@ -6425,6 +6596,11 @@ use[href="#checkmark"] {
         padding: 0;
     }
 
+    .energy-gain-text {
+        height: 80px;
+        width: 100px;
+    }
+
     .thinking-progress-container {
         width: 160px;
     }
@@ -6764,11 +6940,11 @@ use[href="#checkmark"] {
         margin: 15px 0;
     }
 
+    /* 与 .dice-icon 同尺寸同外边距：两者在同一位置轮换，盒子不一致会让进度条上下跳 */
     .energy-gain-text {
         height: 75px;
         width: 100px;
         margin: 15px 0;
-        padding: 6px;
         border-radius: 10px;
         gap: 2px;
     }
@@ -6953,13 +7129,12 @@ use[href="#checkmark"] {
     }
 
     .emoji-panel-content {
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         gap: 6px;
         max-height: 150px;
     }
 
     .emoji-item {
-        width: 32px;
         height: 32px;
         font-size: 20px;
     }

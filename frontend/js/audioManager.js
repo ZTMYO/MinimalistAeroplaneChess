@@ -1,8 +1,11 @@
+const AUDIO_ENABLED_STORAGE_KEY = 'flyingChess.audioEnabled';
+
 // 音效管理器
 class AudioManager {
     constructor() {
         this.sounds = {};
-        this.isEnabled = true;
+        this.isEnabled = this._readStoredEnabled();
+        this.isSuspended = false;
         this.volume = 1;
         this.isLoaded = false;
         this.isMultiplayerMode = false;
@@ -171,7 +174,7 @@ class AudioManager {
      * 播放指定音效
      */
     playSound(soundName, volume = null) {
-        if (!this.isEnabled || !this.isLoaded) return;
+        if (!this.isEnabled || this.isSuspended || !this.isLoaded) return;
 
         const sound = this.sounds[soundName];
         if (!sound) {
@@ -204,14 +207,6 @@ class AudioManager {
     playFinishSound() { this.playSound('finish'); }
     playSkillSound() { this.playSound('skill'); }
 
-    getStatus() {
-        return {
-            isEnabled: this.isEnabled,
-            isLoaded: this.isLoaded,
-            volume: this.volume,
-            loadedSounds: Object.keys(this.sounds)
-        };
-    }
 
     stopAllSounds() {
         Object.values(this.sounds).forEach(sound => {
@@ -222,13 +217,58 @@ class AudioManager {
         });
     }
 
-    mute() {
-        this.isEnabled = false;
+
+
+    /**
+     * 设置音效开关：落盘到本地作为兜底，联机时由调用方另外同步到服务端
+     */
+    setEnabled(enabled) {
+        const next = !!enabled;
+        const changed = this.isEnabled !== next;
+        this.isEnabled = next;
+        if (changed && !next) {
+            this.stopAllSounds();
+        }
+        this._persistEnabled();
+        this.updateToggleButtonUI();
+    }
+
+    /**
+     * 临时静音（如重开一局的过渡阶段），不改变用户的开关偏好
+     */
+    suspend() {
+        this.isSuspended = true;
         this.stopAllSounds();
     }
 
-    unmute() {
-        this.isEnabled = true;
+    resume() {
+        this.isSuspended = false;
+    }
+
+    updateToggleButtonUI() {
+        const toggleBtn = document.getElementById('toggleAudio');
+        if (toggleBtn) {
+            toggleBtn.textContent = this.isEnabled ? '关闭音效' : '开启音效';
+        }
+    }
+
+    _readStoredEnabled() {
+        try {
+            const stored = localStorage.getItem(AUDIO_ENABLED_STORAGE_KEY);
+            if (stored === 'true') return true;
+            if (stored === 'false') return false;
+        } catch (error) {
+            console.warn('读取音效开关失败:', error);
+        }
+        return true;
+    }
+
+    _persistEnabled() {
+        try {
+            localStorage.setItem(AUDIO_ENABLED_STORAGE_KEY, String(this.isEnabled));
+        } catch (error) {
+            console.warn('保存音效开关失败:', error);
+        }
     }
 }
 

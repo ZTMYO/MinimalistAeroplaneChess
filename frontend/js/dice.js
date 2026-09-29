@@ -1,16 +1,10 @@
-/**
- * 骰子模块 - 处理掷骰子相关功能
- * 依赖：gameState.js, utils.js, animation.js, uiUpdater.js
- */
-// 导入依赖模块
 import { gameState } from './gameState.js';
-import { utils } from './utils.js';
+import { utils, DICE_SYMBOLS } from './utils.js';
 import { gameInfo } from './gameInfo.js';
 import { botController } from './botController.js';
 import { audioManager } from './audioManager.js';
-
-// 骰子符号常量
-const DICE_SYMBOLS = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+import { engineAdapter } from './engineAdapter.js';
+import { enginePlayback } from './enginePlayback.js';
 
 class Dice {
     constructor(gameState, utils, animation, uiUpdater) {
@@ -29,16 +23,6 @@ class Dice {
         this.eventHandler = eventHandler;
     }
 
-    /**
-     * 设置预设骰子值（用于遥控骰子道具）
-     * @param {number} value - 骰子点数 (1-6)
-     */
-    setPresetDiceValue(value) {
-        if (value >= 1 && value <= 6) {
-            this.presetDiceValue = value;
-            console.log(`[遥控骰子] 设置预设值: ${value}`);
-        }
-    }
 
     /**
      * 掷骰子方法
@@ -48,16 +32,17 @@ class Dice {
         if (this.gameState.isRolling || (this.gameState.gamePhase !== 'rolling' && this.gameState.gamePhase !== 'waiting') || this.gameState.winner) return;
 
         // 用户开始操作，停止思考时间计时器
-        this.uiUpdater.stopThinkingProgressBar();
+        // 掷骰演出期间：进度条暂停在原处（不归零）
+        this.uiUpdater.holdThinkingProgressBar?.();
 
         // 如果已经连续掷出2次6，这一次有可能触发第三次6的惩罚，
         // 在整个掷骰动画期间使用纯红色样式进行高亮提示（不再红白闪烁）。
         const diceDisplay = document.getElementById('diceDisplay');
         const isThirdSixRisk = !this.gameState.isRemoteDice && this.gameState.consecutiveSixes >= 2;
         if (diceDisplay && isThirdSixRisk && !this.gameState.isHappyMode()) {
-            // 先移除预备阶段用的红白闪烁警告样式
+            // 先移除预备阶段用的警告红：投掷期间换用专门的三次惩罚红，
+            // 它不带那套「保留已有样式」的粘性，不会在无子可动抖动时残留
             diceDisplay.classList.remove('dice-penalty-warning');
-            // 使用专门的第三次惩罚样式，使投掷动画期间始终为红色
             diceDisplay.classList.add('dice-third-penalty');
         }
 
@@ -71,45 +56,55 @@ class Dice {
 
         // 如果是在线多人模式，先发送动画开始消息，让所有玩家同时开始动画
         if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            const isRemoteDice = this.presetDiceValue !== null;
+            const manager = window.gameInstance.multiplayerGameManager;
+
+            // 遥控骰子已经选好点数，这里连同点数一起提交，由服务端校验后采纳
+            const intent = { type: 'roll' };
+            let localPreview = null;
             if (this.presetDiceValue !== null) {
-                this.gameState.diceValue = this.presetDiceValue;
-                console.log(`玩家${this.gameState.currentPlayer}使用遥控骰子，掷出了${this.gameState.diceValue}点`);
-                this.presetDiceValue = null; // 使用后清除预设值
-            } else {
-                this.gameState.diceValue = Math.floor(Math.random() * 6) + 1;
-                console.log(`[同步] 玩家${this.gameState.currentPlayer}摇到了${this.gameState.diceValue}点`);
-                // 统计普通骰子投掷（不统计遥控骰子）
-                if (this.gameState.diceStatistics && this.gameState.diceStatistics[this.gameState.currentPlayer]) {
-                    this.gameState.diceStatistics[this.gameState.currentPlayer][this.gameState.diceValue]++;
-                    // 同步骰子统计到服务器（用于重连恢复）
-                    const currentCount = this.gameState.diceStatistics[this.gameState.currentPlayer][this.gameState.diceValue];
-                    window.gameInstance.multiplayerGameManager.syncDiceStatistics(
-                        this.gameState.currentPlayer,
-                        this.gameState.diceValue,
-                        currentCount
-                    );
-                }
+                intent.item = 'remote-dice';
+                intent.value = this.presetDiceValue;
+                localPreview = this.presetDiceValue;
+                console.log(`玩家${this.gameState.currentPlayer}使用遥控骰子`);
+                this.presetDiceValue = null;
             }
 
-            // 立即添加到游戏信息
-            gameInfo.addDiceRoll(this.gameState.currentPlayer, this.gameState.diceValue, true);
-
-            // 发送动画开始消息，同时携带骰子值，确保其他客户端和服务器知晓结果
-            window.gameInstance.multiplayerGameManager.syncDiceAnimationStart(this.gameState.currentPlayer, this.gameState.diceValue);
-
-            // 等待动画完成后发送骰子结果给服务器处理游戏状态变更
-            setTimeout(async () => {
-                // 停止本地闪烁动画
-                if (window.gameInstance && window.gameInstance.multiplayerGameManager) {
-                    window.gameInstance.multiplayerGameManager.stopDiceFlashing();
+            // 骰子点数与棋面裁决都在服务端，本地只负责表现并提交意图
+            const diceDisplay = document.getElementById('diceDisplay');
+            if (diceDisplay) {
+                // 连续两次 6 时整段投掷动画保持红色警示（与单机一致）
+                const isThirdSixRisk = this.gameState.consecutiveSixes >= 2;
+                manager.stopDiceFlashing();
+                if (isThirdSixRisk && !this.gameState.isHappyMode()) {
+                    diceDisplay.classList.remove('dice-penalty-warning');
+                    diceDisplay.classList.add('dice-third-penalty');
                 }
+                manager.startDiceFlashing();
+                // 本机已自己播过这段动画，服务端快照回来时不应再补播一次
+                manager.markLocalRollIssued();
+            }
+            audioManager.playRollingSound();
 
-                // 发送骰子结果给所有玩家（服务端会处理游戏状态变更）
-                window.gameInstance.multiplayerGameManager.syncDiceRoll(this.gameState.diceValue, this.gameState.currentPlayer, isRemoteDice);
+            // 意图必须立刻提交：本地动画只是表现，延迟提交会让玩家在动画期间刷新时丢掉这次投掷
+            manager.sendIntent(intent);
 
-                // 在联机模式下，本地玩家也需要处理骰子结果
-                await this.handleDiceResult();
+            setTimeout(() => {
+                manager.stopDiceFlashing();
+                manager.rollStartTime = null;
+                // 快照落地时回合可能已推进到下一家，必须用本次掷骰者上色
+                const roller = this.gameState.currentPlayer;
+                if (localPreview !== null) {
+                    this.gameState.diceValue = localPreview;
+                    if (this.uiUpdater?.updateDiceDisplay) {
+                        this.uiUpdater.updateDiceDisplay(localPreview, roller);
+                    }
+                    return;
+                }
+                // 快照尚未落地时不写本地点数，留空让快照到达后决定骰面，
+                // 避免把上一家的点数当成自己这一轮的结果显示出来
+                if (this.uiUpdater?.updateDiceDisplay) {
+                    this.uiUpdater.updateDiceDisplay();
+                }
             }, 500); // 与动画时长保持一致
         } else {
             // 单机模式：播放音效并执行本地动画和逻辑
@@ -135,327 +130,94 @@ class Dice {
             clearInterval(flashInterval);
             diceDisplay.classList.remove('dice-flashing');
 
-            // 生成最终点数
-            // 检查是否使用遥控骰子道具的预设值
+            // 生成最终点数：单机模式的点数只在本地产出，规则裁决交给引擎
+            let diceValue;
+            let rollItem = null;
             if (this.presetDiceValue !== null) {
-                this.gameState.diceValue = this.presetDiceValue;
-                console.log(`玩家${this.gameState.currentPlayer}使用遥控骰子，掷出了${this.gameState.diceValue}点`);
+                diceValue = this.presetDiceValue;
                 this.presetDiceValue = null; // 使用后清除预设值
+                // 遥控骰子必须走道具骰：不参与连投奖励与三次 6 计数，战报也记成「使用了道具」
+                rollItem = 'remote-dice';
             } else {
-                this.gameState.diceValue = Math.floor(Math.random() * 6) + 1;
-                console.log(`玩家${this.gameState.currentPlayer}掷出了${this.gameState.diceValue}点`);
+                diceValue = Math.floor(Math.random() * 6) + 1;
                 // 统计普通骰子投掷（不统计遥控骰子）
                 if (this.gameState.diceStatistics && this.gameState.diceStatistics[this.gameState.currentPlayer]) {
-                    this.gameState.diceStatistics[this.gameState.currentPlayer][this.gameState.diceValue]++;
+                    this.gameState.diceStatistics[this.gameState.currentPlayer][diceValue]++;
                 }
             }
 
-            diceDisplay.textContent = DICE_SYMBOLS[this.gameState.diceValue - 1];
+            diceDisplay.textContent = DICE_SYMBOLS[diceValue - 1];
 
             // 只在单机模式下直接添加到游戏信息面板
-            gameInfo.addDiceRoll(this.gameState.currentPlayer, this.gameState.diceValue);
+            if (!rollItem) gameInfo.addDiceRoll(this.gameState.currentPlayer, diceValue);
 
-            // 处理掷骰子结果
-            await this.handleDiceResult();
+            await this.handleEngineDice(diceValue, rollItem);
+        }
+    }
+
+    /**
+     * 单机模式：把点数交给引擎裁决，再按事件流回放
+     * @param {number} value 点数
+     * @param {string|null} item 道具骰子（遥控骰子）时为道具 id
+     */
+    async handleEngineDice(value, item = null) {
+        // 投影之后回合可能已经交给下家（无子可动会直接换人），掷骰者要先记下来
+        const roller = this.gameState.currentPlayer;
+        try {
+            const { events } = item
+                ? engineAdapter.itemRoll(value, 6, item)
+                : engineAdapter.roll(value);
+            const shake = await enginePlayback.play(events);
+            engineAdapter.projectTo(this.gameState);
+
+            // 先把掷出的骰面与颜色落定（遥控骰子是青色，普通骰子是掷骰者本色），
+            // 再抖：抖动本身不碰颜色，落定晚了就会被别的颜色盖掉青色
+            const diceDisplay = document.getElementById('diceDisplay');
+            if (diceDisplay) {
+                diceDisplay.classList.toggle('remote-dice', engineAdapter.state.diceItem === 'remote-dice');
+            }
+            this.uiUpdater.updateDiceDisplay(value, roller);
+
+            // 无子可动：把这个点数走不了的抖动演完，再交给下一家
+            if (shake) await enginePlayback.playDiceShake(shake);
+        } catch (error) {
+            console.error('引擎拒绝本次掷骰:', error);
+            engineAdapter.projectTo(this.gameState);
+            this.gameState.isRolling = false;
+            this.uiUpdater.updateUI();
+            return;
+        }
+
+        const phase = engineAdapter.state.phase;
+        this.gameState.canReroll = phase === 'selecting' && engineAdapter.state.dice === 6;
+        this.gameState.isRolling = false;
+
+        this.gameState.recordDiceRollForTitle(roller, value, this.gameState.isRemoteDice === true);
+        this.gameState.isRemoteDice = false;
+
+
+        if (phase === 'selecting') {
+            this.uiUpdater.updateUI();
+            this.triggerBotOperationIfNeeded();
+        } else {
+            this.gameState.nextPlayer(this.uiUpdater, this.handleThinkingTimeoutWrapper.bind(this), this.triggerBotOperationIfNeeded.bind(this));
+            this.uiUpdater.updateUI();
         }
     }
 
     /**
      * 调试掷骰子方法 - 指定点数
      */
-    async debugRollDice(value) {
-        // 防抖检查：如果正在掷骰子或游戏状态不允许，直接返回
-        if (this.gameState.isRolling || (this.gameState.gamePhase !== 'rolling' && this.gameState.gamePhase !== 'waiting') || this.gameState.winner) return;
-
-        // 设置防抖标志
-        this.gameState.isRolling = true;
-
-        // 如果是游戏开始前的第一次掷骰子，切换到rolling状态
-        if (this.gameState.gamePhase === 'waiting') {
-            this.gameState.gamePhase = 'rolling';
-        }
-
-        // 直接设置指定的点数，不进行动画
-        const diceDisplay = document.getElementById('diceDisplay');
-
-        this.gameState.diceValue = value;
-        diceDisplay.textContent = DICE_SYMBOLS[value - 1];
-        console.log(`[调试] 玩家${this.gameState.currentPlayer}掷出了${this.gameState.diceValue}点`);
-
-        // 如果是在线多人模式，立即添加到游戏信息并同步骰子结果
-        if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            // 立即添加到游戏信息（在同步之前），确保本地显示顺序正确
-            gameInfo.addDiceRoll(this.gameState.currentPlayer, this.gameState.diceValue, true);
-            window.gameInstance.multiplayerGameManager.syncDiceRoll(this.gameState.diceValue, this.gameState.currentPlayer);
-        } else {
-            // 单机模式下直接添加到游戏信息面板
-            gameInfo.addDiceRoll(this.gameState.currentPlayer, this.gameState.diceValue);
-        }
-
-        // 处理掷骰子结果
-        await this.handleDiceResult();
-    }
-
-    /**
-     * 处理掷骰子结果
-     */
-    async handleDiceResult() {
-        // 每次处理结果前，清理第三次惩罚样式，避免影响后续回合的颜色
-        try {
-            const diceDisplay = document.getElementById('diceDisplay');
-            if (diceDisplay) {
-                diceDisplay.classList.remove('dice-third-penalty');
-            }
-        } catch (e) {
-            // ignore
-        }
-
-        // 检查是否是遥控骰子
-        const isRemoteDice = this.gameState.isRemoteDice === true;
-
-        // 处理特殊规则：摇到6的情况
-        if (this.gameState.diceValue === 6) {
-            // 遥控骰子的6点不触发连投奖励
-            if (isRemoteDice) {
-                this.gameState.canReroll = false;
-                this.gameState.justRolledSix = false;
-                // 重置连续6的计数（遥控骰子不计入连续6）
-                this.gameState.consecutiveSixes = 0;
-            } else {
-                // 正常投骰的6点
-
-                const isOnlineMode = window.multiplayerGameManager && window.multiplayerGameManager.isOnlineMode;
-
-                if (!isOnlineMode) {
-                    // 单机模式：前端自己管理计数
-                    this.gameState.consecutiveSixes++;
-                }
-                if (this.gameState.consecutiveSixes > 0) {
-                    console.log(`玩家${this.gameState.currentPlayer}连续摇到${this.gameState.consecutiveSixes}次6`);
-                }
-
-                // 检查是否连续摇到3次6
-                if (this.gameState.consecutiveSixes >= 3) {
-                    console.log(`[警告] 玩家${this.gameState.currentPlayer}连续摇到3次6`);
-
-                    if (this.gameState.isHappyMode()) {
-                        // 欢乐模式：跳过惩罚，连投奖励，继续选棋移动
-                        console.log('[欢乐模式] 跳过三次6惩罚，连投奖励');
-                        gameInfo.addConsecutiveBonus(this.gameState.currentPlayer);
-                        this.gameState.consecutiveSixes = 0;
-                        this.gameState.canReroll = true;
-                        this.gameState.justRolledSix = true;
-                        this.gameState.isRemoteDice = false;
-                        // 不 return，继续执行选棋移动逻辑
-                    } else {
-                        // 惩罚模式
-                        const diceDisplay = document.getElementById('diceDisplay');
-                        if (diceDisplay) {
-                            diceDisplay.classList.add('dice-shake');
-                            setTimeout(() => {
-                                diceDisplay.classList.remove('dice-shake');
-                            }, 500);
-                        }
-                        if (window.audioManager && window.audioManager.playShakeSound) {
-                            window.audioManager.playShakeSound();
-                        }
-
-                        // 在联机模式下，不要在本地添加消息，等待服务器广播threeSixesPenalty消息
-                        // 在单机模式下，本地添加消息
-                        if (!isOnlineMode) {
-                            gameInfo.addThreeSixesPenalty(this.gameState.currentPlayer);
-                        }
-
-                        // 惩罚：所有棋子返回起点
-                        await this.handleThreeSixesPenalty();
-
-                        // 清除遥控骰子标记
-                        this.gameState.isRemoteDice = false;
-                        return;
-                    }
-                } else {
-                    // 摇到6但未达到3次，可以重新投骰
-                    this.gameState.canReroll = true;
-                    // 标记这次掷出了6，用于后续显示连投奖励
-                    this.gameState.justRolledSix = true;
-                }
-            }
-        } else {
-            // 没有摇到6，重置连续6的计数
-            this.gameState.consecutiveSixes = 0;
-            this.gameState.canReroll = false;
-            this.gameState.justRolledSix = false;
-        }
-
-        // 记录骰子投掷（用于称号统计）
-        this.gameState.recordDiceRollForTitle(this.gameState.currentPlayer, this.gameState.diceValue, isRemoteDice);
-
-        // 检查是否可以出发（偶数）或移动棋子
-        const canLaunch = this.gameState.diceValue % 2 === 0;
-
-        // 检查是否有棋子可以移动
-        const hasMovableChess = this.gameState.playerChess[this.gameState.currentPlayer].some(chess => {
-            if (chess.finished) return false;
-            if (chess.position === -1) return canLaunch;
-
-            // 如果棋子在轨道上（位置0-50），需要检查能否进入终点通道
-            if (chess.position >= 0 && chess.position <= 50) {
-                // 可以移动：要么不会超过终点通道入口，要么会进入终点通道并支持反弹
-                return true;
-            }
-
-            // 如果棋子在终点通道（位置51-56），支持反弹机制
-            if (chess.position >= 51 && chess.position < 56) {
-                // 在终点通道内，任何点数都可以移动（要么到终点，要么反弹）
-                return true;
-            }
-
-            return false;
-        });
-
-        if (hasMovableChess) {
-            // 记录起飞尝试结果（用于称号统计）：成功
-            this.gameState.recordTakeoffAttempt(this.gameState.currentPlayer, true);
-
-            this.gameState.gamePhase = 'selecting';
-            // 启动思考时间计时器：超时时统一走 handleThinkingTimeoutWrapper（内部会开启AI托管）
-            this.uiUpdater.startThinkingProgressBar(() => {
-                console.log(`玩家${this.gameState.currentPlayer}思考时间到，开启AI托管`);
-                this.handleThinkingTimeoutWrapper();
-            });
-
-            // 检查当前玩家是否为bot，如果是则触发bot选择棋子
-            this.triggerBotOperationIfNeeded();
-        } else {
-            // 无法移动，显示点数并停顿2秒后
-            console.log(`玩家${this.gameState.currentPlayer}无法移动任何棋子`);
-
-            // 记录起飞尝试结果（用于称号统计）：失败
-            this.gameState.recordTakeoffAttempt(this.gameState.currentPlayer, false);
-
-            // 添加骰子震动效果表示无效点数
-            const diceDisplay = document.getElementById('diceDisplay');
-            audioManager.playShakeSound();
-            if (diceDisplay) {
-                diceDisplay.classList.add('dice-shake');
-                // 无可用棋子时，确保保留发光并移除闪烁效果
-                diceDisplay.classList.add('dice-glowing');
-                diceDisplay.classList.remove('dice-flashing');
-                // 0.5秒后移除震动效果
-                setTimeout(() => {
-                    diceDisplay.classList.remove('dice-shake');
-                }, 500);
-            }
-
-            const rollPlayer = this.gameState.currentPlayer;
-
-            // 在联机模式下，同步无法移动的状态给其他客户端
-            if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-                // 检查是否是AI托管玩家（非房主）
-                const multiplayerManager = window.gameInstance.multiplayerGameManager;
-                const currentPlayerId = multiplayerManager.getPlayerIdByPlayerNumber(rollPlayer);
-                const isAITakeoverPlayer = multiplayerManager.aiTakeoverPlayers.has(currentPlayerId);
-                const isHost = multiplayerManager.isHost;
-                const isLocalPlayer = currentPlayerId === multiplayerManager.playerId;
-
-                // 如果是AI托管玩家且不是房主，既不添加本地消息也不发送网络同步
-                if (isAITakeoverPlayer && !isHost) {
-                    console.log('AI托管玩家（非房主）跳过无法移动消息的处理，等待房主代理');
-                } else {
-                    // 其他情况：添加本地消息
-                    gameInfo.addNoMovableChess(rollPlayer, this.gameState.diceValue, true);
-
-                    // 发送网络同步消息给其他客户端
-                    multiplayerManager.syncNoMovableChess(rollPlayer, this.gameState.diceValue);
-                }
-            } else {
-                // 单机模式下直接添加消息
-                gameInfo.addNoMovableChess(this.gameState.currentPlayer, this.gameState.diceValue);
-            }
-
-            // 在联机模式下，日志在 await 前打印，避免被服务器同步消息（如"切换到玩家X"）打乱顺序
-            if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-                console.log(`联机模式：玩家${rollPlayer}无法移动，等待服务器同步玩家切换`);
-            }
-
-            this.uiUpdater.updateUI();
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // 在联机模式下，不要本地切换玩家，统一等待服务器同步
-            if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            } else {
-                // 单机模式正常切换玩家
-                this.gameState.nextPlayer(this.uiUpdater, this.handleThinkingTimeoutWrapper.bind(this), this.triggerBotOperationIfNeeded.bind(this));
-            }
-        }
-
-        // 重置防抖标志
-        this.gameState.isRolling = false;
-        this.uiUpdater.updateUI();
-
-        // 检查是否有延迟的暂停操作
-        if (this.eventHandler && this.eventHandler.handlePendingPause) {
-            this.eventHandler.handlePendingPause();
-        }
-    }
-
-    /**
-     * 处理连续三次6的惩罚
-     */
-    async handleThreeSixesPenalty() {
-        // 立即设置三次6惩罚标志，防止AI继续操作
-        this.gameState.setThreeSixesPenaltyActive(true);
-
-        // 惩罚：所有棋子返回起点
-        const pieceCount = this.gameState.pieceCount; // 获取当前棋子个数
-        for (let i = 0; i < pieceCount; i++) {
-            if (this.gameState.playerChess[this.gameState.currentPlayer][i].position >= 0 &&
-                !this.gameState.playerChess[this.gameState.currentPlayer][i].finished) {
-                this.gameState.playerChess[this.gameState.currentPlayer][i].position = -1;
-                this.animation.moveChessToStart(this.gameState.currentPlayer, i, this.gameState.playerChess);
-            }
-        }
-        // 重置连续6的计数
-        this.gameState.consecutiveSixes = 0;
-        this.gameState.canReroll = false;
-        this.gameState.justRolledSix = false;
-        this.uiUpdater.updateUI();
-
-        // 保存玩家编号，避免 await 期间被服务器同步篡改
-        const penaltyPlayer = this.gameState.currentPlayer;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 停止思考进度条，防止Bot继续操作
-        if (this.uiUpdater) {
-            this.uiUpdater.stopThinkingProgressBar();
-        }
-
-        // 在联机模式下，不要本地切换玩家，等待服务器同步
-        if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            console.log(`联机模式：玩家${penaltyPlayer}连续3次6惩罚后，等待服务器同步玩家切换`);
-            // 重置游戏阶段，防止Bot继续操作
-            this.gameState.gamePhase = 'waiting';
-            // 不调用 nextPlayer()，等待服务器同步
-        } else {
-            // 单机模式正常切换玩家
-            this.gameState.nextPlayer(this.uiUpdater, this.handleThinkingTimeoutWrapper.bind(this), this.triggerBotOperationIfNeeded.bind(this));
-        }
-
-        this.gameState.isRolling = false;
-
-        // 检查是否有延迟的暂停操作
-        if (this.eventHandler && this.eventHandler.handlePendingPause) {
-            this.eventHandler.handlePendingPause();
-        }
-
-        // 清除三次6惩罚标志
-        this.gameState.setThreeSixesPenaltyActive(false);
-    }
 
     /**
      * 处理思考时间超时的包装函数
      */
     handleThinkingTimeoutWrapper() {
+        // 暂停期间不许超时接管：计时器是暂停前挂上的，到点会把回合交给 AI
+        if (this.gameState.getIsPaused()) {
+            console.log('游戏已暂停，忽略思考超时');
+            return;
+        }
         console.log(`思考超时触发 - 当前玩家: ${this.gameState.currentPlayer}`);
         gameInfo.addThinkingTimeout(this.gameState.currentPlayer);
         // 统一使用 gameState.handleThinkingTimeout() 处理超时逻辑（内部已实现开启AI托管）

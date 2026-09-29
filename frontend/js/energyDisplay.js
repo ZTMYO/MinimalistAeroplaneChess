@@ -1,11 +1,9 @@
-/**
- * 积分显示管理器 - 处理积分条UI显示
- */
+import { ENERGY_MAX } from '../../shared/engine.mjs';
 
 class EnergyDisplay {
     constructor() {
         this.energyBars = {}; // 存储每个玩家的积分条元素
-        this.maxEnergy = 100;
+        this.maxEnergy = ENERGY_MAX; // 上限只有引擎那一份
     }
 
     /**
