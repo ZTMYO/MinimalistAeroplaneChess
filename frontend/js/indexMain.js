@@ -921,7 +921,6 @@ class PlayerSetup {
         // 规则说明
         if (menuRulesBtn) {
             menuRulesBtn.addEventListener('click', () => {
-                console.log('点击规则说明按钮');
                 if (mainMenuContainer) mainMenuContainer.style.display = 'none';
                 if (rulesPanelWrapper) rulesPanelWrapper.style.display = 'block';
             });

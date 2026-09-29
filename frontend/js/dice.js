@@ -38,7 +38,8 @@ class Dice {
         // 如果已经连续掷出2次6，这一次有可能触发第三次6的惩罚，
         // 在整个掷骰动画期间使用纯红色样式进行高亮提示（不再红白闪烁）。
         const diceDisplay = document.getElementById('diceDisplay');
-        const isThirdSixRisk = !this.gameState.isRemoteDice && this.gameState.consecutiveSixes >= 2;
+        const isPresetRoll = this.presetDiceValue !== null;
+        const isThirdSixRisk = !isPresetRoll && this.gameState.consecutiveSixes >= 2;
         if (diceDisplay && isThirdSixRisk && !this.gameState.isHappyMode()) {
             // 先移除预备阶段用的警告红：投掷期间换用专门的三次惩罚红，
             // 它不带那套「保留已有样式」的粘性，不会在无子可动抖动时残留
@@ -54,105 +55,80 @@ class Dice {
             this.gameState.gamePhase = 'rolling';
         }
 
-        // 如果是在线多人模式，先发送动画开始消息，让所有玩家同时开始动画
-        if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
-            const manager = window.gameInstance.multiplayerGameManager;
+        const manager = (this.gameState.isOnlineMultiplayer && window.gameInstance)
+            ? window.gameInstance.multiplayerGameManager
+            : null;
 
-            // 遥控骰子已经选好点数，这里连同点数一起提交，由服务端校验后采纳
-            const intent = { type: 'roll' };
-            let localPreview = null;
-            if (this.presetDiceValue !== null) {
-                intent.item = 'remote-dice';
-                intent.value = this.presetDiceValue;
-                localPreview = this.presetDiceValue;
-                console.log(`玩家${this.gameState.currentPlayer}使用遥控骰子`);
-                this.presetDiceValue = null;
+        // 遥控骰子：点数已经定死，不播闪烁，直接把结果定格
+        if (isPresetRoll) {
+            const value = this.presetDiceValue;
+            this.presetDiceValue = null;
+            // 遥控骰子必须走道具骰：不参与连投奖励与三次 6 计数，战报也记成「使用了道具」
+            this.gameState.diceValue = value;
+            this.gameState.isRemoteDice = true;
+            diceDisplay?.classList.add('remote-dice');
+            this.uiUpdater?.updateDiceDisplay?.(value, this.gameState.currentPlayer);
+
+            if (manager) {
+                // 本机已自己播过这段演出，服务端快照回来时不应再补播一次
+                manager.markLocalRollIssued();
+                manager.sendIntent({ type: 'roll', item: 'remote-dice', value });
+                return;
             }
+            await this.handleEngineDice(value, 'remote-dice');
+            return;
+        }
 
-            // 骰子点数与棋面裁决都在服务端，本地只负责表现并提交意图
-            const diceDisplay = document.getElementById('diceDisplay');
+        // 联机模式：点数与棋面裁决都在服务端，本地只负责表现并提交意图
+        if (manager) {
             if (diceDisplay) {
-                // 连续两次 6 时整段投掷动画保持红色警示（与单机一致）
-                const isThirdSixRisk = this.gameState.consecutiveSixes >= 2;
-                manager.stopDiceFlashing();
-                if (isThirdSixRisk && !this.gameState.isHappyMode()) {
-                    diceDisplay.classList.remove('dice-penalty-warning');
-                    diceDisplay.classList.add('dice-third-penalty');
-                }
                 manager.startDiceFlashing();
-                // 本机已自己播过这段动画，服务端快照回来时不应再补播一次
                 manager.markLocalRollIssued();
             }
             audioManager.playRollingSound();
 
             // 意图必须立刻提交：本地动画只是表现，延迟提交会让玩家在动画期间刷新时丢掉这次投掷
-            manager.sendIntent(intent);
+            manager.sendIntent({ type: 'roll' });
 
             setTimeout(() => {
                 manager.stopDiceFlashing();
                 manager.rollStartTime = null;
-                // 快照落地时回合可能已推进到下一家，必须用本次掷骰者上色
-                const roller = this.gameState.currentPlayer;
-                if (localPreview !== null) {
-                    this.gameState.diceValue = localPreview;
-                    if (this.uiUpdater?.updateDiceDisplay) {
-                        this.uiUpdater.updateDiceDisplay(localPreview, roller);
-                    }
-                    return;
-                }
                 // 快照尚未落地时不写本地点数，留空让快照到达后决定骰面，
                 // 避免把上一家的点数当成自己这一轮的结果显示出来
-                if (this.uiUpdater?.updateDiceDisplay) {
-                    this.uiUpdater.updateDiceDisplay();
-                }
+                this.uiUpdater?.updateDiceDisplay?.();
             }, 500); // 与动画时长保持一致
-        } else {
-            // 单机模式：播放音效并执行本地动画和逻辑
-            audioManager.playRollingSound();
-
-            const diceDisplay = document.getElementById('diceDisplay');
-
-            diceDisplay.classList.remove('dice-flashing', 'dice-glowing', 'not-rolled', 'rolled');
-            diceDisplay.className = 'dice-icon';
-            void diceDisplay.offsetWidth; // 强制重排
-
-            // 添加闪烁动画类
-            diceDisplay.classList.add('dice-flashing');
-
-            // 闪烁过程中随机显示不同点数
-            const flashInterval = setInterval(() => {
-                const randomIndex = Math.floor(Math.random() * 6);
-                diceDisplay.textContent = DICE_SYMBOLS[randomIndex];
-            }, 100);
-
-            // 闪烁后停止并显示最终结果
-            await new Promise(resolve => setTimeout(resolve, 500));
-            clearInterval(flashInterval);
-            diceDisplay.classList.remove('dice-flashing');
-
-            // 生成最终点数：单机模式的点数只在本地产出，规则裁决交给引擎
-            let diceValue;
-            let rollItem = null;
-            if (this.presetDiceValue !== null) {
-                diceValue = this.presetDiceValue;
-                this.presetDiceValue = null; // 使用后清除预设值
-                // 遥控骰子必须走道具骰：不参与连投奖励与三次 6 计数，战报也记成「使用了道具」
-                rollItem = 'remote-dice';
-            } else {
-                diceValue = Math.floor(Math.random() * 6) + 1;
-                // 统计普通骰子投掷（不统计遥控骰子）
-                if (this.gameState.diceStatistics && this.gameState.diceStatistics[this.gameState.currentPlayer]) {
-                    this.gameState.diceStatistics[this.gameState.currentPlayer][diceValue]++;
-                }
-            }
-
-            diceDisplay.textContent = DICE_SYMBOLS[diceValue - 1];
-
-            // 只在单机模式下直接添加到游戏信息面板
-            if (!rollItem) gameInfo.addDiceRoll(this.gameState.currentPlayer, diceValue);
-
-            await this.handleEngineDice(diceValue, rollItem);
+            return;
         }
+
+        // 单机模式：播放音效并执行本地动画和逻辑
+        audioManager.playRollingSound();
+
+        diceDisplay.classList.remove('dice-flashing', 'dice-glowing', 'not-rolled', 'rolled');
+        diceDisplay.className = 'dice-icon';
+        void diceDisplay.offsetWidth; // 强制重排
+
+        // 添加闪烁动画类
+        diceDisplay.classList.add('dice-flashing');
+
+        // 闪烁过程中随机显示不同点数
+        const flashInterval = setInterval(() => {
+            diceDisplay.textContent = DICE_SYMBOLS[Math.floor(Math.random() * 6)];
+        }, 100);
+
+        // 闪烁后停止并显示最终结果
+        await new Promise(resolve => setTimeout(resolve, 500));
+        clearInterval(flashInterval);
+        diceDisplay.classList.remove('dice-flashing');
+
+        // 生成最终点数：单机模式的点数只在本地产出，规则裁决交给引擎
+        const diceValue = Math.floor(Math.random() * 6) + 1;
+        const stats = this.gameState.diceStatistics?.[this.gameState.currentPlayer];
+        if (stats) stats[diceValue] += 1;
+
+        diceDisplay.textContent = DICE_SYMBOLS[diceValue - 1];
+        gameInfo.addDiceRoll(this.gameState.currentPlayer, diceValue);
+
+        await this.handleEngineDice(diceValue);
     }
 
     /**
@@ -192,8 +168,9 @@ class Dice {
         this.gameState.canReroll = phase === 'selecting' && engineAdapter.state.dice === 6;
         this.gameState.isRolling = false;
 
-        this.gameState.recordDiceRollForTitle(roller, value, this.gameState.isRemoteDice === true);
+        this.gameState.recordDiceRollForTitle(roller, this.gameState.isRemoteDice === true);
         this.gameState.isRemoteDice = false;
+        enginePlayback.announceLiveTitles();
 
 
         if (phase === 'selecting') {

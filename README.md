@@ -93,7 +93,13 @@ npm install
 npm run dev
 ```
 
-#### 4. 创建违规词库
+#### 4. 目录结构
+- `frontend/`：前端源码（Vite 多页应用）
+- `backend/`：后端服务（Express + WebSocket）
+- `shared/`：前后端共用的规则引擎与 AI 决策，两边引用同一份实现
+- `tools/`：命令行调试脚本，仅在手动执行时使用，不参与运行时
+
+#### 5. 创建违规词库
 项目的聊天与昵称过滤会读取本地文件 `frontend/assets/违规词库.txt`。该文件已在 `.gitignore` 中忽略，不会被提交到远程仓库。
 
 请在本地手动创建该文件，每行一个词，例如：
@@ -112,6 +118,31 @@ cd backend && npm run dev
 # 终端 2：前端
 cd frontend && npm run dev
 ```
+
+---
+
+### 生产部署
+
+项目无需构建，直接运行源码。服务器上只需上传 `frontend/`、`backend/`、`shared/`、`package.json`、`package-lock.json`（不要传 `node_modules/` 与 `.env`）。
+
+```bash
+# 首次部署
+cd minimalist-aeroplane-chess
+npm install --omit=dev
+
+cd backend
+cp .env.example .env 2>/dev/null || true   # 无示例文件则手动创建并填入 PORT
+pm2 start server.cjs --name aeroplane-chess
+pm2 save && pm2 startup
+
+# 后续更新
+cd minimalist-aeroplane-chess
+git pull
+npm install --omit=dev          # 依赖有变动时执行
+pm2 restart aeroplane-chess
+```
+
+注意：`server.cjs` 通过 `dotenv` 从当前工作目录读取 `.env`，因此启动 pm2 时需处于 `backend/` 目录。若前置 Nginx，反代时需转发 WebSocket 的 Upgrade 头，否则联机握手失败。
 
 ---
 

@@ -167,11 +167,8 @@ class GameInfo {
         let isSkipList = false;
         let messageElement = null;
 
-        if (type === 'chess_beat') {
-            const isSkillModeForList = window.gameInstance?.energyManager?.isSkillModeEnabled();
-            if (isSkillModeForList && !messageData.data.isRemoteDiceMove) {
-                isSkipList = true;
-            }
+        if (type === 'chess_beat' && this._beatEnergyGain(messageData.data) > 0) {
+            isSkipList = true;
         }
 
         // 道具欢乐模式：碰撞奖励消息不再重复显示，由 energy_gain 代替
@@ -238,17 +235,8 @@ class GameInfo {
                     notificationText = '';
                 }
             }
-        } else if (type === 'chess_beat') {
-            if (messageData.data.skipNotification) {
-                notificationText = ''; // 叠子碰撞等情况不弹出单独击杀提示
-            } else {
-                // 如果开启了道具模式，并且不是遥控骰子击杀，那么在击杀时不弹出通知（因为会有积分获取的通知代替）
-                const isSkillMode = window.gameInstance?.energyManager?.isSkillModeEnabled();
-                const isRemoteDiceMove = messageData.data.isRemoteDiceMove;
-                if (isSkillMode && !isRemoteDiceMove) {
-                    notificationText = '';
-                }
-            }
+        } else if (type === 'chess_beat' && this._beatEnergyGain(messageData.data) > 0) {
+            notificationText = '';
         } else if (type === 'collision_bonus') {
             // 欢乐模式碰撞奖励通知（道具模式下由 energy_gain 显示，这里不重复）
             const isSkillMode = window.gameInstance?.energyManager?.isSkillModeEnabled();
@@ -289,7 +277,7 @@ class GameInfo {
                     notificationText = `${playerSpan}<span class="action-text"> 获得 </span>${energySpan}`;
                 }
             }
-        } else if (type !== 'skill_usage' && type !== 'skill_result' && type !== 'energy_gain' && type !== 'chess_beat' && type !== 'collision_bonus' && type !== 'stack_collision' && type !== 'three_sixes_penalty' && type !== 'chess_finish') {
+        } else if (type !== 'skill_usage' && type !== 'skill_result' && type !== 'energy_gain' && type !== 'chess_beat' && type !== 'collision_bonus' && type !== 'stack_collision' && type !== 'three_sixes_penalty' && type !== 'chess_finish' && type !== 'title_earned') {
             notificationText = '';
         }
 
@@ -313,6 +301,9 @@ class GameInfo {
 
             case 'chess_beat':
                 return this.formatChessBeat(player, data.targetPlayer, data.targetChess, data.position);
+
+            case 'title_earned':
+                return this.formatTitleEarned(player, data.titleName);
 
             case 'chess_launch':
                 return this.formatChessLaunch(player, data.chessIndex);
@@ -481,6 +472,17 @@ class GameInfo {
         const exclamationSpan = `<span class="action-text">！</span>`;
 
         return `${playerSpan}${actionSpan}${targetSpan}${exclamationSpan}`;
+    }
+
+    // 格式化称号达成消息
+    formatTitleEarned(player, titleName) {
+        const playerName = this.getPlayerName(player);
+        const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+        const actionSpan = `<span class="action-text"> 达成称号 </span>`;
+        const titleSpan = `<span class="skill-name-text">[${titleName}]</span>`;
+        const exclamationSpan = `<span class="action-text">！</span>`;
+
+        return `${playerSpan}${actionSpan}${titleSpan}${exclamationSpan}`;
     }
 
     // 格式化棋子出发消息
@@ -740,11 +742,26 @@ class GameInfo {
     }
 
     // 便捷方法：添加棋子击败信息
-    addChessBeat(player, targetPlayer, targetChess, skipSync = false, isRemoteDiceMove = false, skipNotification = false) {
+    addChessBeat(player, targetPlayer, targetChess, skipSync = false, isRemoteDiceMove = false, energy = null) {
         this.addMessage({
             type: 'chess_beat',
             player: player,
-            data: { targetPlayer, targetChess, isRemoteDiceMove, skipNotification }
+            data: { targetPlayer, targetChess, isRemoteDiceMove, energy }
+        }, skipSync);
+    }
+
+    /** 道具模式下这一击会显示出来的积分；null 代表这次没有积分行 */
+    _beatEnergyGain(data) {
+        if (!window.gameInstance?.energyManager?.isSkillModeEnabled?.() || data.isRemoteDiceMove) return null;
+        return Number.isFinite(data.energy) ? data.energy : null;
+    }
+
+    // 便捷方法：添加称号达成信息
+    addTitleEarned(player, titleName, skipSync = true) {
+        this.addMessage({
+            type: 'title_earned',
+            player: player,
+            data: { titleName }
         }, skipSync);
     }
 

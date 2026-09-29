@@ -1216,17 +1216,17 @@ class MultiplayerGameManager {
             uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
         } else if (rolledDice && rolledDice.value > 0 && isPolyhedralRoll) {
             this._localRollIssued = false;
-            window.audioManager?.playRollingSound?.();
             this._showPolyhedralDiceForRoll(rolledDice.value);
         } else if (rolledDice && rolledDice.value > 0) {
             // 判断是否补播闪烁的依据是「本机有没有自己播过这段动画」，而不是点数归谁：
             // 别的机器（服务端或他人）掷出的骰子，点数属于本机时本地也没有动画在播，
             // 只按归属判断会跳过补播，表现为点数直接出现、看不到闪烁。
+            const isRemoteDiceRoll = rolledDice.item === 'remote-dice';
             const rollStillPlaying = diceDisplay && diceDisplay.classList.contains('dice-flashing');
             const startedLocally = this._localRollIssued;
             this._localRollIssued = false;
             // 别处掷出的骰子：本地补播一次灰色闪烁，让各端看到同一段节奏
-            if (!startedLocally && !rollStillPlaying) {
+            if (!isRemoteDiceRoll && !startedLocally && !rollStillPlaying) {
                 this.startDiceFlashing();
                 // 服务端只发结算后的快照，没有「开始掷骰」的广播，
                 // 补播闪烁时必须一并补上投掷音效，否则只有掷骰者自己听得到
@@ -1235,6 +1235,10 @@ class MultiplayerGameManager {
             await this._waitDiceRollSettled();
             this.stopDiceFlashing();
             this.rollStartTime = null;
+            if (isRemoteDiceRoll) {
+                gs.isRemoteDice = true;
+                diceDisplay?.classList.add('remote-dice');
+            }
             uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
         }
 
@@ -1277,7 +1281,7 @@ class MultiplayerGameManager {
             if (event.type !== 'dice') continue;
             if (typeof gs.recordDiceRollForTitle === 'function') {
                 // 道具骰子不参与普通骰子的称号统计
-                gs.recordDiceRollForTitle(event.player, event.value, Boolean(event.item));
+                gs.recordDiceRollForTitle(event.player, Boolean(event.item));
             }
             // 点数统计：联机下点数由服务端产出，只能从事件流里记（道具骰子点数可超过 6，不计入）
             const stats = gs.diceStatistics && gs.diceStatistics[event.player];
@@ -1285,6 +1289,7 @@ class MultiplayerGameManager {
                 stats[event.value] += 1;
             }
         }
+        enginePlayback.announceLiveTitles();
 
         if (typeof gs.setSelectedChess === 'function') gs.setSelectedChess(null);
         if (typeof gs.setCanReroll === 'function') gs.setCanReroll(false);
@@ -1720,9 +1725,6 @@ class MultiplayerGameManager {
         // 使用次数不在这里累计：传送门真正落地时事件流会统一记一次，
         // 只激活不传送（点骰子取消）不该算作一次传送
 
-        if (window.audioManager) {
-            window.audioManager.playSkillSound();
-        }
         // 只点亮，不负责收起：收起交回给快照，避免和权威状态互相打架
         this.gameInstance?.skillManager?.showTeleportIcon();
     }
@@ -1858,11 +1860,21 @@ class MultiplayerGameManager {
             // titleStats 中的对象数据
             consecutiveOnes: { ...gs.titleStats.consecutiveOnes },
             consecutiveNoTakeoff: { ...gs.titleStats.consecutiveNoTakeoff },
+            maxConsecutiveOnes: { ...gs.titleStats.maxConsecutiveOnes },
+            maxConsecutiveNoTakeoff: { ...gs.titleStats.maxConsecutiveNoTakeoff },
             maxConsecutiveSixes: { ...gs.titleStats.maxConsecutiveSixes },
             firstFinishedPlayer: gs.titleStats.firstFinishedPlayer,
+            firstBeaterPlayer: gs.titleStats.firstBeaterPlayer,
+            moveBeats: gs.titleStats.moveBeats ? {
+                1: { ...gs.titleStats.moveBeats[1] },
+                2: { ...gs.titleStats.moveBeats[2] },
+                3: { ...gs.titleStats.moveBeats[3] },
+                4: { ...gs.titleStats.moveBeats[4] }
+            } : undefined,
             bounceSteps: { ...gs.titleStats.bounceSteps },
             // 道具模式称号数据
             maxTeleportDistance: { ...gs.titleStats.maxTeleportDistance },
+            maxMoveDistance: { ...gs.titleStats.maxMoveDistance },
             mysteryBoxMax: { ...gs.titleStats.mysteryBoxMax },
             mysteryBoxMin: { ...gs.titleStats.mysteryBoxMin },
             polyhedralMax: { ...gs.titleStats.polyhedralMax },
@@ -1904,10 +1916,15 @@ class MultiplayerGameManager {
         
         if (titleStats.consecutiveOnes) gs.titleStats.consecutiveOnes = titleStats.consecutiveOnes;
         if (titleStats.consecutiveNoTakeoff) gs.titleStats.consecutiveNoTakeoff = titleStats.consecutiveNoTakeoff;
+        if (titleStats.maxConsecutiveOnes) gs.titleStats.maxConsecutiveOnes = titleStats.maxConsecutiveOnes;
+        if (titleStats.maxConsecutiveNoTakeoff) gs.titleStats.maxConsecutiveNoTakeoff = titleStats.maxConsecutiveNoTakeoff;
         if (titleStats.maxConsecutiveSixes) gs.titleStats.maxConsecutiveSixes = titleStats.maxConsecutiveSixes;
         if (titleStats.firstFinishedPlayer !== undefined) gs.titleStats.firstFinishedPlayer = titleStats.firstFinishedPlayer;
+        if (titleStats.firstBeaterPlayer !== undefined) gs.titleStats.firstBeaterPlayer = titleStats.firstBeaterPlayer;
+        if (titleStats.moveBeats) gs.titleStats.moveBeats = titleStats.moveBeats;
         if (titleStats.bounceSteps) gs.titleStats.bounceSteps = titleStats.bounceSteps;
         if (titleStats.maxTeleportDistance) gs.titleStats.maxTeleportDistance = titleStats.maxTeleportDistance;
+        if (titleStats.maxMoveDistance) gs.titleStats.maxMoveDistance = titleStats.maxMoveDistance;
         if (titleStats.mysteryBoxMax) gs.titleStats.mysteryBoxMax = titleStats.mysteryBoxMax;
         if (titleStats.mysteryBoxMin) gs.titleStats.mysteryBoxMin = titleStats.mysteryBoxMin;
         if (titleStats.polyhedralMax) gs.titleStats.polyhedralMax = titleStats.polyhedralMax;

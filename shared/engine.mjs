@@ -220,9 +220,10 @@ function beatAtCell(state, cell, byPlayer, events, { allowCross = false } = {}) 
     const victimPos = state.players[target.player].chesses[target.index].pos;
     sendHome(state, target.player, target.index);
     state.players[byPlayer].defeats += 1;
-    // 道具骰子的击败不给积分，避免过强
-    const gain = state.diceItem ? 0 : grantEnergy(state, byPlayer, beatReward(state, victimPos));
-    events.push({ type: 'beat', player: byPlayer, targetPlayer: target.player, chess: target.index, cell, itemRoll: state.diceItem, energy: gain });
+    // 道具骰子的击败不给积分，避免过强。
+    const reward = state.diceItem ? 0 : beatReward(state, victimPos);
+    const gain = state.diceItem ? 0 : grantEnergy(state, byPlayer, reward);
+    events.push({ type: 'beat', player: byPlayer, targetPlayer: target.player, chess: target.index, cell, itemRoll: state.diceItem, reward, energy: gain });
     return target;
 }
 
@@ -469,8 +470,8 @@ function jump(state, player, index, targetRel, events) {
         return;
     }
 
-    events.push({ type: 'jump', player, chess: index, from: fromRel, to: targetRel, path: [fromRel, targetRel] });
     beatAtCell(state, fromCell, player, events);
+    events.push({ type: 'jump', player, chess: index, from: fromRel, to: targetRel, path: [fromRel, targetRel] });
     chess.pos = targetRel;
     state.players[player].totalDistance += targetRel - fromRel;
     beatAtCell(state, targetCell, player, events);

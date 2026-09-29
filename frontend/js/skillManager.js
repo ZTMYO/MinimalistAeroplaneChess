@@ -225,13 +225,13 @@ class SkillManager {
      * @param {number} player - 玩家编号
      */
     useSkill(skillId, player) {
-        console.log(`玩家${player}使用道具: ${skillId}`);
-
         // 道具使用次数不在这里记：它由权威事件流统一记录（见 enginePlayback.recordItemUsage），
         // 各端数字一致，刷新后也能从事件流重建。这里再记一次会重复计数。
 
-        // 播放道具音效
-        if (audioManager) {
+        const localSoundItems = gameState.getIsOnlineMultiplayer()
+            ? ['polyhedral-dice']
+            : ['remote-dice', 'teleport', 'polyhedral-dice'];
+        if (audioManager && localSoundItems.includes(skillId)) {
             audioManager.playSkillSound();
         }
 
@@ -266,15 +266,9 @@ class SkillManager {
      * @param {number} player - 玩家编号
      */
     activateRemoteDice(player) {
-        console.log(`玩家${player}激活遥控骰子道具`);
-
         // 上报激活态：点数还没选，只登记「道具已在手上」，刷新后据此重开面板。
         // 联机时这一笔账由服务端扣，单机落到本地引擎
         if (!this.buyItem('remote-dice')) return;
-
-        // 骰子立刻换成遥控骰子的青色（还没投掷也是这个色，别再是默认的灰骰子）
-        gameState.isRemoteDice = true;
-        document.getElementById('diceDisplay')?.classList.add('remote-dice');
 
         let shouldShowPanel = true;
         if (window.gameInfo && window.gameInfo.isNonLocalPlayer) {
@@ -470,6 +464,7 @@ class SkillManager {
         // 兜底：没有骰子实例（极端时序）时退回直接提交意图
         gameState.diceValue = diceValue;
         gameState.isRemoteDice = true;
+        document.getElementById('diceDisplay')?.classList.add('remote-dice');
         if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
             window.gameInstance.multiplayerGameManager.sendIntent({
                 type: 'roll',
@@ -486,8 +481,6 @@ class SkillManager {
      * @param {number} player - 玩家编号
      */
     activateTeleport(player) {
-        console.log(`玩家${player}激活传送门道具`);
-
         // 买下传送门：联机由服务端扣分并记激活态，单机落到本地引擎。
         // 买不起就别点亮图标，免得看着能用却选不出落点
         if (!this.buyItem('teleport')) return;
@@ -528,8 +521,6 @@ class SkillManager {
      * @param {number} player - 玩家编号
      */
     async activatePolyhedralDice(player) {
-        console.log(`玩家${player}激活多面骰子道具`);
-
         // 联机模式：点数由服务端摇出并下发，本地不自行生成；
         // 这一掷同时把道具钱扣掉（引擎在 roll 动作里收费）
         if (gameState.getIsOnlineMultiplayer() && window.gameInstance && window.gameInstance.multiplayerGameManager) {
@@ -560,11 +551,10 @@ class SkillManager {
         chessPiece.gameState.setChessMoving(true);
         try {
             const { events } = engineAdapter.itemRoll(diceValue, maxDice, item);
-            // 多面骰：先亮数字牌滚轮 + 投掷音效，再演事件流（联机那条路由快照触发同样的演出）
+            // 多面骰：先亮数字牌滚轮，再演事件流（联机那条路由快照触发同样的演出）
             if (item === 'polyhedral-dice') {
                 const rolled = engineAdapter.state.dice;
                 if (rolled > 0) this.showPolyhedralDice(rolled);
-                window.audioManager?.playRollingSound?.();
             }
             const shake = await enginePlayback.play(events);
             engineAdapter.projectTo(chessPiece.gameState);
@@ -615,8 +605,6 @@ class SkillManager {
      * @param {number} player - 玩家编号
      */
     async activateMysteryBox(player) {
-        console.log(`玩家${player}激活盲盒道具`);
-
         if (window.gameInstance?.uiUpdater) {
             window.gameInstance.uiUpdater.holdThinkingProgressBar?.();
         }
@@ -944,7 +932,6 @@ class SkillManager {
             console.log('[传送门] 聊天输入框正在显示，传送门图标已创建但暂时隐藏');
         } else {
             teleportIcon.style.display = 'flex';
-            console.log('[传送门] 骰子已隐藏，传送门图标已显示');
         }
     }
 
@@ -1057,9 +1044,8 @@ class SkillManager {
             this.restoreDiceIcon();
         }
 
-        // 遥控骰子的青色骰面：道具拿在手里（还没掷）与掷出的结果都是这个色
         const diceDisplay = document.getElementById('diceDisplay');
-        const remoteDiceActive = diceItem === 'remote-dice' || remoteDicePending;
+        const remoteDiceActive = diceItem === 'remote-dice' || (remoteDicePending && this._remoteDicePicked);
         gameState.isRemoteDice = remoteDiceActive;
         if (diceDisplay) {
             diceDisplay.classList.toggle('remote-dice', remoteDiceActive);

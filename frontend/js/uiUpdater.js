@@ -122,8 +122,7 @@ class UIUpdater {
         }
 
         // 回合已经流转到下一家（或快照已把骰子清空）时，旧点数不能再留在骰面上，
-        // 否则轮到下一家准备投掷时会显示上一家的点数
-        if (diceValue > 0) {
+        if (diceValue > 0 && forceDiceValue === null) {
             const isStaleRoll = gamePhase === 'rolling' && !isRolling && !gameState.getCanReroll();
             if (isStaleRoll) {
                 diceValue = 0;

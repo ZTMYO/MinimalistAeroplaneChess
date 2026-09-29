@@ -111,16 +111,29 @@ class GameState {
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },    // 连续摇到1的次数
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 连续无法起飞的次数
+            maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },   // 历史最长连续1点（连击断了也留着）
+            maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 历史最长连续无法起飞
             maxConsecutiveSixes: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 最大连续摇到6的次数
             firstFinishedPlayer: null,                       // 首个有棋子到达终点的玩家
+            firstBeaterPlayer: null,                         // 本局首个击败对手的玩家（不含撞叠子）
+            moveBeats: {                                     // 单次移动的多杀档位：two=正好 2 颗，three=3 颗及以上
+                1: { two: false, three: false },
+                2: { two: false, three: false },
+                3: { two: false, three: false },
+                4: { two: false, three: false }
+            },
             bounceSteps: { 1: 0, 2: 0, 3: 0, 4: 0 },         // 累计反弹格数（终点反弹+叠子反弹）
             maxTeleportDistance: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 单次传送最大距离
+            maxMoveDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },     // 单次移动最大距离（含跳子、飞棋与奖励步数）
             mysteryBoxMax: { 1: 0, 2: 0, 3: 0, 4: 0 },       // 盲盒开出最高积分
             mysteryBoxMin: { 1: 99, 2: 99, 3: 99, 4: 99 },    // 盲盒开出最低积分（初始99确保0被记录）
             polyhedralMax: { 1: 0, 2: 0, 3: 0, 4: 0 },        // 多面骰子最大点数
             polyhedralMin: { 1: 99, 2: 99, 3: 99, 4: 99 },     // 多面骰子最小点数（初始99确保1被记录）
             skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 }          // 累计使用道具次数
         };
+
+        // 已经播报过的流程内称号（key 为「玩家-称号id」，随对局重置）
+        this.announcedTitles = new Set();
 
         // 道具统计数据（用于结算面板显示）
         this.totalEnergyGained = { 1: 0, 2: 0, 3: 0, 4: 0 };   // 累计获取的有效积分（扣除溢出）
@@ -331,16 +344,29 @@ class GameState {
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxConsecutiveSixes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             firstFinishedPlayer: null,
+            firstBeaterPlayer: null,
+            moveBeats: {
+                1: { two: false, three: false },
+                2: { two: false, three: false },
+                3: { two: false, three: false },
+                4: { two: false, three: false }
+            },
             bounceSteps: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxTeleportDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            maxMoveDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },
             mysteryBoxMax: { 1: 0, 2: 0, 3: 0, 4: 0 },
             mysteryBoxMin: { 1: 99, 2: 99, 3: 99, 4: 99 },
             polyhedralMax: { 1: 0, 2: 0, 3: 0, 4: 0 },
             polyhedralMin: { 1: 99, 2: 99, 3: 99, 4: 99 },
             skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 }
         };
+
+        // 重置已播报的流程内称号
+        this.announcedTitles = new Set();
 
         // 重置道具统计数据
         this.totalEnergyGained = { 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -359,20 +385,25 @@ class GameState {
         return this.totalDistance[player] || 0;
     }
 
-    // 记录骰子投掷（用于称号统计）
-    recordDiceRollForTitle(player, value, isRemoteDice = false) {
-        if (isRemoteDice) return;
-
-        // 1. 连续1点统计
+    // 记录一次骰点（用于称号统计）：只累计「连续 1 点」。
+    // 走事件流调用，所以调试改点、AI 出手、刷新回放都算数；道具骰子点数是预定的，不计也不打断
+    recordRollStreak(player, value, isItemRoll = false) {
+        if (isItemRoll) return;
         if (value === 1) {
-            this.titleStats.consecutiveOnes[player]++;
+            const streak = this.titleStats.consecutiveOnes;
+            streak[player]++;
+            const record = this.titleStats.maxConsecutiveOnes;
+            if (record && streak[player] > record[player]) record[player] = streak[player];
         } else {
             this.titleStats.consecutiveOnes[player] = 0;
         }
+    }
 
-        // 2. 最大连续6点统计
-        // 注意：consecutiveSixes 会在 Dice.js 或 server 同步中更新
-        // 我们在这里记录它达到的历史最大值
+    // 记录最大连续 6 点（用于称号统计）
+    // 注意：consecutiveSixes 会在 Dice.js 或 server 同步中更新
+    // 这里记录它达到的历史最大值
+    recordDiceRollForTitle(player, isItemRoll = false) {
+        if (isItemRoll) return;
         if (this.consecutiveSixes > this.titleStats.maxConsecutiveSixes[player]) {
             this.titleStats.maxConsecutiveSixes[player] = this.consecutiveSixes;
         }
@@ -388,7 +419,10 @@ class GameState {
             const hasChessOnTrack = this.playerChess[player].some(c => c.position >= 0 && !c.finished);
             
             if (hasChessInBase && !hasChessOnTrack) {
-                this.titleStats.consecutiveNoTakeoff[player]++;
+                const streak = this.titleStats.consecutiveNoTakeoff;
+                streak[player]++;
+                const record = this.titleStats.maxConsecutiveNoTakeoff;
+                if (record && streak[player] > record[player]) record[player] = streak[player];
             } else {
                 // 如果已经在轨道上有棋子了，不算作“无法起飞”
                 this.titleStats.consecutiveNoTakeoff[player] = 0;
@@ -396,11 +430,40 @@ class GameState {
         }
     }
 
+    // 记录首个有棋子抵达终点的玩家（只认第一次，用于「最速传说」）
+    recordFirstFinished(player) {
+        if (this.titleStats.firstFinishedPlayer === null || this.titleStats.firstFinishedPlayer === undefined) {
+            this.titleStats.firstFinishedPlayer = player;
+        }
+    }
+
+    // 记录本局首个击败对手的玩家（只认第一次；撞叠子走 collide 事件，不会到这里）
+    recordFirstBeater(player) {
+        if (this.titleStats.firstBeaterPlayer === null || this.titleStats.firstBeaterPlayer === undefined) {
+            this.titleStats.firstBeaterPlayer = player;
+        }
+    }
+
+    // 记录单次移动里击败了几颗棋子（撞叠子不算）：2 颗记「一箭双雕」，3 颗及以上记「三连绝世」
+    recordMoveBeats(player, count) {
+        const record = this.titleStats.moveBeats?.[player];
+        if (!record) return;
+        if (count === 2) record.two = true;
+        if (count >= 3) record.three = true;
+    }
+
     // 记录反弹格数（用于称号统计）
     recordBounceSteps(player, steps) {
         if (this.titleStats.bounceSteps && this.titleStats.bounceSteps[player] !== undefined) {
             this.titleStats.bounceSteps[player] += Math.max(0, steps);
         }
+    }
+
+    // 记录单次移动的距离（取历史最大值）：飞棋、跳子与欢乐模式奖励步数都算在这一手之内
+    recordMoveDistance(player, distance) {
+        const record = this.titleStats.maxMoveDistance;
+        if (!record || record[player] === undefined) return;
+        if (distance > record[player]) record[player] = distance;
     }
 
     // 检查玩家是否只剩一颗未完成的棋子
@@ -982,6 +1045,9 @@ class GameState {
             return; // 状态没有改变
         }
 
+        // 先落状态再走边效果：恢复时的骰子与进度条重绘要按「已恢复」渲染，否则会一直空到下一家回合
+        this.isPaused = paused;
+
         if (paused) {
             // 开始暂停 - 保存当前状态
             this.gamePhaseBeforePause = this.gamePhase;
@@ -1005,8 +1071,6 @@ class GameState {
             // 隐藏暂停提示
             this.hidePauseIndicator();
         }
-
-        this.isPaused = paused;
     }
     /**
      * 显示加载提示并隐藏游戏控件

@@ -835,26 +835,19 @@ body {
     color: white;
 }
 
-/* 当前玩家头像发光效果 */
-.player-avatar-active {
-    transform: scale(1.1);
-}
-
-/* 各玩家激活状态的发光效果 */
-.player-1-avatar.player-avatar-active {
-    transform: scale(1.1);
-}
-
-.player-2-avatar.player-avatar-active {
-    transform: scale(1.1);
-}
-
-.player-3-avatar.player-avatar-active {
-    transform: scale(1.1);
-}
-
-.player-4-avatar.player-avatar-active {
-    transform: scale(1.1);
+.player-avatar-active::after {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border-width: 2px;
+    border-style: solid;
+    border-color: inherit;
+    border-radius: var(--radius-full);
+    -webkit-mask: repeating-conic-gradient(from 0deg, #000 0deg 14deg, transparent 14deg 20deg);
+    mask: repeating-conic-gradient(from 0deg, #000 0deg 14deg, transparent 14deg 20deg);
+    opacity: 0.45;
+    animation: spin 6s linear infinite;
+    pointer-events: none;
 }
 
 /* 桌面端默认样式 */
@@ -1925,12 +1918,21 @@ body {
 
 /* 传送门聚光：格子逐格清成「无填充」（形状是 fill="currentColor"，把 color 设成背景色即可），
    每格的过渡延迟由 JS 递增给出，进出两道波纹；源格与目标格不带这个类，保持本色填充 */
-#board-svg.teleport-focus use[data-cpos] {
-    transition: color 0.18s ease;
+#board-svg use[href="#arrow"] {
+    transition: opacity 0.18s ease;
 }
 
-#board-svg.teleport-focus use.teleport-void {
+#board-svg.teleport-focus use[data-cpos] {
+    transition: color 0.18s ease, stroke-opacity 0.18s ease;
+}
+
+#board-svg.teleport-focus use[data-cpos].teleport-void {
     color: var(--bg-light-1);
+    stroke-opacity: 0.35;
+}
+
+#board-svg.teleport-focus use[href="#arrow"].teleport-void {
+    opacity: 0.2;
 }
 
 /* 同期隐去环道上正在跑的其它棋子，只留被传送的那一颗 */
@@ -3939,6 +3941,93 @@ use[href="#checkmark"] {
 }
 
 /* 称号样式 */
+/* 称号一览（数据分析面板底部） */
+.title-list-section {
+    margin-top: 24px;
+}
+
+.title-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.title-list-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.4);
+}
+
+/* 左栏：昵称与个数竖排，换行只发生在右栏的标签里 */
+.title-list-who {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: none;
+    min-width: 68px;
+}
+
+.title-list-player {
+    font-size: 14px;
+}
+
+.title-list-count {
+    font-size: 12px;
+    color: var(--ui-default-color);
+}
+
+.title-list-chips {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.title-chip {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #2d241f;
+    background: rgba(101, 187, 158, 0.18);
+    border: 1px solid rgba(101, 187, 158, 0.45);
+}
+
+.title-chip-empty {
+    font-weight: normal;
+    color: var(--ui-default-color);
+    background: transparent;
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+.title-chip.tier-common {
+    color: #7d7269;
+    background: rgba(140, 130, 120, 0.14);
+    border-color: rgba(140, 130, 120, 0.35);
+}
+
+.title-chip.tier-rare {
+    color: #3f7fb5;
+    background: rgba(74, 144, 217, 0.14);
+    border-color: rgba(74, 144, 217, 0.4);
+}
+
+.title-chip.tier-epic {
+    color: #8455b8;
+    background: rgba(155, 107, 211, 0.16);
+    border-color: rgba(155, 107, 211, 0.45);
+}
+
+.title-chip.tier-legendary {
+    color: #b7791f;
+    background: rgba(224, 161, 58, 0.18);
+    border-color: rgba(224, 161, 58, 0.5);
+}
+
 .ranking-title-badge {
     font-size: 20px;
     font-weight: bold;
@@ -5776,6 +5865,10 @@ use[href="#checkmark"] {
 .props-item {
     border: 2px solid rgba(184, 120, 196, 0.6);
 }
+
+.collision-item {
+    border: 2px solid rgba(239, 160, 192, 0.6);
+}
 .finish-item {
     border: 2px solid rgba(166, 216, 183, 0.6);
 }
@@ -5838,6 +5931,10 @@ use[href="#checkmark"] {
 
 .props-sub-item {
     background: rgba(184, 120, 196, 0.15);
+}
+
+.collision-sub-item {
+    background: rgba(239, 160, 192, 0.15);
 }
 
 /* 撞机详情 */

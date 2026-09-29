@@ -7,6 +7,7 @@ import { animation } from './animation.js';
 import { gameInfo } from './gameInfo.js';
 import { audioManager } from './audioManager.js';
 import { energyManager } from './energyManager.js';
+import { titleManager } from './titleManager.js';
 import { DICE_SYMBOLS, calculateChessProgress } from './utils.js';
 
 const STEP_DELAY = 190;
@@ -16,7 +17,7 @@ const TELEPORT_FADE = 200;
 // 传送聚光：格子逐格清空的间隔（斜向扫完整盘 ≈ 76 格 × 这个值）
 const TELEPORT_WAVE_STEP_MS = 4;
 // 传送落地后的停顿：走子有逐格节奏，传送没有，得自己留一拍才看得清落在哪
-const TELEPORT_HOLD = 700;
+const TELEPORT_HOLD = 350;
 // 欢乐模式每次碰撞后的停顿，让人看清撞到了谁
 const COLLISION_BONUS_DELAY = 200;
 // 撞叠子时每颗被撞棋子的积分粒子依次飞，别全挤在同一帧
@@ -35,6 +36,36 @@ let pendingShake = null;
 // 静默回放：只把事件翻译成战报文本，不播动画、音效与粒子。
 // 刷新后右侧面板需要一次性重建历史所有战报，逐条播放动画既慢又毫无意义。
 let silentReplay = false;
+
+// 这一批事件里每颗棋子走了多远：走子、跳子、飞棋连同欢乐模式的奖励步数算作同一手
+let moveDistances = new Map();
+
+// 这一批事件里每位玩家击败了几颗棋子（撞叠子走 collide 事件，不计入）
+let moveBeats = new Map();
+
+function addMoveDistance(player, chess, distance) {
+    if (!(distance > 0)) return;
+    const key = `${player}-${chess}`;
+    const entry = moveDistances.get(key) || { player, distance: 0 };
+    entry.distance += distance;
+    moveDistances.set(key, entry);
+}
+
+function flushMoveDistances() {
+    moveDistances.forEach(({ player, distance }) => gameState.recordMoveDistance(player, distance));
+    moveDistances = new Map();
+    moveBeats.forEach((count, player) => gameState.recordMoveBeats(player, count));
+    moveBeats = new Map();
+}
+
+// 一批事件演完后，把本批新达成的「流程内称号」播报出去（各端都从同一份事件流得出）
+function announceLiveTitles() {
+    for (let player = 1; player <= 4; player++) {
+        titleManager.collectLiveTitles(player, gameState).forEach((title) => {
+            gameInfo.addTitleEarned(player, title.name);
+        });
+    }
+}
 
 // 道具 id → 战报名与统计键；道具使用记录统一从权威事件流生成，
 // 面板各自上报的消息不在事件流里，刷新后整段记录都会丢
@@ -79,6 +110,7 @@ async function playLaunch(event) {
 async function playWalk(event) {
     const { player, chess, from, to, path, bounced, bounceReason, bounceSteps, blocker } = event;
     lastMover = { player, chess };
+    addMoveDistance(player, chess, to - from);
     if (silentReplay) {
         gameInfo.addChessMove(player, chess, 'move', from, to, true);
         if (bounced && bounceReason === 'stack' && blocker !== null) {
@@ -107,6 +139,7 @@ async function playWalk(event) {
 async function playJumpLike(event, moveType) {
     const { player, chess, from, to } = event;
     lastMover = { player, chess };
+    addMoveDistance(player, chess, to - from);
     if (silentReplay) {
         gameInfo.addChessMove(player, chess, moveType, from, to, true);
         return;
@@ -120,6 +153,7 @@ async function playJumpLike(event, moveType) {
 
 async function playFinish(event) {
     const { player, chess } = event;
+    gameState.recordFirstFinished(player);
     if (silentReplay) {
         gameInfo.addChessFinish(player, chess, true);
         return;
@@ -132,12 +166,18 @@ async function playFinish(event) {
     await sleep(FINISH_DELAY);
 }
 
+/** 这一击显示出来的积分：按规则该得的分，不扣积分上限的溢出（老事件没有 reward 时退回实际入账值） */
+function beatDisplayEnergy(event) {
+    return Number.isFinite(event.reward) ? event.reward : (event.energy || 0);
+}
+
 /**
  * 击败积分：数值由引擎随事件下发（各端同一个数，回放也不用重算）。
  * 实时路径连积分条与粒子一起演；静默回放只补战报文本，积分由快照对齐。
  */
 function grantBeatEnergy(event, { animate = true } = {}) {
-    const { player, targetPlayer, chess, energy } = event;
+    const { player, targetPlayer, chess } = event;
+    const energy = beatDisplayEnergy(event);
     if (!energy) return;
     if (animate) {
         energyManager.addEnergy(player, energy, 'kill', targetPlayer, chess, 0, true);
@@ -150,6 +190,8 @@ function grantBeatEnergy(event, { animate = true } = {}) {
 async function playCollisionBonus(event) {
     const { player, targetPlayer, targetChess, energy } = event;
     const targets = Number.isInteger(targetChess) ? targetChess : null;
+    // 欢乐模式没有 beat 事件，碰撞按击败计入「第一滴血」
+    gameState.recordFirstBeater(player);
     if (silentReplay) {
         gameInfo.addCollisionBonus(player, targetPlayer, true);
         // 道具模式下面板会过滤掉上面这行，实时看到的是积分行，静默回放按同一套规则补出来
@@ -167,15 +209,17 @@ async function playBeat(event) {
     const { player, targetPlayer, chess, itemRoll } = event;
     // 道具骰子的击败没有积分行，面板据此保留这一条（普通击败在道具模式下由积分行代替）
     const isRemoteDiceMove = Boolean(itemRoll);
+    gameState.recordFirstBeater(player);
+    moveBeats.set(player, (moveBeats.get(player) || 0) + 1);
     if (silentReplay) {
-        gameInfo.addChessBeat(player, targetPlayer, chess, true, isRemoteDiceMove);
+        gameInfo.addChessBeat(player, targetPlayer, chess, true, isRemoteDiceMove, beatDisplayEnergy(event));
         // 道具模式下面板会过滤掉上面这行（改用积分行代替），静默回放要补出同一条，
         // 否则刷新后这一局里所有的击败都不见了
         grantBeatEnergy(event, { animate: false });
         return;
     }
     audioManager.playBeatSound();
-    gameInfo.addChessBeat(player, targetPlayer, chess, true, isRemoteDiceMove);
+    gameInfo.addChessBeat(player, targetPlayer, chess, true, isRemoteDiceMove, beatDisplayEnergy(event));
     // 先缓存被击败棋子的当前屏幕坐标，供随后的积分粒子动画作为起点
     window.gameInstance?.multiplayerGameManager?.cacheDefeatedChessPosition(targetPlayer, chess);
     grantBeatEnergy(event);
@@ -220,8 +264,7 @@ async function playReset(event, diceValue = 0) {
     // 这段回基地的演出期间别让 AI 接着出手，骰子也不许被别的渲染改成准备态
     gameState.setThreeSixesPenaltyActive?.(true);
 
-    // 三次 6 的惩罚：骰子先抖一下，然后把这一刻的 6 定在警告红上，别退回灰骰子
-    await playDiceShake({ player, value: diceValue });
+    // 惩罚这一刻的 6 定在警告红上，别退回灰骰子
     const diceDisplay = document.getElementById('diceDisplay');
     if (diceDisplay && diceValue > 0 && diceValue <= DICE_SYMBOLS.length) {
         diceDisplay.textContent = DICE_SYMBOLS[diceValue - 1];
@@ -229,6 +272,7 @@ async function playReset(event, diceValue = 0) {
     }
 
     const count = gameState.pieceCount || 4;
+    audioManager.playBeatSound();
     for (let index = 0; index < count; index++) {
         animation.moveChessToStart(player, index, null, true);
     }
@@ -253,15 +297,16 @@ function highlightTeleportCells(player, from, to) {
     });
 }
 
-/** 传送波纹的格子顺序：按棋盘坐标的 x+y 排序，从左上角斜着扫到右下角 */
-function teleportWaveCells(board) {
-    return Array.from(board.querySelectorAll('use[data-cpos]'))
-        .map((cell) => ({
-            cell,
-            order: (Number(cell.getAttribute('x')) || 0) + (Number(cell.getAttribute('y')) || 0)
-        }))
+/** 传送波纹扫过的元素顺序：编号格与航道箭头一起，从观察者视角的左上角扫到右下角 */
+function teleportWaveElements(board) {
+    return Array.from(board.querySelectorAll('use[data-cpos], use[href="#arrow"]'))
+        .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const order = rect.left + rect.width / 2 + (rect.top + rect.height / 2);
+            return { element, order };
+        })
         .sort((a, b) => a.order - b.order)
-        .map((item) => item.cell);
+        .map((item) => item.element);
 }
 
 /**
@@ -276,11 +321,11 @@ async function openTeleportVeil(chessElement) {
 
     // 逐格清空：按斜向顺序给递增延迟，等波纹扫完再往下演
     let step = 0;
-    teleportWaveCells(board).forEach((cell) => {
-        if (cell.classList.contains('teleport-grid-highlight')) return; // 起落两格保持填充
-        cell.style.transitionDelay = `${step * TELEPORT_WAVE_STEP_MS}ms`;
+    teleportWaveElements(board).forEach((element) => {
+        if (element.classList.contains('teleport-grid-highlight')) return; // 起落两格保持填充
+        element.style.transitionDelay = `${step * TELEPORT_WAVE_STEP_MS}ms`;
         step += 1;
-        cell.classList.add('teleport-void');
+        element.classList.add('teleport-void');
     });
 
     // 环道上正在跑的其它棋子隐去；起点区、终点区停着的原样保留
@@ -309,20 +354,20 @@ async function closeTeleportVeil(board) {
         el.classList.remove('teleport-dimmed', 'teleport-spotlight');
     });
 
-    const cells = teleportWaveCells(board).filter((cell) => cell.classList.contains('teleport-void'));
-    if (!cells.length) {
+    const faded = teleportWaveElements(board).filter((element) => element.classList.contains('teleport-void'));
+    if (!faded.length) {
         board.classList.remove('teleport-focus');
         return;
     }
 
     // 逐格还给本色：同一道斜向波纹再扫回来
-    cells.forEach((cell, index) => {
-        cell.style.transitionDelay = `${index * TELEPORT_WAVE_STEP_MS}ms`;
+    faded.forEach((element, index) => {
+        element.style.transitionDelay = `${index * TELEPORT_WAVE_STEP_MS}ms`;
     });
-    cells.forEach((cell) => cell.classList.remove('teleport-void'));
+    faded.forEach((element) => element.classList.remove('teleport-void'));
 
-    await sleep(cells.length * TELEPORT_WAVE_STEP_MS + 200);
-    cells.forEach((cell) => { cell.style.transitionDelay = ''; });
+    await sleep(faded.length * TELEPORT_WAVE_STEP_MS + 200);
+    faded.forEach((element) => { element.style.transitionDelay = ''; });
     board.classList.remove('teleport-focus');
 }
 
@@ -361,8 +406,8 @@ async function playTeleport(event) {
             stepTo(player, chess, to);
         }
 
-        // 落地：一边是落点的停顿，一边让棋盘用波纹扫回来
-        await Promise.all([closeTeleportVeil(focus), sleep(TELEPORT_HOLD)]);
+        await sleep(TELEPORT_HOLD);
+        await closeTeleportVeil(focus);
     } finally {
         // 兜底收场（已经收过就是空操作）与格子标记清理
         await closeTeleportVeil(focus);
@@ -458,6 +503,7 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             if (silentReplay) gameInfo.addDiceRoll(event.player, event.value, true);
             // 事件里带道具 id 说明是道具骰子，战报与统计据此生成
             if (event.item) recordItemUsage(event.item, event.player, { diceValue: event.value });
+            gameState.recordRollStreak(event.player, event.value, Boolean(event.item));
             break;
         case 'launch':
             await playLaunch(event);
@@ -546,6 +592,8 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
 async function play(events) {
     if (!events || events.length === 0) return null;
     pendingShake = null;
+    moveDistances = new Map();
+    moveBeats = new Map();
     // skip / pass 事件自身不带点数与道具，沿用同一批事件里最近一次掷骰的
     let lastDiceValue = 0;
     let lastDiceItem = null;
@@ -556,6 +604,8 @@ async function play(events) {
         }
         await handleEvent(event, lastDiceValue, lastDiceItem);
     }
+    flushMoveDistances();
+    announceLiveTitles();
     return pendingShake;
 }
 
@@ -592,6 +642,8 @@ async function playDiceShake(shake) {
 async function replay(events) {
     if (!events || events.length === 0) return;
     silentReplay = true;
+    moveDistances = new Map();
+    moveBeats = new Map();
     gameInfo.setSilentMode?.(true);
     try {
         let lastDiceValue = 0;
@@ -607,7 +659,9 @@ async function replay(events) {
         silentReplay = false;
         gameInfo.setSilentMode?.(false);
     }
+    flushMoveDistances();
+    announceLiveTitles();
 }
 
-export const enginePlayback = { play, replay, playDiceShake };
+export const enginePlayback = { play, replay, playDiceShake, announceLiveTitles };
 export default enginePlayback;

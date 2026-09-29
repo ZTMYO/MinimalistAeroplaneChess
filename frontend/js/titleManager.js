@@ -13,6 +13,9 @@ class TitleManager {
                 PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手' },
                 TAILWIND_WALKER: { id: 'tailwind_walker', name: '顺风行者', desc: '在整局未发生过反弹的情况下获胜' },
                 BOUNCE_KING: { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数超过 50 格' },
+                SOARING: { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格' },
+                DOUBLE_KILL: { id: 'double_kill', name: '一箭双雕', desc: '单次移动击败 2 颗棋子（撞叠子不算）' },
+                TRIPLE_KILL: { id: 'triple_kill', name: '三连绝世', desc: '单次移动击败 3 颗及以上棋子（撞叠子不算）' },
                 DIMENSION_TRAVELER: { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送超过 20 格' },
                 Koi_FISH: { id: 'koi_fish', name: '锦鲤附体', desc: '盲盒开出超过 35 点积分' },
                 PHILANTHROPIST: { id: 'philanthropist', name: '慈善家', desc: '盲盒开出 0 点积分' },
@@ -29,11 +32,52 @@ class TitleManager {
                 HOME_VISITOR: { id: 'home_visitor', name: '回家常客', desc: '被对手击败次数最多' },
                 CHESS_KING: { id: 'chess_king', name: '棋王', desc: '本局第一名' },
                 COMEBACK: { id: 'comeback', name: '逆风翻盘', desc: '整局 60% 时间处于垫底，最后反败为胜' },
-                STEADY_DOG: { id: 'steady_dog', name: '避战大师', desc: '被击败次数全场最少' }
+                STEADY_DOG: { id: 'steady_dog', name: '避战大师', desc: '被击败次数全场最少' },
+                FIRST_BLOOD: { id: 'first_blood', name: '第一滴血', desc: '本局第一个击败对手' }
             },
             // 默认称号
             DEFAULT: { id: 'default', name: '平凡棋手', desc: '平平淡淡才是真' }
         };
+
+        // 称号分级：只决定配色，不参与任何判定
+        this.TIER_NAMES = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
+        // 越靠前越厉害，展示时按这个顺序把强称号排在前面
+        this.TIER_RANK = { legendary: 0, epic: 1, rare: 2, common: 3 };
+        const TIERS = {
+            // 概率
+            reverse_lucky: 'rare',
+            unlucky_takeoff: 'common',
+            lucky_king: 'epic',
+            invisible: 'epic',
+            peace_maker: 'rare',
+            tailwind_walker: 'legendary',
+            wind_walker: 'rare',
+            soaring: 'rare',
+            double_kill: 'epic',
+            triple_kill: 'legendary',
+            dimension_traveler: 'rare',
+            koi_fish: 'rare',
+            philanthropist: 'rare',
+            destiny_child: 'rare',
+            unlucky_bear: 'common',
+            skill_master: 'rare',
+            // 唯一
+            marathon: 'common',
+            speed_legend: 'rare',
+            six_master: 'common',
+            killer: 'common',
+            home_visitor: 'common',
+            chess_king: 'epic',
+            comeback: 'legendary',
+            steady_dog: 'common',
+            first_blood: 'rare',
+            // 默认
+            default: 'common'
+        };
+        [this.TITLES.PROBABILITY, this.TITLES.UNIQUE, { DEFAULT: this.TITLES.DEFAULT }]
+            .forEach((group) => Object.values(group).forEach((title) => {
+                title.tier = TIERS[title.id] || 'common';
+            }));
     }
 
     /**
@@ -65,7 +109,10 @@ class TitleManager {
         return new Set([
             'invisible',
             'tailwind_walker',
-            'home_visitor'
+            'home_visitor',
+            // 欢乐模式靠碰撞连锁攒多杀太容易，这两条不在这里授予
+            'double_kill',
+            'triple_kill'
         ]);
     }
 
@@ -84,6 +131,46 @@ class TitleManager {
     }
 
     /**
+     * 收集该玩家此刻新达成的「流程内称号」：条件只看本机统计、达成即定论，
+     * 所以可以当场播报（结算那批比较型/整局型的称号不在此列）。
+     * 已播报过的记在 gameState.announcedTitles 里，同一局不重复。
+     */
+    collectLiveTitles(player, gameState) {
+        const stats = gameState?.titleStats;
+        const announced = gameState?.announcedTitles;
+        if (!stats || !announced) return [];
+
+        // 欢乐模式不授予的称号，实时播报也一并拦掉
+        const disabledIds = gameState?.isHappyMode?.() ? this._getHappyModeDisabledIds() : new Set();
+        const earned = [];
+        const check = (id, title, met) => {
+            if (disabledIds.has(id)) return;
+            const key = `${player}-${id}`;
+            if (!met || announced.has(key)) return;
+            announced.add(key);
+            earned.push(title);
+        };
+
+        check('reverse_lucky', this.TITLES.PROBABILITY.REVERSE_LUCKY, stats.maxConsecutiveOnes?.[player] >= 3);
+        check('unlucky_takeoff', this.TITLES.PROBABILITY.UNLUCKY_START, stats.maxConsecutiveNoTakeoff?.[player] >= 3);
+        check('lucky_king', this.TITLES.PROBABILITY.LUCKY_KING, stats.maxConsecutiveSixes?.[player] >= 3);
+        check('wind_walker', this.TITLES.PROBABILITY.BOUNCE_KING, stats.bounceSteps?.[player] > 50);
+        check('soaring', this.TITLES.PROBABILITY.SOARING, stats.maxMoveDistance?.[player] >= 25);
+        check('dimension_traveler', this.TITLES.PROBABILITY.DIMENSION_TRAVELER, stats.maxTeleportDistance?.[player] > 20);
+        check('koi_fish', this.TITLES.PROBABILITY.Koi_FISH, stats.mysteryBoxMax?.[player] > 35);
+        check('philanthropist', this.TITLES.PROBABILITY.PHILANTHROPIST, stats.mysteryBoxMin?.[player] === 0);
+        check('destiny_child', this.TITLES.PROBABILITY.DESTINY_CHILD, stats.polyhedralMax?.[player] >= 12);
+        check('unlucky_bear', this.TITLES.PROBABILITY.UNLUCKY_BEAR, stats.polyhedralMin?.[player] === 1);
+        check('skill_master', this.TITLES.PROBABILITY.SKILL_MASTER, stats.skillUseCount?.[player] > 10);
+        check('double_kill', this.TITLES.PROBABILITY.DOUBLE_KILL, stats.moveBeats?.[player]?.two);
+        check('triple_kill', this.TITLES.PROBABILITY.TRIPLE_KILL, stats.moveBeats?.[player]?.three);
+        check('speed_legend', this.TITLES.UNIQUE.SPEED_LEGEND, stats.firstFinishedPlayer === player);
+        check('first_blood', this.TITLES.UNIQUE.FIRST_BLOOD, stats.firstBeaterPlayer === player);
+
+        return earned;
+    }
+
+    /**
      * 收集玩家所有符合条件的称号（不再只取最高优先级的一个）
      * @returns {Array} 称号对象数组
      */
@@ -94,13 +181,13 @@ class TitleManager {
 
         // --- 1. 概率称号 ---
 
-        // 反向欧皇：连着三回合 1 点
-        if (titleStats.consecutiveOnes[player] >= 3) {
+        // 反向欧皇：连着三回合 1 点（看历史最长连击，中途断掉也算）
+        if (titleStats.maxConsecutiveOnes && titleStats.maxConsecutiveOnes[player] >= 3) {
             titles.push(this.TITLES.PROBABILITY.REVERSE_LUCKY);
         }
 
-        // 非酋：连着三回合无法起飞
-        if (titleStats.consecutiveNoTakeoff[player] >= 3) {
+        // 非酋：连着三回合无法起飞（同上，看历史最长）
+        if (titleStats.maxConsecutiveNoTakeoff && titleStats.maxConsecutiveNoTakeoff[player] >= 3) {
             titles.push(this.TITLES.PROBABILITY.UNLUCKY_START);
         }
 
@@ -127,6 +214,21 @@ class TitleManager {
         // 逆风行者：反弹格数超过 50 格
         if (titleStats.bounceSteps && titleStats.bounceSteps[player] > 50) {
             titles.push(this.TITLES.PROBABILITY.BOUNCE_KING);
+        }
+
+        // 一飞冲天：单次移动达到 25 格（飞棋、跳子与欢乐模式奖励步数的连环推进都算这一手）
+        if (titleStats.maxMoveDistance && titleStats.maxMoveDistance[player] >= 25) {
+            titles.push(this.TITLES.PROBABILITY.SOARING);
+        }
+
+        // 一箭双雕：单次移动正好击败 2 颗（3 颗及以上只有三连绝世）
+        if (titleStats.moveBeats?.[player]?.two) {
+            titles.push(this.TITLES.PROBABILITY.DOUBLE_KILL);
+        }
+
+        // 三连绝世：单次移动击败 3 颗及以上
+        if (titleStats.moveBeats?.[player]?.three) {
+            titles.push(this.TITLES.PROBABILITY.TRIPLE_KILL);
         }
 
         // --- 道具模式称号 ---
@@ -203,16 +305,19 @@ class TitleManager {
             titles.push(this.TITLES.UNIQUE.CHESS_KING);
         }
 
-        // --- 3. 默认称号（无任何称号时兜底）---
-        if (titles.length === 0) {
-            titles.push(this.TITLES.DEFAULT);
+        // 第一滴血 (本局首个击败对手，撞叠子不算)
+        if (uniqueWinners.firstBlood === player) {
+            titles.push(this.TITLES.UNIQUE.FIRST_BLOOD);
         }
 
-        // 欢乐模式：过滤掉不适配的称号，再将"击败"替换为"碰撞"
+        // 欢乐模式：先滤掉不适配的称号，再兜底「平凡棋手」；
+        // 反过来的话，一个只拿到被禁称号的玩家会被筛成「没有任何称号」
         const disabledIds = gameState?.isHappyMode?.() ? this._getHappyModeDisabledIds() : new Set();
-        return titles
-            .filter(t => !disabledIds.has(t.id))
-            .map(t => this._adjustTitleForHappyMode(t, gameState));
+        const kept = titles.filter(t => !disabledIds.has(t.id));
+        if (kept.length === 0) {
+            kept.push(this.TITLES.DEFAULT);
+        }
+        return kept.map(t => this._adjustTitleForHappyMode(t, gameState));
     }
 
     /**
@@ -224,6 +329,9 @@ class TitleManager {
 
         // 最速传说 - 仅首个完成者，不可能有平局
         winners.speedLegend = stats.firstFinished;
+
+        // 第一滴血 - 仅本局首个击败对手的人
+        winners.firstBlood = stats.firstBeater;
         
         // 长跑冠军 - 距离最高，平局取编号小者
         winners.marathon = this._findTiebreakWinner(activePlayers, stats.totalDistances, 'max', 1);
@@ -316,6 +424,7 @@ class TitleManager {
             defeatOthersCounts: {},
             beenDefeatedCounts: {},
             firstFinished: gameState.titleStats.firstFinishedPlayer,
+            firstBeater: gameState.titleStats.firstBeaterPlayer,
             // 是否正常结束游戏（至少有一名玩家所有棋子到达终点）
             // 强制结算时没有任何玩家完成全部棋子，不应触发某些称号
             isNormalGameEnd: false

@@ -122,6 +122,13 @@ class SettlementModal {
         // 生成排名数据
         const rankingsData = this.generateRankingsData(winnerPlayer);
 
+        // 计算称号（自动结算也要算，否则战绩卡与称号一览都没有称号）
+        const playerTitles = titleManager.calculateTitles(this.gameState, rankingsData);
+        rankingsData.forEach(data => {
+            data.title = playerTitles[data.player];
+        });
+        this.playerTitles = playerTitles;
+
         // 渲染排名列表
         this.renderRankings(rankingsData);
 
@@ -194,6 +201,8 @@ class SettlementModal {
         rankingsData.forEach(data => {
             data.title = playerTitles[data.player];
         });
+        // 数据分析面板底部要按玩家列出全部称号
+        this.playerTitles = playerTitles;
 
         // 渲染排名列表
         this.renderRankings(rankingsData);
@@ -298,6 +307,9 @@ class SettlementModal {
 
         // 渲染骰子投掷统计表格
         html += this.renderDiceStatistics();
+
+        // 渲染称号一览（放在面板最底下）
+        html += this.renderTitleStatistics();
 
         this.dataAnalysisContainer.innerHTML = html;
 
@@ -468,6 +480,43 @@ class SettlementModal {
             ctx.textAlign = 'left';
             ctx.fillText(playerName, legendX + 20, y);
         });
+    }
+
+    /**
+     * 渲染称号一览：每位玩家一行，列出本局获得的全部称号
+     */
+    renderTitleStatistics() {
+        const titlesByPlayer = this.playerTitles;
+        if (!titlesByPlayer) return '';
+
+        const activePlayers = activePlayerManager.getActivePlayers();
+        const tierRank = titleManager.TIER_RANK || {};
+        const rows = activePlayers.map((player) => {
+            const titles = [...(titlesByPlayer[player] || [])]
+                .sort((a, b) => (tierRank[a.tier] ?? 9) - (tierRank[b.tier] ?? 9));
+            const chips = titles.length
+                ? titles.map((t) => {
+                    const tier = titleManager.TIER_NAMES?.[t.tier] || '普通';
+                    return `<span class="title-chip tier-${t.tier || 'common'}" title="${tier}｜${t.desc || ''}">${t.name}</span>`;
+                }).join('')
+                : '<span class="title-chip title-chip-empty">暂无</span>';
+            return `
+                <div class="title-list-row">
+                    <div class="title-list-who">
+                        <span class="title-list-player player-text player-${player}">${getDisplayName(player)}</span>
+                        <span class="title-list-count">${titles.length} 个</span>
+                    </div>
+                    <div class="title-list-chips">${chips}</div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="title-list-section">
+                <h4 class="chart-title">称号一览</h4>
+                <div class="title-list">${rows}</div>
+            </div>
+        `;
     }
 
     /**

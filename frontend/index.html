@@ -75,7 +75,7 @@
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
                     </div>
-                    <span class="menu-btn-text">规则说明</span>
+                    <span class="menu-btn-text">游戏规则</span>
                 </button>
             </div>
 
@@ -821,9 +821,33 @@
                                             </div>
 
                                             <div class="sub-content-item beat-sub-item">
-                                                <p><strong>4.<span class="collision-bonus">碰撞奖励</span></strong></p>
-                                                <p class="beat-detail">落在其他玩家的棋子上不触发 <span class="crash-text">[撞机]</span>，改为 <span class="collision-bonus">[碰撞奖励]</span>：每颗敌方棋子奖励 <span class="collision-bonus">2</span> 步。</p>
-                                                <p class="beat-detail">奖励可连锁触发，过程中的 <span class="move-type-jump">[跳子]</span>、<span class="move-type-fly">[飞棋]</span> 照常执行。</p>
+                                                <p><strong>4.交叉点不撞机</strong></p>
+                                                <p class="beat-detail"><span
+                                                        class="move-type-fly">[飞棋]</span>经过终点通道交叉点时<span
+                                                        class="crash-text">不触发[撞机]</span>且没有<span
+                                                        class="collision-bonus">[碰撞奖励]</span>。</p>
+                                            </div>
+                                        </div>
+
+                                        <div class="mechanism-item collision-item">
+                                            <h5><span class="collision-bonus">碰撞奖励</span></h5>
+                                            <div class="sub-content-item collision-sub-item">
+                                                <p><strong>1.怎么触发</strong></p>
+                                                <p class="beat-detail">棋子停在有其他玩家棋子的格子上时，不触发 <span class="crash-text">[撞机]</span>，改为 <span class="collision-bonus">[碰撞奖励]</span>。</p>
+                                            </div>
+
+                                            <div class="sub-content-item collision-sub-item">
+                                                <p><strong>2.奖励步数</strong></p>
+                                                <p class="beat-detail">每颗敌方棋子奖励 <span class="collision-bonus">2</span> 步，至少 <span class="collision-bonus">2</span> 步（叠了 3 颗就是 6 步）。</p>
+                                            </div>
+
+                                            <div class="sub-content-item collision-sub-item">
+                                                <p><strong>3.可以连锁</strong></p>
+                                                <p class="beat-detail">奖励步数的落点若又踩到敌方棋子，继续给奖励；过程中的 <span class="move-type-jump">[跳子]</span>、<span class="move-type-fly">[飞棋]</span> 照常执行。</p>
+                                            </div>
+
+                                            <div class="sub-content-item collision-sub-item">
+                                                <p><strong>4.道具模式积分</strong></p>
                                                 <p class="beat-detail">道具模式下，<span class="collision-bonus">[碰撞奖励]</span>同时按每颗敌方棋子 <span class="energy-value-text">20</span> 分获得积分。</p>
                                             </div>
                                         </div>
