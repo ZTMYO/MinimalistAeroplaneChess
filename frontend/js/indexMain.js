@@ -2,6 +2,8 @@ import { emojis, defaultEmoji } from '../assets/emojis.js';
 import { MultiplayerManager } from './multiplayerManager.js';
 import { nicknameGenerator } from './nicknameGenerator.js';
 import { audioManager } from './audioManager.js';
+import { resetTitlesViews } from './titlesGallery.js';
+import './theme.js';
 window.audioManager = audioManager;
 
 // 页面完全加载后，在浏览器空闲时静默预加载音频，不影响首屏体验
@@ -921,6 +923,7 @@ class PlayerSetup {
         // 规则说明
         if (menuRulesBtn) {
             menuRulesBtn.addEventListener('click', () => {
+                resetTitlesViews();
                 if (mainMenuContainer) mainMenuContainer.style.display = 'none';
                 if (rulesPanelWrapper) rulesPanelWrapper.style.display = 'block';
             });

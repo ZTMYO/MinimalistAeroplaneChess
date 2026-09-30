@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>极简飞行棋</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem("flyingChess.theme")==="dark"?"dark":"light";}catch(e){}</script>
+
+    <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -133,7 +136,7 @@
                         <filter id="chessShadow" x="-50%" y="-50%" width="200%" height="200%">
                             <feGaussianBlur in="SourceAlpha" stdDeviation="0.5" />
                             <feOffset id="chessShadowOffset" dx="0" dy="1" result="offsetblur" />
-                            <feFlood flood-color="#000000" flood-opacity="0.15" />
+                            <feFlood class="chess-shadow-flood" flood-opacity="0.15" />
                             <feComposite in2="offsetblur" operator="in" />
                             <feMerge>
                                 <feMergeNode />
@@ -175,7 +178,7 @@
 
                         <!-- 勾号图案（到达终点） -->
                         <g id="checkmark" viewBox="0 0 33 33" transform="scale(0.34)">
-                            <circle cx="16.5" cy="16.5" r="14" fill="none" stroke="var(--player-border)" stroke-width="3" />
+                            <circle cx="16.5" cy="16.5" r="14" fill="none" stroke="currentColor" stroke-width="3" />
                             <circle cx="16.5" cy="16.5" r="13" fill="currentColor" />
                             <path d="M9 17L14.5 22.5L24 11" fill="none" stroke="rgba(255, 255, 255, 0.6)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
                         </g>
@@ -803,14 +806,15 @@
 
     <!-- 游戏规则模态框 -->
     <div id="rules-modal" class="modal-overlay">
-        <div class="modal-content rules-modal-content">
+        <div class="modal-content rules-modal-content" data-titles-view>
             <div class="modal-header">
-                <h2>游戏规则</h2>
+                <h2 data-rules-title>游戏规则</h2>
+                <button class="rules-view-toggle" data-rules-toggle type="button">称号一览</button>
                 <button class="modal-close" id="rules-close" type="button">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="game-rules-panel">
-                    <div class="rules-content">
+                    <div class="rules-content" data-rules-body>
                         <div class="rule-section">
                             <h4>一、胜利条件与行进次序</h4>
                             <div class="rule-content">
@@ -849,7 +853,7 @@
                                         <p>摇到点数<span class="dice-special">6</span>获额外1次投骰子机会。</p>
                                     </div>
                                     <div class="sub-content-item bonus-sub-item">
-                                        <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家所有棋子回基地，回合结束。</p>
+                                        <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家未到终点的棋子全部回基地，回合结束。</p>
                                     </div>
 
                                 </div>
@@ -953,7 +957,7 @@
                                     <h5><span class="energy-value-text">积分</span></h5>
                                     <div class="sub-content-item energy-sub-item">
                                         <p>击败对手棋子可获得积分，单次得分 =（基础 <span class="energy-value-text">15</span> 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 <span class="energy-value-text">100</span>。</p>
-                                        <p>道具骰子造成的击败不计分。</p>
+                                        <p>遥控骰子造成的击败不能获取积分。</p>
                                     </div>
                                 </div>
 
@@ -1040,6 +1044,7 @@
                             </div>
                         </div>
                     </div>
+                    <div class="titles-gallery" data-titles-gallery style="display: none;"></div>
                 </div>
             </div>
 

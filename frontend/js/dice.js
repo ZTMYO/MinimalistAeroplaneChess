@@ -82,7 +82,7 @@ class Dice {
         // 联机模式：点数与棋面裁决都在服务端，本地只负责表现并提交意图
         if (manager) {
             if (diceDisplay) {
-                manager.startDiceFlashing();
+                manager.startDiceFlashing(this.gameState.currentPlayer);
                 manager.markLocalRollIssued();
             }
             audioManager.playRollingSound();

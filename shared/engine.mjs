@@ -220,9 +220,10 @@ function beatAtCell(state, cell, byPlayer, events, { allowCross = false } = {}) 
     const victimPos = state.players[target.player].chesses[target.index].pos;
     sendHome(state, target.player, target.index);
     state.players[byPlayer].defeats += 1;
-    // 道具骰子的击败不给积分，避免过强。
-    const reward = state.diceItem ? 0 : beatReward(state, victimPos);
-    const gain = state.diceItem ? 0 : grantEnergy(state, byPlayer, reward);
+    // 遥控骰子能指定点数，击败不给积分（避免刷分）；多面骰子照常计分
+    const isRemoteDice = state.diceItem === 'remote-dice';
+    const reward = isRemoteDice ? 0 : beatReward(state, victimPos);
+    const gain = isRemoteDice ? 0 : grantEnergy(state, byPlayer, reward);
     events.push({ type: 'beat', player: byPlayer, targetPlayer: target.player, chess: target.index, cell, itemRoll: state.diceItem, reward, energy: gain });
     return target;
 }
@@ -385,17 +386,20 @@ function resolveMove(state, player, index, events) {
 
     if (stackCrash) {
         // 被撞回家的每颗棋子都按击败结算给撞的人加分（落点要在送回基地之前量）。
-        // 道具骰子撞的同样不给分，和单颗击败一致
+        // 遥控骰子撞的同样不给分，和单颗击败一致；累计值另记一份未截断的 reward 供显示
         let gain = 0;
-        if (!state.diceItem) {
+        let reward = 0;
+        if (state.diceItem !== 'remote-dice') {
             for (const victim of stack.cells) {
                 const victimPos = state.players[victim.player].chesses[victim.index].pos;
-                gain += grantEnergy(state, player, beatReward(state, victimPos));
+                const each = beatReward(state, victimPos);
+                reward += each;
+                gain += grantEnergy(state, player, each);
             }
         }
         sendHome(state, player, index);
         for (const victim of stack.cells) sendHome(state, victim.player, victim.index);
-        events.push({ type: 'collide', player, targetPlayer: stack.player, cell: stack.cell, chesses: stack.cells, energy: gain });
+        events.push({ type: 'collide', player, targetPlayer: stack.player, cell: stack.cell, chesses: stack.cells, reward, energy: gain });
         return;
     }
 
@@ -658,8 +662,14 @@ export function apply(state, playerId, action, rng = Math.random) {
         events.push({ type: 'dice', player: playerId, value, item: next.diceItem || null, cost });
 
         if (next.consecutiveSixes >= 3 && !next.happy) {
-            next.players[playerId].chesses.forEach((_, index) => sendHome(next, playerId, index));
-            events.push({ type: 'reset', player: playerId, reason: 'three-sixes' });
+            // 已经抵达终点的棋子留在终点，不跟着回基地
+            const pieces = [];
+            next.players[playerId].chesses.forEach((chess, index) => {
+                if (chess.finished) return;
+                sendHome(next, playerId, index);
+                pieces.push(index);
+            });
+            events.push({ type: 'reset', player: playerId, reason: 'three-sixes', pieces });
             endTurn(next, events);
             return { state: next, events };
         }

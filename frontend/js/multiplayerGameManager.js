@@ -179,15 +179,18 @@ class MultiplayerGameManager {
     }
 
     /**
-     * 播放骰子摇动动画（灰色闪烁，不带玩家颜色）。
-     * 本地掷骰与远端同步共用，保证所有玩家看到的骰子节奏一致。
+     * 播放骰子摇动动画。本地掷骰与远端同步共用，保证所有玩家看到的骰子节奏一致。
+     * 传入 owner 时给骰面标上掷骰者的玩家类：亮色下闪烁仍是中性色，暗色下按玩家配色走。
      */
-    startDiceFlashing() {
+    startDiceFlashing(owner = null) {
         const diceDisplay = document.getElementById('diceDisplay');
         if (!diceDisplay) return;
         this.stopDiceFlashing();
         diceDisplay.className = diceDisplay.className.replace(/player-\d+/g, '');
         diceDisplay.classList.remove('dice-waiting', 'dice-glowing', 'not-rolled', 'rolled', 'dice-flashing');
+        if (owner !== null && owner !== undefined) {
+            diceDisplay.classList.add(`player-${owner}`);
+        }
         void diceDisplay.offsetWidth; // 强制重排
         diceDisplay.classList.add('dice-flashing');
         this.rollStartTime = Date.now();
@@ -1225,9 +1228,9 @@ class MultiplayerGameManager {
             const rollStillPlaying = diceDisplay && diceDisplay.classList.contains('dice-flashing');
             const startedLocally = this._localRollIssued;
             this._localRollIssued = false;
-            // 别处掷出的骰子：本地补播一次灰色闪烁，让各端看到同一段节奏
+            // 别处掷出的骰子：本地补播一次闪烁，让各端看到同一段节奏
             if (!isRemoteDiceRoll && !startedLocally && !rollStillPlaying) {
-                this.startDiceFlashing();
+                this.startDiceFlashing(rolledDice.player);
                 // 服务端只发结算后的快照，没有「开始掷骰」的广播，
                 // 补播闪烁时必须一并补上投掷音效，否则只有掷骰者自己听得到
                 window.audioManager?.playRollingSound?.();
@@ -1865,12 +1868,8 @@ class MultiplayerGameManager {
             maxConsecutiveSixes: { ...gs.titleStats.maxConsecutiveSixes },
             firstFinishedPlayer: gs.titleStats.firstFinishedPlayer,
             firstBeaterPlayer: gs.titleStats.firstBeaterPlayer,
-            moveBeats: gs.titleStats.moveBeats ? {
-                1: { ...gs.titleStats.moveBeats[1] },
-                2: { ...gs.titleStats.moveBeats[2] },
-                3: { ...gs.titleStats.moveBeats[3] },
-                4: { ...gs.titleStats.moveBeats[4] }
-            } : undefined,
+            maxBeatsInMove: { ...gs.titleStats.maxBeatsInMove },
+            maxCollideInMove: { ...gs.titleStats.maxCollideInMove },
             bounceSteps: { ...gs.titleStats.bounceSteps },
             // 道具模式称号数据
             maxTeleportDistance: { ...gs.titleStats.maxTeleportDistance },
@@ -1921,7 +1920,8 @@ class MultiplayerGameManager {
         if (titleStats.maxConsecutiveSixes) gs.titleStats.maxConsecutiveSixes = titleStats.maxConsecutiveSixes;
         if (titleStats.firstFinishedPlayer !== undefined) gs.titleStats.firstFinishedPlayer = titleStats.firstFinishedPlayer;
         if (titleStats.firstBeaterPlayer !== undefined) gs.titleStats.firstBeaterPlayer = titleStats.firstBeaterPlayer;
-        if (titleStats.moveBeats) gs.titleStats.moveBeats = titleStats.moveBeats;
+        if (titleStats.maxBeatsInMove) gs.titleStats.maxBeatsInMove = titleStats.maxBeatsInMove;
+        if (titleStats.maxCollideInMove) gs.titleStats.maxCollideInMove = titleStats.maxCollideInMove;
         if (titleStats.bounceSteps) gs.titleStats.bounceSteps = titleStats.bounceSteps;
         if (titleStats.maxTeleportDistance) gs.titleStats.maxTeleportDistance = titleStats.maxTeleportDistance;
         if (titleStats.maxMoveDistance) gs.titleStats.maxMoveDistance = titleStats.maxMoveDistance;

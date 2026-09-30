@@ -497,17 +497,17 @@ class MultiplayerManager {
         if (roomConfig) {
             roomConfig.querySelectorAll('.color-option').forEach(option => {
                 option.addEventListener('click', (e) => {
+                    const targetCircle = e.target && e.target.closest ? e.target.closest('.color-circle') : null;
+                    if (targetCircle && this._isOtherOccupiedSeat(option)) {
+                        this._swaySeat(targetCircle);
+                    }
+
                     if (!this.isHost) return;
 
                     // 点击踢人按钮时，不要在这里触发菜单切换/重建，避免按钮被提前移除
                     if (e.target && e.target.closest && e.target.closest('.kick-player-btn')) {
                         return;
                     }
-                    const circle = option.querySelector('.color-circle');
-                    if (!circle) return;
-
-                    const targetCircle = e.target.closest('.color-circle');
-
                 });
             });
         }
@@ -609,6 +609,24 @@ class MultiplayerManager {
 
         this.initRoomChatUI();
 
+    }
+
+    /** 这个席位是否坐着别人（有昵称、且不是自己那一格） */
+    _isOtherOccupiedSeat(option) {
+        const nickname = option.querySelector('.player-nickname');
+        const occupied = Boolean(nickname && nickname.textContent.trim() && nickname.style.display !== 'none');
+        if (!occupied) return false;
+        const mine = this.players && this.players.get(this.playerId);
+        const myNumber = mine && mine.color ? mine.color : null;
+        return myNumber === null || Number(option.dataset.player) !== myNumber;
+    }
+
+    /** 席位左右摇摆一下：只摆动，不改任何状态 */
+    _swaySeat(circle) {
+        circle.classList.remove('seat-sway');
+        void circle.offsetWidth; // 强制重排，连点也能重新触发
+        circle.classList.add('seat-sway');
+        setTimeout(() => circle.classList.remove('seat-sway'), 600);
     }
 
     initRoomChatUI() {
@@ -2943,7 +2961,7 @@ class MultiplayerManager {
         }
     }
 
-    // 选择颜色：点击的座位若已被其他玩家占用，由服务端安排两人换座
+    // 选择颜色：只能选到空座位上，别人的座位不换
     selectColor(playerNum) {
         if (!this.wsClient || !this.currentPlayer) return;
 
@@ -2957,8 +2975,11 @@ class MultiplayerManager {
             return;
         }
 
-        // 座位归属由服务端裁决（可能伴随换座），本地不抢先改写，
-        // 否则界面上的座位会与真实回合顺序不一致
+        const occupiedByOther = Array.from(this.players.values())
+            .some(p => p.color === playerNum && p.id !== this.playerId);
+        if (occupiedByOther) return;
+
+        // 座位归属由服务端裁决，本地不抢先改写，否则界面上的座位会与真实回合顺序不一致
         this.wsClient.selectColor(playerNum);
     }
 

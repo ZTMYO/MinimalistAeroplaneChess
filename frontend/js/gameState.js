@@ -115,13 +115,9 @@ class GameState {
             maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 历史最长连续无法起飞
             maxConsecutiveSixes: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 最大连续摇到6的次数
             firstFinishedPlayer: null,                       // 首个有棋子到达终点的玩家
-            firstBeaterPlayer: null,                         // 本局首个击败对手的玩家（不含撞叠子）
-            moveBeats: {                                     // 单次移动的多杀档位：two=正好 2 颗，three=3 颗及以上
-                1: { two: false, three: false },
-                2: { two: false, three: false },
-                3: { two: false, three: false },
-                4: { two: false, three: false }
-            },
+            firstBeaterPlayer: null,                         // 本局首个击败对手的玩家（含欢乐模式的碰撞，撞叠子不算）
+            maxBeatsInMove: { 1: 0, 2: 0, 3: 0, 4: 0 },      // 单次移动击败的最多颗数（撞叠子不算）
+            maxCollideInMove: { 1: 0, 2: 0, 3: 0, 4: 0 },    // 单次移动碰撞的最多颗数（欢乐模式）
             bounceSteps: { 1: 0, 2: 0, 3: 0, 4: 0 },         // 累计反弹格数（终点反弹+叠子反弹）
             maxTeleportDistance: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 单次传送最大距离
             maxMoveDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },     // 单次移动最大距离（含跳子、飞棋与奖励步数）
@@ -132,8 +128,8 @@ class GameState {
             skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 }          // 累计使用道具次数
         };
 
-        // 已经播报过的流程内称号（key 为「玩家-称号id」，随对局重置）
-        this.announcedTitles = new Set();
+        // 已播报过的流程内称号：key 为「玩家-家族」，值是已播到第几级（随对局重置）
+        this.announcedTitles = new Map();
 
         // 道具统计数据（用于结算面板显示）
         this.totalEnergyGained = { 1: 0, 2: 0, 3: 0, 4: 0 };   // 累计获取的有效积分（扣除溢出）
@@ -349,12 +345,8 @@ class GameState {
             maxConsecutiveSixes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             firstFinishedPlayer: null,
             firstBeaterPlayer: null,
-            moveBeats: {
-                1: { two: false, three: false },
-                2: { two: false, three: false },
-                3: { two: false, three: false },
-                4: { two: false, three: false }
-            },
+            maxBeatsInMove: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            maxCollideInMove: { 1: 0, 2: 0, 3: 0, 4: 0 },
             bounceSteps: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxTeleportDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxMoveDistance: { 1: 0, 2: 0, 3: 0, 4: 0 },
@@ -366,7 +358,7 @@ class GameState {
         };
 
         // 重置已播报的流程内称号
-        this.announcedTitles = new Set();
+        this.announcedTitles = new Map();
 
         // 重置道具统计数据
         this.totalEnergyGained = { 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -444,12 +436,16 @@ class GameState {
         }
     }
 
-    // 记录单次移动里击败了几颗棋子（撞叠子不算）：2 颗记「一箭双雕」，3 颗及以上记「三连绝世」
+    // 记录单次移动击败的最多颗数（撞叠子不算，用于多杀那一族称号）
     recordMoveBeats(player, count) {
-        const record = this.titleStats.moveBeats?.[player];
-        if (!record) return;
-        if (count === 2) record.two = true;
-        if (count >= 3) record.three = true;
+        const record = this.titleStats.maxBeatsInMove;
+        if (record && count > record[player]) record[player] = count;
+    }
+
+    // 记录单次移动碰撞的最多颗数（欢乐模式；用于「碰碰车」那一族）
+    recordMoveCollisions(player, count) {
+        const record = this.titleStats.maxCollideInMove;
+        if (record && count > record[player]) record[player] = count;
     }
 
     // 记录反弹格数（用于称号统计）

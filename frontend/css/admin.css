@@ -1,44 +1,6 @@
-/* 管理面板样式 - 米色系设计风格 */
-
+/* 管理页专属覆盖：它不参与主题切换，这里恢复原本的取值 */
 :root {
-    /* 玩家颜色变量 - 低饱和度扁平色彩 */
-    --player-1-color: #a6d8b7;
-    --player-2-color: #ecbd99;
-    --player-3-color: #afccea;
-    --player-4-color: #f7a099;
-
-    /* 填充颜色变量 */
-    --player-1-fill: #d4ede3;
-    --player-2-fill: #f5dcc8;
-    --player-3-fill: #dce8f5;
-    --player-4-fill: #fcc9c6;
-
-    /* 边框颜色变量 */
-    --player-1-border: #93c8b2;
-    --player-2-border: #e9b489;
-    --player-3-border: #a3bfdc;
-    --player-4-border: #dd9793;
-
-    /* 背景颜色变量 - 米色系 */
-    --bg-light-1: #f5f2ed;
-    --bg-light-2: #ebe8e3;
     --bg-medium: rgba(255, 253, 250, 0.8);
-    --bg-soft: rgba(255, 253, 250, 0.6);
-    --bg-faint: rgba(255, 253, 250, 0.4);
-
-    --border-light: rgba(61, 53, 45, 0.9);
-    --border-medium: rgba(61, 53, 45, 0.6);
-    --border-soft: rgba(61, 53, 45, 0.4);
-
-    --radius-base: 8px;
-    --radius-full: 50%;
-
-    --modal-shadow: 0 2px 8px rgba(92, 83, 78, 0.15);
-
-    --text-primary: #2d241f;
-    --text-secondary: #2d241f;
-    --text-gray: rgba(92, 83, 78, 1);
-    --font-faint: rgba(92, 83, 78, 1);
 }
 
 * {
@@ -197,22 +159,22 @@ body {
     height: 14px;
     left: 3px;
     top: 2px;
-    background: #2d241f;
+    background: var(--text-primary);
     border-radius: 999px;
     transition: all 0.3s ease-in-out;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 1px 2px var(--shadow-2);
 }
 
 .toggle-switch input[type="checkbox"]:checked+.toggle-slider {
-    background: #abe1f7;
-    border-color: #92d5ef;
+    background: var(--blue-soft);
+    border-color: var(--blue-line);
     box-shadow: none;
 }
 
 .toggle-switch input[type="checkbox"]:checked+.toggle-slider::after {
     transform: translateX(20px);
-    background: #ffffff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    background: var(--white);
+    box-shadow: 0 2px 4px var(--shadow-3);
 }
 
 /* 统计卡片 */
@@ -321,7 +283,7 @@ body {
 
 .user-tag:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px var(--shadow-1);
 }
 
 .user-status-dot {
@@ -332,9 +294,9 @@ body {
 
 /* 不同状态的颜色 */
 .status-idle .user-status-dot { background-color: #999; } /* 首页/空闲 - 灰色 */
-.status-in_room .user-status-dot { background-color: #3498db; } /* 房间中 - 蓝色 */
-.status-playing .user-status-dot { background-color: #2ecc71; } /* 游戏中 - 绿色 */
-.status-spectating .user-status-dot { background-color: #f1c40f; } /* 观战中 - 黄色 */
+.status-in_room .user-status-dot { background-color: var(--task-blue); } /* 房间中 - 蓝色 */
+.status-playing .user-status-dot { background-color: var(--task-green); } /* 游戏中 - 绿色 */
+.status-spectating .user-status-dot { background-color: var(--lightning); } /* 观战中 - 黄色 */
 
 .user-nickname {
     font-weight: 600;
@@ -343,7 +305,7 @@ body {
 .user-status-text {
     font-size: 8px;
     opacity: 0.7;
-    background: rgba(0,0,0,0.05);
+    background: var(--shadow-1);
     padding: 2px 6px;
     border-radius: 10px;
 }
@@ -643,19 +605,19 @@ a.session-id:hover {
 
 .online-status.all-online {
     background: rgba(76, 175, 80, 0.2);
-    color: #4caf50;
-    border: 1px solid #4caf50;
+    color: var(--green);
+    border: 1px solid var(--green);
 }
 
 .online-status.partial-online {
     background: rgba(233, 207, 89, 0.2);
-    color: var(--warning-color);
-    border: 1px solid var(--warning-color);
+    color: var(--gold);
+    border: 1px solid var(--gold);
 }
 
 /* 游戏时长 */
 .duration {
-    color: var(--text-white);
+    color: var(--text-primary);
     font-size: 15px;
 }
 

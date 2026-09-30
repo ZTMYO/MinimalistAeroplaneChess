@@ -1,3 +1,4 @@
+import '../css/theme.css';
 import '../css/admin.css';
 
 class AdminPanel {
@@ -247,7 +248,7 @@ class AdminPanel {
             const typeClass = p.isAI ? 'ai' : 'human';
             
             const hostBadge = p.isHost ? '<span class="host-badge">房主</span>' : '';
-            const aiBadge = p.isAI ? '<span class="host-badge" style="color:#4e4e4f;">AI</span>' : '';
+            const aiBadge = p.isAI ? '<span class="host-badge" style="color:var(--text-gray);">AI</span>' : '';
             
             // 如果离线（且不是AI），使用灰色样式；否则显示颜色
             const playerColorClass = isOnline ? (playerNumber ? `player-${playerNumber}` : '') : 'offline-gray';

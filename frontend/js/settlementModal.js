@@ -405,6 +405,9 @@ class SettlementModal {
 
         const activePlayers = activePlayerManager.getActivePlayers();
 
+        // 图表配色统一从 CSS 变量读，主题切换后重绘即可跟随
+        const cssColor = (name, fallback) => (getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback);
+
         // 获取玩家颜色（从CSS变量读取）
         const playerColors = {
             1: getComputedStyle(document.documentElement).getPropertyValue('--player-1-color').trim() || '#E74C3C',
@@ -417,7 +420,7 @@ class SettlementModal {
         ctx.clearRect(0, 0, width, height);
 
         // 绘制背景网格
-        ctx.strokeStyle = 'rgba(92, 83, 78, 0.2)';
+        ctx.strokeStyle = cssColor('--overlay-warm', 'rgba(200, 195, 185, 0.3)');
         ctx.lineWidth = 1;
         for (let i = 0; i <= 10; i++) {
             const y = padding.top + (chartHeight / 10) * i;
@@ -428,7 +431,7 @@ class SettlementModal {
         }
 
         // 绘制Y轴标签（0-100%）
-        ctx.fillStyle = '#2d241f';
+        ctx.fillStyle = cssColor('--text-primary', '#2d241f');
         ctx.font = '12px Arial';
         ctx.textAlign = 'right';
         for (let i = 0; i <= 10; i++) {

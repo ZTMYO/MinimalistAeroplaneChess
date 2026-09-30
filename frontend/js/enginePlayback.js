@@ -43,6 +43,9 @@ let moveDistances = new Map();
 // 这一批事件里每位玩家击败了几颗棋子（撞叠子走 collide 事件，不计入）
 let moveBeats = new Map();
 
+// 这一批事件里每位玩家碰撞了几颗棋子（欢乐模式，按被撞的敌方棋子数累计）
+let moveCollisions = new Map();
+
 function addMoveDistance(player, chess, distance) {
     if (!(distance > 0)) return;
     const key = `${player}-${chess}`;
@@ -56,6 +59,8 @@ function flushMoveDistances() {
     moveDistances = new Map();
     moveBeats.forEach((count, player) => gameState.recordMoveBeats(player, count));
     moveBeats = new Map();
+    moveCollisions.forEach((count, player) => gameState.recordMoveCollisions(player, count));
+    moveCollisions = new Map();
 }
 
 // 一批事件演完后，把本批新达成的「流程内称号」播报出去（各端都从同一份事件流得出）
@@ -192,6 +197,8 @@ async function playCollisionBonus(event) {
     const targets = Number.isInteger(targetChess) ? targetChess : null;
     // 欢乐模式没有 beat 事件，碰撞按击败计入「第一滴血」
     gameState.recordFirstBeater(player);
+    const collided = event.enemyCount || 1;
+    moveCollisions.set(player, (moveCollisions.get(player) || 0) + collided);
     if (silentReplay) {
         gameInfo.addCollisionBonus(player, targetPlayer, true);
         // 道具模式下面板会过滤掉上面这行，实时看到的是积分行，静默回放按同一套规则补出来
@@ -207,8 +214,8 @@ async function playCollisionBonus(event) {
 
 async function playBeat(event) {
     const { player, targetPlayer, chess, itemRoll } = event;
-    // 道具骰子的击败没有积分行，面板据此保留这一条（普通击败在道具模式下由积分行代替）
-    const isRemoteDiceMove = Boolean(itemRoll);
+    // 遥控骰子的击败没有积分行，面板据此保留这一条（其余击败在道具模式下由积分行代替）
+    const isRemoteDiceMove = itemRoll === 'remote-dice';
     gameState.recordFirstBeater(player);
     moveBeats.set(player, (moveBeats.get(player) || 0) + 1);
     if (silentReplay) {
@@ -231,7 +238,8 @@ async function playBeat(event) {
  * 积分按叠子上的颗数逐颗结算，粒子各从被撞棋子的位置飞出来。
  */
 async function playCollide(event) {
-    const { player, targetPlayer, chesses, energy } = event;
+    const { player, targetPlayer, chesses } = event;
+    const energy = beatDisplayEnergy(event);
     // 引擎给的 chesses 是叠子上每颗的 { player, index }（同一叠同属一家），兼容纯索引的老写法
     const victims = (Array.isArray(chesses) ? chesses : []).map((entry) => (
         entry && typeof entry === 'object' ? { player: entry.player ?? targetPlayer, index: entry.index } : { player: targetPlayer, index: entry }
@@ -258,7 +266,7 @@ async function playCollide(event) {
 }
 
 async function playReset(event, diceValue = 0) {
-    const { player } = event;
+    const { player, pieces } = event;
     gameInfo.addThreeSixesPenalty(player, true);
     if (silentReplay) return;
     // 这段回基地的演出期间别让 AI 接着出手，骰子也不许被别的渲染改成准备态
@@ -271,11 +279,11 @@ async function playReset(event, diceValue = 0) {
         diceDisplay.className = 'dice-icon dice-penalty-warning rolled dice-glowing';
     }
 
+    // 事件里给的是实际回基地的棋子编号（已到终点的不算）；老事件没带就退回全部
     const count = gameState.pieceCount || 4;
-    audioManager.playBeatSound();
-    for (let index = 0; index < count; index++) {
-        animation.moveChessToStart(player, index, null, true);
-    }
+    const moved = Array.isArray(pieces) ? pieces : Array.from({ length: count }, (_, index) => index);
+    if (moved.length) audioManager.playBeatSound();
+    moved.forEach((index) => animation.moveChessToStart(player, index, null, true));
     await sleep(FINISH_DELAY);
     gameState.setThreeSixesPenaltyActive?.(false);
 }
@@ -594,6 +602,7 @@ async function play(events) {
     pendingShake = null;
     moveDistances = new Map();
     moveBeats = new Map();
+    moveCollisions = new Map();
     // skip / pass 事件自身不带点数与道具，沿用同一批事件里最近一次掷骰的
     let lastDiceValue = 0;
     let lastDiceItem = null;
@@ -644,6 +653,7 @@ async function replay(events) {
     silentReplay = true;
     moveDistances = new Map();
     moveBeats = new Map();
+    moveCollisions = new Map();
     gameInfo.setSilentMode?.(true);
     try {
         let lastDiceValue = 0;

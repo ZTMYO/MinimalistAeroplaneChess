@@ -9,6 +9,9 @@
     <meta http-equiv="Expires" content="0">
     <title>极简飞行棋</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem("flyingChess.theme")==="dark"?"dark":"light";}catch(e){}</script>
+
+    <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -611,7 +614,7 @@
 
             <!-- 游戏规则面板 -->
             <div class="control-panel" id="rulesPanelWrapper" style="display: none;">
-                <div class="control-content">
+                <div class="control-content" data-titles-view>
                     <div class="control-section">
                         <div class="config-header">
                             <button class="back-btn" id="rulesBackBtn">
@@ -620,10 +623,11 @@
                                     <path d="M19 12H5M12 19l-7-7 7-7" />
                                 </svg>
                             </button>
-                            <h3>游戏规则</h3>
+                            <h3 data-rules-title>游戏规则</h3>
+                            <button class="rules-view-toggle" data-rules-toggle type="button">称号一览</button>
                         </div>
                         <div class="game-rules-panel">
-                            <div class="rules-content">
+                            <div class="rules-content" data-rules-body>
                                 <div class="rule-section">
                                     <h4>一、胜利条件与行进次序</h4>
                                     <div class="rule-content">
@@ -662,7 +666,7 @@
                                                 <p>摇到点数<span class="dice-special">6</span>获额外1次投骰子机会。</p>
                                             </div>
                                             <div class="sub-content-item bonus-sub-item">
-                                                <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家所有棋子回基地，回合结束。</p>
+                                                <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家未到终点的棋子全部回基地，回合结束。</p>
                                             </div>
 
                                         </div>
@@ -767,7 +771,7 @@
                                             <h5><span class="energy-value-text">积分</span></h5>
                                             <div class="sub-content-item energy-sub-item">
                                                 <p>击败对手棋子可获得积分，单次得分 =（基础 <span class="energy-value-text">15</span> 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 <span class="energy-value-text">100</span>。</p>
-                                                <p>道具骰子造成的击败不计分。</p>
+                                                <p>遥控骰子造成的击败不能获取积分。</p>
                                             </div>
                                         </div>
 
@@ -854,6 +858,7 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="titles-gallery" data-titles-gallery style="display: none;"></div>
                         </div>
                     </div>
                 </div>
@@ -917,7 +922,7 @@
                     <h3>道具模式</h3>
                     <ul>
                         <li>击败对手棋子可获得积分，单次得分 =（基础 15 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 100。</li>
-                        <li>道具骰子造成的击败不计分。</li>
+                        <li>遥控骰子造成的击败不能获取积分。</li>
                         <li>消耗积分兑换道具，在投掷前使用：</li>
                         <li class="sub-item">盲盒（15 分）— 随机获得 0~40 积分；开盒后本回合立即结束，自身积分 ≥ 40 时不可使用</li>
                         <li class="sub-item">传送门（40 分）— 将己方一颗不在基地、也未到终点的棋子传送到随机空位上；传送后本回合结束，不触发跳子或飞棋</li>

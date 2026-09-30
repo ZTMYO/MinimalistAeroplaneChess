@@ -1,76 +1,3 @@
-:root {
-    /* 玩家颜色变量 - 低饱和度扁平色彩 */
-    --player-1-color: #a6d8b7;
-    /* 玩家1：薄荷绿 */
-    --player-2-color: #ecbd99;
-    /* 玩家2：浅橘色 */
-    --player-3-color: #afccea;
-    /* 玩家3：天蓝色 */
-    --player-4-color: #f7a099;
-    /* 玩家4：浅红色 */
-
-    /* UI元素统一颜色变量 */
-    --ui-default-color: rgba(56, 49, 81, 0.7);
-    --ui-hover-color: rgba(59, 52, 84, 0.9);
-
-    /* 棋子淡色填充颜色变量 */
-    --player-1-fill: #d4ede3;
-    --player-2-fill: #f5dcc8;
-    --player-3-fill: #dce8f5;
-    --player-4-fill: #fcc9c6;
-
-    /* 统计表格专用：极淡色背景变量 */
-    --player-1-stats-bg: #e6f5ec;
-    --player-2-stats-bg: #f9ede3;
-    --player-3-stats-bg: #e9f2fb;
-    --player-4-stats-bg: #fdf0ef;
-
-    --player-1-border: #93c8b2;
-    --player-2-border: #e9b489;
-    --player-3-border: #a3bfdc;
-    --player-4-border: #dd9793;
-    /* 骰面上的玩家色 */
-    --player-1-dice: #35ae61;
-    --player-2-dice: #dd7022;
-    --player-3-dice: #4777c5;
-    --player-4-dice: #fc6666;
-    /* 轨道颜色变量 - 深色线条 */
-    --track-primary: #3d3530;
-    --track-secondary: #5c534e;
-    --track-accent: #2d241f;
-    --track-highlight: #1a1614;
-    /* 背景颜色变量 - 米色系 */
-    --bg-light-1: #f5f2ed;
-    --bg-light-2: #ebe8e3;
-
-    /* 透明度变量 */
-    --border-opacity-min: 0.5;
-    --border-opacity-max: 1;
-
-    /* 边框圆角变量 */
-    --radius-base: 8px;
-    --radius-full: 50%;
-
-    /* 边框颜色变量 - 深色线条 */
-    --border-light: rgba(61, 53, 45, 0.9);
-    --border-medium: rgba(61, 53, 45, 0.6);
-    --border-soft: rgba(61, 53, 45, 0.4);
-    --border-faint: rgba(61, 53, 45, 0.3);
-    --border-very-faint: rgba(61, 53, 45, 0.2);
-    --border-almost-none: rgba(61, 53, 45, 0.15);
-
-    /* 背景颜色变量 - 浅色背景 */
-    --bg-medium: rgba(255, 253, 250, 1);
-    --bg-soft: rgba(255, 253, 250, 0.6);
-    --bg-faint: rgba(255, 253, 250, 0.4);
-    --bg-very-faint: rgba(255, 253, 250, 0.3);
-    --bg-almost-none: rgba(0, 0, 0, 0.1);
-    --font-faint: rgba(92, 83, 78, 1);
-
-    /* 模态框阴影 - 简约阴影 */
-    --modal-shadow: 0 2px 8px rgba(92, 83, 78, 0.15);
-}
-
 * {
     -webkit-user-select: none;
     user-select: none;
@@ -89,7 +16,7 @@ body {
     min-height: 100vh;
     overflow-x: hidden;
     overflow-y: auto;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 /* 大屏优化：仅游戏页在宽高充足时垂直居中，避免全屏时整体偏上 */
@@ -549,7 +476,7 @@ body {
     align-items: center;
     z-index: 1;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--glow-1);
 }
 
 .player-info {
@@ -608,25 +535,25 @@ body {
 .player-1-defeat,
 .energy-gain-text.player-1 {
     color: var(--player-1-color);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    text-shadow: 0 1px 2px var(--shadow-3);
 }
 
 .player-2-defeat,
 .energy-gain-text.player-2 {
     color: var(--player-2-color);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    text-shadow: 0 1px 2px var(--shadow-3);
 }
 
 .player-3-defeat,
 .energy-gain-text.player-3 {
     color: var(--player-3-color);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    text-shadow: 0 1px 2px var(--shadow-3);
 }
 
 .player-4-defeat,
 .energy-gain-text.player-4 {
     color: var(--player-4-color);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    text-shadow: 0 1px 2px var(--shadow-3);
 }
 
 /* 积分条基础样式保持不变 */
@@ -701,7 +628,7 @@ body {
     position: relative;
     border: 2px solid var(--current-player-color);
     z-index: 1;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 1px 3px var(--shadow-2);
     box-sizing: border-box;
 }
 
@@ -735,7 +662,7 @@ body {
 /* 积分数值显示 */
 .energy-value {
     font-size: 10px;
-    color: #2d241f;
+    color: var(--text-primary);
     text-align: center;
     font-weight: bold;
     text-shadow: none;
@@ -748,9 +675,9 @@ body {
     height: 5px;
     border-radius: var(--radius-full);
     position: absolute;
-    background-color: var(--energy-particle-color, rgba(255, 255, 255, 0.9));
+    background-color: var(--energy-particle-color, var(--white));
     transform: scale(0);
-    box-shadow: 0 0 1px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 1px var(--shadow-3);
 }
 
 .energy-particle-layer {
@@ -768,7 +695,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 8px var(--shadow-2);
 }
 
 .player-emoji {
@@ -777,7 +704,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--white);
 }
 
 .player-emoji svg {
@@ -804,7 +731,7 @@ body {
     font-size: 14px;
     font-weight: bold;
     text-shadow: none;
-    color: #2d241f;
+    color: var(--text-primary);
     word-break: break-word;
     overflow-wrap: break-word;
     max-width: 90px;
@@ -813,26 +740,26 @@ body {
 .player-1-avatar {
     background: var(--player-1-color);
     border: 2px solid var(--player-1-border);
-    color: white;
+    color: var(--white);
     /* 默认状态下不显示阴影 */
 }
 
 .player-2-avatar {
     background: var(--player-2-color);
     border: 2px solid var(--player-2-border);
-    color: white;
+    color: var(--white);
 }
 
 .player-3-avatar {
     background: var(--player-3-color);
     border: 2px solid var(--player-3-border);
-    color: white;
+    color: var(--white);
 }
 
 .player-4-avatar {
     background: var(--player-4-color);
     border: 2px solid var(--player-4-border);
-    color: white;
+    color: var(--white);
 }
 
 .player-avatar-active::after {
@@ -902,8 +829,8 @@ body {
     height: 40px;
     cursor: pointer;
     transition: all 0.3s ease;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
-    background: rgba(255, 255, 255, 0.05);
+    filter: drop-shadow(0 2px 4px var(--shadow-2));
+    background: var(--glow-1);
     border-radius: 8px;
     padding: 4px;
     color: var(--ui-default-color);
@@ -912,7 +839,7 @@ body {
 .chat-icon:hover {
     opacity: 1;
     transform: scale(1.1);
-    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+    filter: drop-shadow(0 4px 8px var(--shadow-2));
     color: var(--ui-hover-color);
 }
 
@@ -932,7 +859,7 @@ body {
 }
 
 .lightning-btn.active .lightning-icon {
-    color: #f1c40f;
+    color: var(--lightning);
 }
 
 /* 道具图标 */
@@ -941,8 +868,8 @@ body {
     height: 40px;
     cursor: pointer;
     transition: all 0.3s ease;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
-    background: rgba(255, 255, 255, 0.05);
+    filter: drop-shadow(0 2px 4px var(--shadow-2));
+    background: var(--glow-1);
     border-radius: 8px;
     padding: 4px;
     color: var(--ui-default-color);
@@ -950,7 +877,7 @@ body {
 
 .skill-icon:hover {
     transform: scale(1.1);
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+    filter: drop-shadow(0 2px 4px var(--shadow-2));
     color: var(--ui-hover-color);
 }
 
@@ -1000,8 +927,8 @@ body {
 /* 骰子位置的积分获得数值样式 */
 .energy-gain-text {
     font-size: 32px;
-    color: var(--text-color, #FFD700);
-    text-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+    color: var(--text-color, var(--gold));
+    text-shadow: 0 0 10px var(--shadow-2);
     animation: energyGainFloat 1s ease-out;
     position: relative;
     z-index: 10;
@@ -1032,12 +959,12 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glow-1);
 }
 
 .skill-panel-header h4 {
     margin: 0;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 16px;
     font-weight: bold;
     text-shadow: none;
@@ -1052,7 +979,7 @@ body {
 
 .skill-energy-display {
     font-size: 14px;
-    color: #2d241f;
+    color: var(--text-primary);
     font-weight: bold;
     text-shadow: none;
 }
@@ -1073,7 +1000,7 @@ body {
     align-items: center;
     gap: 12px;
     padding: 12px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glow-1);
     border: 2px solid var(--border-medium);
     border-radius: var(--radius-base);
     cursor: pointer;
@@ -1099,7 +1026,7 @@ body {
 .skill-item.active {
     border-color: rgba(76, 175, 80, 0.8);
     background: rgba(76, 175, 80, 0.08);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px var(--shadow-1);
 }
 
 /* 道具图标容器 */
@@ -1110,15 +1037,15 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1.5px solid var(--border-faint);
+    border: 1.5px solid var(--border-soft);
     border-radius: var(--radius-base);
-    color: #2d241f;
+    color: var(--text-primary);
     box-shadow: none;
 }
 
 .skill-item:hover .skill-icon-container {
     border-color: var(--border-medium);
-    box-shadow: 0 1px 2px var(--border-faint);
+    box-shadow: 0 1px 2px var(--border-soft);
 }
 
 /* 道具信息 */
@@ -1135,19 +1062,19 @@ body {
 .skill-name {
     font-size: 16px;
     font-weight: bold;
-    color: #2d241f;
+    color: var(--text-primary);
     text-shadow: none;
 }
 
 .skill-desc {
     font-size: 12px;
-    color: #2d241f;
+    color: var(--text-primary);
     line-height: 1.4;
 }
 
 .skill-cost {
     font-size: 11px;
-    color: rgba(45, 36, 31, 0.75);
+    color: var(--text-primary-soft);
     font-weight: bold;
     text-shadow: none;
 }
@@ -1158,14 +1085,14 @@ body {
 }
 
 .skill-panel-content::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--glow-1);
     border-radius: 3px;
 }
 
 .skill-panel-content::-webkit-scrollbar-thumb {
     background: var(--border-soft);
     border-radius: 3px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 2px var(--shadow-2);
 }
 
 .skill-panel-content::-webkit-scrollbar-thumb:hover {
@@ -1178,7 +1105,7 @@ body {
     font-size: 75px;
     cursor: pointer;
     transition: all 0.3s ease;
-    color: rgba(60, 52, 48, 0.85);
+    color: var(--text-primary-soft);
     position: relative;
     z-index: 3;
     margin: 20px 0;
@@ -1186,7 +1113,7 @@ body {
     height: 90px;
     width: 120px;
     box-sizing: border-box;
-    text-shadow: 0 2px 4px rgba(255, 255, 255, 0.1);
+    text-shadow: 0 2px 4px var(--glow-2);
     border-radius: 12px;
     padding: 0;
     display: flex;
@@ -1198,8 +1125,8 @@ body {
 /* 骰子未投掷状态 */
 .dice-icon.not-rolled {
     color: var(--ui-default-color);
-    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.2));
-    text-shadow: 0 2px 4px rgba(255, 255, 255, 0.1);
+    filter: drop-shadow(0 3px 6px var(--shadow-2));
+    text-shadow: 0 2px 4px var(--glow-2);
 }
 
 #mysteryBoxIcon svg,
@@ -1211,28 +1138,49 @@ body {
 .dice-icon:hover {
     transform: scale(1.2);
     color: var(--ui-hover-color);
-    filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.3));
-    text-shadow: 0 2px 6px rgba(255, 255, 255, 0.15);
+    filter: drop-shadow(0 6px 12px var(--shadow-3));
+    text-shadow: 0 2px 6px var(--glow-2);
 }
 
 .dice-icon:active {
     transform: scale(0.95);
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.15));
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.05);
+    filter: drop-shadow(0 1px 2px var(--shadow-2));
+    text-shadow: 0 1px 2px var(--glow-1);
 }
 
 /* 骰子禁用状态 */
 .dice-icon.disabled {
     pointer-events: none;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.05);
-    opacity: 0.6;
+    filter: drop-shadow(0 1px 2px var(--shadow-1));
+    text-shadow: 0 1px 2px var(--glow-1);
+    opacity: var(--disabled-opacity);
+}
+
+/* 掷骰闪烁：亮色下保持中性色，暗色下按掷骰者的玩家配色 */
+.dice-icon.dice-flashing {
+    color: var(--text-primary-soft);
+}
+
+:root[data-theme="dark"] .dice-icon.dice-flashing.player-1 {
+    color: var(--player-1-dice);
+}
+
+:root[data-theme="dark"] .dice-icon.dice-flashing.player-2 {
+    color: var(--player-2-dice);
+}
+
+:root[data-theme="dark"] .dice-icon.dice-flashing.player-3 {
+    color: var(--player-3-dice);
+}
+
+:root[data-theme="dark"] .dice-icon.dice-flashing.player-4 {
+    color: var(--player-4-dice);
 }
 
 .dice-icon.disabled:hover {
     cursor: not-allowed;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.05);
+    filter: drop-shadow(0 1px 2px var(--shadow-1));
+    text-shadow: 0 1px 2px var(--glow-1);
 }
 
 /* 遥控骰子特效（颜色见下方「覆盖玩家配色」）*/
@@ -1243,22 +1191,22 @@ body {
 /* 骰子已投掷状态 - 玩家颜色 */
 .dice-icon.rolled.player-1 {
     color: var(--player-1-dice);
-    text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
+    text-shadow: 0 2px 2px var(--glow-2);
 }
 
 .dice-icon.rolled.player-2 {
     color: var(--player-2-dice);
-    text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
+    text-shadow: 0 2px 2px var(--glow-2);
 }
 
 .dice-icon.rolled.player-3 {
     color: var(--player-3-dice);
-    text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
+    text-shadow: 0 2px 2px var(--glow-2);
 }
 
 .dice-icon.rolled.player-4 {
     color: var(--player-4-dice);
-    text-shadow: 0 2px 2px rgba(255, 255, 255, 0.15);
+    text-shadow: 0 2px 2px var(--glow-2);
 }
 
 .dice-icon.rolled.remote-dice,
@@ -1302,7 +1250,7 @@ body {
     font-weight: bold;
     color: var(--ui-default-color);
     background: transparent;
-    text-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 2px 3px var(--shadow-2);
     pointer-events: none;
 }
 
@@ -1354,7 +1302,7 @@ body {
     width: 50px;
     height: 50px;
     border: 4px solid currentColor;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 4px var(--shadow-2);
     z-index: -1;
 }
 
@@ -1362,25 +1310,25 @@ body {
 .polyhedral-dice-display.player-1-color {
     color: var(--player-1-dice);
     border-color: var(--player-1-dice);
-    opacity: 0.6;
+    opacity: var(--disabled-opacity);
 }
 
 .polyhedral-dice-display.player-2-color {
     color: var(--player-2-dice);
     border-color: var(--player-2-dice);
-    opacity: 0.6;
+    opacity: var(--disabled-opacity);
 }
 
 .polyhedral-dice-display.player-3-color {
     color: var(--player-3-dice);
     border-color: var(--player-3-dice);
-    opacity: 0.6;
+    opacity: var(--disabled-opacity);
 }
 
 .polyhedral-dice-display.player-4-color {
     color: var(--player-4-dice);
     border-color: var(--player-4-dice);
-    opacity: 0.6;
+    opacity: var(--disabled-opacity);
 }
 
 /* 传送门图标样式 */
@@ -1462,7 +1410,7 @@ body {
 .pause-text {
     margin-bottom: 15px;
     font-weight: bold;
-    text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.8);
+    text-shadow: 2px 2px 4px var(--glow-2);
     min-width: 200px;
     text-align: center;
 }
@@ -1493,8 +1441,8 @@ body {
 }
 
 .chat-input:focus {
-    box-shadow: 0 0 2px white,
-        inset 0 0 2px white;
+    box-shadow: 0 0 2px var(--white),
+        inset 0 0 2px var(--white);
 }
 
 .chat-input::placeholder {
@@ -1554,10 +1502,10 @@ body {
     left: 0;
     width: 280px;
     max-height: 200px;
-    background: rgb(245, 245, 240);
+    background: var(--warm-white);
     border: 1.5px solid var(--border-light);
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px var(--shadow-1);
     display: none;
     z-index: 1000;
 }
@@ -1585,7 +1533,7 @@ body {
 }
 
 .emoji-panel-content::-webkit-scrollbar-track {
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-radius: 3px;
 }
 
@@ -1615,7 +1563,7 @@ body {
 }
 
 .emoji-item:hover {
-    background: rgba(200, 195, 185, 0.3);
+    background: var(--overlay-warm);
     transform: scale(1.15);
 }
 
@@ -1628,7 +1576,7 @@ body {
     height: 40px;
     min-width: 40px;
     min-height: 40px;
-    border: 4px solid var(--border-faint);
+    border: 4px solid var(--border-soft);
     border-top: 4px solid var(--ui-default-color);
     border-radius: var(--radius-full);
     animation: spin 1s linear infinite;
@@ -1805,55 +1753,61 @@ body {
 #board-svg use[href="#chess"].player-1 {
     stroke: #7fb089;
     /* 更深的薄荷绿 */
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
 }
 
 #board-svg use[href="#chess"].player-2 {
     stroke: #d4a574;
     /* 更深的橘色 */
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
 }
 
 #board-svg use[href="#chess"].player-3 {
     stroke: #8fb4d4;
     /* 更深的蓝色 */
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
 }
 
 #board-svg use[href="#chess"].player-4 {
     stroke: #e67d73;
     /* 更深的红色 */
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
 }
 
 /* 为到达基地的棋子（勾号）添加相同的样式 */
 #board-svg use[href="#checkmark"].player-1 {
     stroke: none;
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
     fill: none;
 }
 
 #board-svg use[href="#checkmark"].player-2 {
     stroke: none;
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
     fill: none;
 }
 
 #board-svg use[href="#checkmark"].player-3 {
     stroke: none;
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
     fill: none;
 }
 
 #board-svg use[href="#checkmark"].player-4 {
     stroke: none;
-    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    filter: drop-shadow(0 1px 1px var(--shadow-3));
     fill: none;
+}
+
+/* 棋子阴影滤镜的着色（属性里写不了 var，改由 CSS 给色） */
+#chessShadow .chess-shadow-flood {
+    flood-color: var(--shadow-2);
+    flood-opacity: 1;
 }
 
 /* 棋子基础样式 */
 #board-svg use[href="#chess"] {
-    filter: drop-shadow(1px 0.5px 0.5px rgba(0, 0, 0, 0.15));
+    filter: drop-shadow(1px 0.5px 0.5px var(--shadow-2));
 }
 
 /* 为到达终点的棋子（半透明状态）变成纯色单色 */
@@ -1941,7 +1895,7 @@ body {
 }
 
 #board-svg.teleport-focus use[href="#chess"].teleport-spotlight {
-    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.9));
+    filter: drop-shadow(0 0 3px var(--white));
 }
 
 .no-transition {
@@ -1987,7 +1941,7 @@ use[href="#checkmark"] {
 }
 
 .chess-stacked {
-    stroke: rgba(0, 0, 0, 0.3) !important;
+    stroke: var(--shadow-3) !important;
     stroke-width: 1.5px;
 }
 
@@ -2059,7 +2013,7 @@ use[href="#checkmark"] {
     text-align: center;
     position: relative;
     text-transform: uppercase;
-    color: #2d241f;
+    color: var(--text-primary);
     text-shadow: none;
 }
 
@@ -2111,7 +2065,7 @@ use[href="#checkmark"] {
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 4px 4px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 4px var(--shadow-3);
 }
 
 /* 游戏信息面板 */
@@ -2157,13 +2111,13 @@ use[href="#checkmark"] {
 }
 
 .game-info-content::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--shadow-3);
     border-radius: 3px;
     transition: background 0.3s ease;
 }
 
 .game-info-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--scrim-strong);
 }
 
 /* 信息消息样式 */
@@ -2172,7 +2126,7 @@ use[href="#checkmark"] {
     line-height: 1.4;
     font-size: 14px;
     word-wrap: break-word;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .info-message:last-child {
@@ -2202,12 +2156,12 @@ use[href="#checkmark"] {
 
 /* 动作文字样式 */
 .action-text {
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 /* 聊天消息文字样式 */
 .chat-message-text {
-    color: #2d241f;
+    color: var(--text-primary);
     padding: 3px 4px;
     display: inline-block;
 }
@@ -2264,7 +2218,7 @@ use[href="#checkmark"] {
     text-shadow: none;
 }
 .move-type-bonus {
-    color: #efa0c0;
+    color: var(--collision);
     font-weight: bold;
     text-shadow: none;
 }
@@ -2291,14 +2245,14 @@ use[href="#checkmark"] {
 
 /* 传送距离文字样式 */
 .teleport-distance-text {
-    color: #2d241f;
+    color: var(--text-primary);
     font-weight: bold;
     text-shadow: none;
 }
 
 /* 普通骰子点数 */
 .dice-text {
-    color: #2d241f;
+    color: var(--text-primary);
     font-weight: bold;
 }
 
@@ -2319,7 +2273,7 @@ use[href="#checkmark"] {
     text-shadow: none;
 }
 .collision-bonus {
-    color: #efa0c0;
+    color: var(--collision);
     font-weight: bold;
     text-shadow: none;
 }
@@ -2379,7 +2333,7 @@ use[href="#checkmark"] {
 
 .control-section h3,
 .game-panel-section h3 {
-    color: #2d241f;
+    color: var(--text-primary);
     margin: 0 0 3px 0;
     font-size: 19px;
     font-weight: bold;
@@ -2395,7 +2349,7 @@ use[href="#checkmark"] {
     position: relative;
     padding: 10px;
     border-bottom: none;
-    background: linear-gradient(to right, var(--border-faint) 60%, transparent 40%) repeat-x 0 100%;
+    background: linear-gradient(to right, var(--border-soft) 60%, transparent 40%) repeat-x 0 100%;
     background-size: 13px 1px;
 }
 
@@ -2421,7 +2375,7 @@ use[href="#checkmark"] {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 11px;
     /* 进一步减小字号 */
     font-weight: 500;
@@ -2431,7 +2385,7 @@ use[href="#checkmark"] {
 
 .panel-switch-btn:hover {
     background: #f5bf60;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .panel-switch-btn:active {
@@ -2453,7 +2407,7 @@ use[href="#checkmark"] {
 }
 
 .chat-info-content::-webkit-scrollbar-track {
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-radius: 3px;
 }
 
@@ -2472,7 +2426,7 @@ use[href="#checkmark"] {
     line-height: 1.4;
     font-size: 14px;
     word-wrap: break-word;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .chat-info-content .info-message:last-child {
@@ -2484,7 +2438,7 @@ use[href="#checkmark"] {
     top: 20px;
     left: 20px;
     padding: 8px 10px;
-    color: #2d241f;
+    color: var(--text-primary);
     border: 2px solid var(--border-light);
     background: none;
     border-radius: var(--radius-base);
@@ -2497,7 +2451,7 @@ use[href="#checkmark"] {
 
 .control-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 3px var(--shadow-2);
 }
 
 .control-btn:disabled {
@@ -2603,7 +2557,7 @@ use[href="#checkmark"] {
     background: var(--ui-default-color);
     border: none;
     border-radius: 16px;
-    box-shadow: 0 2px 2px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 2px var(--shadow-3);
     cursor: pointer;
     transition: all 0.3s ease;
     display: flex;
@@ -2636,20 +2590,20 @@ use[href="#checkmark"] {
 .menu-card-btn:hover {
     transform: translateY(-2px);
     opacity: 0.9;
-    box-shadow: 0 6px 6px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 6px 6px var(--shadow-3);
 }
 
 .menu-card-btn:active {
     transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px var(--shadow-1);
 }
 
 .menu-btn-text {
-    color: white;
+    color: var(--white);
     font-size: 1.2rem;
     font-weight: 600;
     letter-spacing: 2px;
-    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+    text-shadow: 1px 1px 2px var(--shadow-3);
 }
 
 .menu-btn-icon {
@@ -2657,8 +2611,8 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     margin-right: 12px;
-    color: white;
-    filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.3));
+    color: var(--white);
+    filter: drop-shadow(1px 1px 2px var(--shadow-3));
 }
 
 .menu-btn-icon svg {
@@ -2677,7 +2631,7 @@ use[href="#checkmark"] {
 .mode-btn {
     width: 100%;
     padding: 16px 20px;
-    color: #2d241f;
+    color: var(--text-primary);
     border: 2px solid var(--border-light);
     background: none;
     border-radius: 12px;
@@ -2695,7 +2649,7 @@ use[href="#checkmark"] {
 
 .mode-btn:hover {
     text-shadow: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 12px var(--shadow-1);
     transform: translateY(-2px) translateZ(0);
 }
 
@@ -2734,9 +2688,9 @@ use[href="#checkmark"] {
     width: 100%;
     padding: 10px 14px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--glow-1);
     border: 1.5px solid var(--border-soft);
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 14px;
 }
 
@@ -2763,7 +2717,7 @@ use[href="#checkmark"] {
 }
 
 .public-room-list::-webkit-scrollbar-track {
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-radius: 3px;
 }
 
@@ -2798,7 +2752,7 @@ use[href="#checkmark"] {
     padding: 10px 14px;
     border-radius: 12px;
     border: 1.5px solid var(--border-medium);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--glow-1);
     cursor: pointer;
     transition: all 0.2s ease;
 }
@@ -2818,24 +2772,24 @@ use[href="#checkmark"] {
 }
 
 .status-badge.waiting {
-    color: #5ca45f;
-    border: 1.5px solid #5ca45f;
+    color: var(--status-ok);
+    border: 1.5px solid var(--status-ok);
 }
 
 .status-badge.playing {
-    color: #e8c852;
-    border: 1.5px solid #e8c852;
+    color: var(--status-wait);
+    border: 1.5px solid var(--status-wait);
 }
 
 .status-badge.finished {
-    color: #9e9e9e;
-    border: 1px solid #9e9e9e;
+    color: var(--status-off);
+    border: 1px solid var(--status-off);
 }
 
 .public-room-item:hover {
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-color: var(--border-light);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 3px var(--shadow-2);
 }
 
 .public-room-name {
@@ -2894,7 +2848,7 @@ use[href="#checkmark"] {
 .back-btn {
     background: none;
     border: 2px solid transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     border-radius: var(--radius-full);
     padding: 4px;
     cursor: pointer;
@@ -2931,7 +2885,7 @@ use[href="#checkmark"] {
 .retry-btn {
     background: transparent;
     border: none;
-    color: #2d241f;
+    color: var(--text-primary);
     padding: 12px 24px;
     border-radius: 25px;
     cursor: pointer;
@@ -2972,7 +2926,7 @@ use[href="#checkmark"] {
 
 .room-title-input:focus {
     border-color: var(--border-medium);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--glow-1);
 }
 
 /* 调试面板样式 */
@@ -3075,7 +3029,7 @@ use[href="#checkmark"] {
 
 .room-chat-drawer.is-open {
     width: min(280px, calc(100% - 8px - var(--control-content-padding-right, 10px)));
-    background: #fdfaf7;
+    background: var(--warm-white);
     border: 2px solid var(--border-light);
     border-right: none;
     box-shadow: var(--modal-shadow);
@@ -3090,8 +3044,8 @@ use[href="#checkmark"] {
     border: 2px solid var(--border-light);
     border-right: none;
     border-radius: 10px 0 0 10px;
-    background: #fdfaf7;
-    color: #2d241f;
+    background: var(--warm-white);
+    color: var(--text-primary);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -3166,7 +3120,7 @@ use[href="#checkmark"] {
 }
 
 .room-chat-header {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: bold;
     text-align: center;
@@ -3178,7 +3132,7 @@ use[href="#checkmark"] {
     border: 1.5px solid var(--border-soft);
     border-radius: 8px;
     padding: 8px;
-    background: rgba(255, 255, 255, 0.35);
+    background: var(--bg-faint);
 }
 
 .room-chat-messages::-webkit-scrollbar {
@@ -3190,13 +3144,13 @@ use[href="#checkmark"] {
 }
 
 .room-chat-messages::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--shadow-3);
     border-radius: 3px;
     transition: background 0.3s ease;
 }
 
 .room-chat-messages::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--scrim-strong);
 }
 
 .room-chat-messages::-webkit-scrollbar-button {
@@ -3210,7 +3164,7 @@ use[href="#checkmark"] {
     font-size: 12px;
     line-height: 1.35;
     word-break: break-word;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .room-chat-item:last-child {
@@ -3235,7 +3189,7 @@ use[href="#checkmark"] {
     border: none;
     border-radius: 50%;
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3259,7 +3213,7 @@ use[href="#checkmark"] {
     border-radius: 8px;
     background: transparent;
     padding: 5px 8px;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 13px;
 }
 
@@ -3269,7 +3223,7 @@ use[href="#checkmark"] {
     border: none;
     border-radius: 50%;
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     padding: 0;
     cursor: pointer;
     display: flex;
@@ -3292,7 +3246,7 @@ use[href="#checkmark"] {
     bottom: 38px;
     width: 257px;
     max-height: 132px;
-    background: #fefcfa;
+    background: var(--surface);
     border: 1.5px solid var(--border-light);
     border-radius: 4px;
     display: none;
@@ -3347,7 +3301,7 @@ use[href="#checkmark"] {
 }
 
 .room-chat-emoji-item:hover {
-    background: rgba(200, 195, 185, 0.3);
+    background: var(--overlay-warm);
     transform: scale(1.1);
 }
 
@@ -3413,7 +3367,7 @@ use[href="#checkmark"] {
     min-width: 34px;
     padding: 5px 8px;
     border-radius: 999px;
-    border: 1px solid var(--border-faint);
+    border: 1px solid var(--border-soft);
     background: transparent;
     color: var(--text-primary);
     font-size: 12px;
@@ -3460,22 +3414,22 @@ use[href="#checkmark"] {
 }
 
 .debug-move-btn.forward {
-    background: rgba(166, 216, 183, 0.4);
-    border-color: rgba(166, 216, 183, 0.6);
+    background: color-mix(in srgb, var(--player-1-color) 40%, transparent);
+    border-color: color-mix(in srgb, var(--player-1-color) 60%, transparent);
     color: var(--text-primary);
 }
 
 .debug-move-btn.backward {
-    background: rgba(247, 160, 153, 0.4);
-    border-color: rgba(247, 160, 153, 0.6);
+    background: color-mix(in srgb, var(--player-4-color) 40%, transparent);
+    border-color: color-mix(in srgb, var(--player-4-color) 60%, transparent);
     color: var(--text-primary);
 }
 
 .debug-energy-btn {
     padding: 7px 10px;
-    background: rgba(236, 189, 153, 0.4);
+    background: color-mix(in srgb, var(--player-2-color) 40%, transparent);
     color: var(--text-primary);
-    border: 1.5px solid rgba(236, 189, 153, 0.6);
+    border: 1.5px solid color-mix(in srgb, var(--player-2-color) 60%, transparent);
     border-radius: var(--radius-base);
     cursor: pointer;
     font-size: 12px;
@@ -3484,8 +3438,8 @@ use[href="#checkmark"] {
 }
 
 .debug-energy-btn:hover {
-    background: rgba(236, 189, 153, 0.6);
-    border-color: rgba(236, 189, 153, 0.8);
+    background: color-mix(in srgb, var(--player-2-color) 60%, transparent);
+    border-color: color-mix(in srgb, var(--player-2-color) 80%, transparent);
     transform: translateY(-1px);
     box-shadow: var(--modal-shadow);
 }
@@ -3516,7 +3470,7 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: space-between;
     padding: 10px;
-    background: linear-gradient(to right, var(--border-faint) 60%, transparent 40%) repeat-x 0 100%;
+    background: linear-gradient(to right, var(--border-soft) 60%, transparent 40%) repeat-x 0 100%;
     background-size: 13px 1px;
 }
 
@@ -3558,7 +3512,7 @@ use[href="#checkmark"] {
 .progress-bar {
     width: 100%;
     height: 8px;
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-radius: 4px;
     overflow: hidden;
     position: relative;
@@ -3648,7 +3602,7 @@ use[href="#checkmark"] {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--scrim-strong);
     display: none;
     justify-content: center;
     align-items: center;
@@ -3667,7 +3621,7 @@ use[href="#checkmark"] {
     border: 1px solid var(--border-light);
     border-radius: 8px;
     padding: 0;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px var(--shadow-1);
     max-width: 400px;
     width: 90%;
     max-height: 80vh;
@@ -3683,27 +3637,27 @@ use[href="#checkmark"] {
     max-width: 500px;
     min-width: 300px;
     max-height: 90vh;
-    background: linear-gradient(135deg, rgba(245, 245, 240, 0.95), rgba(250, 248, 245, 0.9));
-    color: #2d241f;
+    background: linear-gradient(135deg, var(--bg-light-1), var(--bg-light-2));
+    color: var(--text-primary);
     border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px var(--shadow-1);
     backdrop-filter: blur(10px);
 }
 
 .rules-modal-content .modal-header {
     background: var(--bg-soft);
-    border-bottom: 1px solid rgba(200, 195, 185, 0.3);
+    border-bottom: 1px solid var(--overlay-warm);
     border-radius: 8px 8px 0 0;
     backdrop-filter: blur(5px);
 }
 
 .rules-modal-content .modal-header h2 {
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .modal-header {
     padding: 15px;
-    border-bottom: 1px solid var(--bg-almost-none);
+    border-bottom: 1px solid var(--shadow-1);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -3713,7 +3667,7 @@ use[href="#checkmark"] {
 
 .modal-header h2 {
     margin: 0;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: bold;
     text-shadow: none;
@@ -3738,11 +3692,11 @@ use[href="#checkmark"] {
     background: var(--bg-medium);
     border: 2px solid var(--border-light);
     border-radius: 8px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 24px var(--shadow-2);
 }
 .mode-rules-popup-header {
     padding: 14px 20px;
-    border-bottom: 1px solid var(--bg-almost-none);
+    border-bottom: 1px solid var(--shadow-1);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -3818,7 +3772,7 @@ use[href="#checkmark"] {
     white-space: nowrap;
     padding: 2px 8px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--glow-1);
 }
 
 /* 窄屏结算弹框：模式独占一行，时间戳和用时靠左挨在一起 */
@@ -3879,7 +3833,7 @@ use[href="#checkmark"] {
 }
 
 .modal-body::-webkit-scrollbar-thumb:hover {
-    background: rgba(187, 154, 101, 0.6);
+    background: var(--gold-soft);
 }
 
 .settlement-rankings {
@@ -3920,7 +3874,7 @@ use[href="#checkmark"] {
     backface-visibility: hidden;
     border-radius: 10px;
     border: 2px solid var(--border-medium);
-    box-shadow: 0 3px 2px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 3px 2px var(--shadow-1);
     display: flex;
     align-items: center;
     padding: 15px;
@@ -3958,7 +3912,7 @@ use[href="#checkmark"] {
     gap: 10px;
     padding: 8px 10px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.4);
+    background: var(--bg-faint);
 }
 
 /* 左栏：昵称与个数竖排，换行只发生在右栏的标签里 */
@@ -3992,7 +3946,7 @@ use[href="#checkmark"] {
     border-radius: 999px;
     font-size: 13px;
     font-weight: bold;
-    color: #2d241f;
+    color: var(--text-primary);
     background: rgba(101, 187, 158, 0.18);
     border: 1px solid rgba(101, 187, 158, 0.45);
 }
@@ -4001,7 +3955,7 @@ use[href="#checkmark"] {
     font-weight: normal;
     color: var(--ui-default-color);
     background: transparent;
-    border-color: rgba(0, 0, 0, 0.12);
+    border-color: var(--shadow-1);
 }
 
 .title-chip.tier-common {
@@ -4028,10 +3982,158 @@ use[href="#checkmark"] {
     border-color: rgba(224, 161, 58, 0.5);
 }
 
+/* 「称号一览」切换按钮：首页规则面板与局内规则弹框共用同一颗胶囊 */
+.rules-view-toggle {
+    background: transparent;
+    border: 1.5px solid var(--border-light);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--text-primary);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.25s ease;
+}
+
+.rules-view-toggle:hover {
+    border-color: var(--text-primary);
+}
+
+/* 首页规则面板：标题居中，按钮贴右上角 */
+.config-header .rules-view-toggle {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.config-header .rules-view-toggle:active {
+    transform: translateY(-50%) scale(0.95);
+}
+
+/* 局内规则弹框：按钮排在关闭按钮左边 */
+.rules-modal-content .modal-header {
+    gap: 8px;
+}
+
+.rules-modal-content .modal-header h2 {
+    margin-right: auto;
+}
+
+/* 称号一览：按稀有度配色的标签 + 一张张称号卡 */
+.titles-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+}
+
+.titles-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--border-soft);
+}
+
+.titles-group-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0 0 8px 0;
+    font-size: 15px;
+    color: var(--text-primary);
+}
+
+.titles-group-title em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--ui-default-color);
+}
+
+.titles-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.title-card {
+    padding: 9px 11px;
+    border-radius: 10px;
+    background: var(--bg-faint);
+    border: 1px solid var(--border-soft);
+}
+
+.title-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.title-chain-arrow {
+    color: var(--ui-default-color);
+    font-size: 12px;
+}
+
+.title-mode-tag {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px dashed var(--border-soft);
+    font-size: 10px;
+    color: var(--ui-default-color);
+}
+
+.title-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 7px 0 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.title-card-list li {
+    position: relative;
+    padding-left: 10px;
+    font-size: 12px;
+    color: var(--ui-default-color);
+}
+
+.title-card-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--border-medium);
+}
+
+.title-keyword {
+    color: var(--text-primary-soft);
+    font-weight: 700;
+}
+
+.title-card-desc {
+    margin: 7px 0 0 0;
+    font-size: 12px;
+    color: var(--ui-default-color);
+}
+
+.titles-default-note {
+    margin: 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ui-default-color);
+}
+
 .ranking-title-badge {
     font-size: 20px;
     font-weight: bold;
-    text-shadow: 0px 1px 1px rgba(0, 0, 0, 0.2);
+    text-shadow: 0px 1px 1px var(--shadow-2);
     letter-spacing: 1px;
 }
 
@@ -4063,9 +4165,9 @@ use[href="#checkmark"] {
     justify-content: center;
     font-size: 13px;
     font-weight: bold;
-    color: var(--font-faint);
+    color: var(--on-color-ink);
     border-radius: 3px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 2px var(--shadow-2);
     pointer-events: none;
 }
 
@@ -4084,9 +4186,9 @@ use[href="#checkmark"] {
     font-weight: bold;
     font-size: 18px;
     margin-right: 15px;
-    background: #fff;
+    background: var(--surface);
     color: #c6c6c6;
-    border: 1.5px solid var(--border-faint);
+    border: 1.5px solid var(--border-soft);
     border-radius: var(--radius-full);
     display: flex;
     align-items: center;
@@ -4094,29 +4196,29 @@ use[href="#checkmark"] {
     font-weight: bold;
     font-size: 18px;
     margin-right: 15px;
-    box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0px 1px 2px var(--shadow-2);
+    text-shadow: 0px 1px 2px var(--shadow-2);
 }
 
 .ranking-position.first {
-    border-color: #c3a14e;
+    border-color: var(--gold-muted);
     background-color: #fee39d;
-    color: #c3a14e;
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+    color: var(--gold-muted);
+    text-shadow: 0px 1px 2px var(--shadow-2);
 }
 
 .ranking-position.second {
     border-color: #c8c8c8;
     background-color: #d9d9d9;
     color: #7a7a7a;
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+    text-shadow: 0px 1px 2px var(--shadow-2);
 }
 
 .ranking-position.third {
     border-color: #c4a57b;
     background-color: #d4b896;
     color: #8b6f47;
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+    text-shadow: 0px 1px 2px var(--shadow-2);
 }
 
 /* 结算面板中的玩家头像 */
@@ -4136,8 +4238,8 @@ use[href="#checkmark"] {
     font-size: 18px;
     font-weight: bold;
     margin-bottom: 5px;
-    color: #2d241f;
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.2);
+    color: var(--text-primary);
+    text-shadow: 0px 1px 2px var(--shadow-2);
 }
 
 /* 玩家名称颜色 */
@@ -4177,7 +4279,7 @@ use[href="#checkmark"] {
 
 .modal-footer {
     padding: 15px;
-    border-top: 1px solid var(--bg-almost-none);
+    border-top: 1px solid var(--shadow-1);
     display: flex;
     justify-content: center;
     gap: 10px;
@@ -4195,14 +4297,14 @@ use[href="#checkmark"] {
     text-align: center;
     font-size: 24px;
     font-weight: bold;
-    color: #2d241f;
+    color: var(--text-primary);
     margin: 0 0 20px 0;
     text-shadow: none;
 }
 
 /* 完成度折线图样式 */
 .progress-chart-section {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glow-1);
     border-radius: 10px;
     margin-bottom: 10px;
 }
@@ -4211,7 +4313,7 @@ use[href="#checkmark"] {
     text-align: center;
     font-size: 16px;
     font-weight: bold;
-    color: #2d241f;
+    color: var(--text-primary);
     margin: 0 0 10px 0;
     text-shadow: none;
 }
@@ -4242,7 +4344,7 @@ use[href="#checkmark"] {
 }
 
 .chart-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(187, 154, 101, 0.6);
+    background: var(--gold-soft);
 }
 
 .chart-container canvas {
@@ -4257,7 +4359,7 @@ use[href="#checkmark"] {
 
 /* 骰子统计表格区域样式 */
 .dice-stats-section {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glow-1);
     border-radius: 10px;
     padding: 10px 10px;
 }
@@ -4265,7 +4367,7 @@ use[href="#checkmark"] {
 .dice-stats-table {
     width: 100%;
     border-collapse: collapse;
-    color: #2d241f;
+    color: var(--text-primary);
     border: 2px solid var(--border-light);
     table-layout: fixed;
 }
@@ -4275,7 +4377,7 @@ use[href="#checkmark"] {
     font-size: 13px;
     font-weight: bold;
     text-align: center;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--glow-1);
     border: 2px solid var(--border-light);
 }
 
@@ -4316,14 +4418,14 @@ use[href="#checkmark"] {
 }
 
 .dice-stats-table tbody tr:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--glow-1);
 }
 
 .dice-stats-table td {
     text-align: center;
     border: 2px solid var(--border-light);
     padding: 6px 2px;
-    text-shadow: 0px 1px 1px rgba(0, 0, 0, 0.3);
+    text-shadow: 0px 1px 1px var(--shadow-3);
     /* 添加极轻微的文字阴影 */
 }
 
@@ -4354,7 +4456,7 @@ use[href="#checkmark"] {
 .dice-stats-table .player-cell .count {
     display: block;
     font-weight: bold;
-    color: #2d241f;
+    color: var(--text-primary);
     margin-bottom: 0px;
 }
 
@@ -4506,7 +4608,7 @@ use[href="#checkmark"] {
 
 .btn-primary {
     padding: 8px 10px;
-    color: #2d241f;
+    color: var(--text-primary);
     border: 1.5px solid var(--border-light);
     background: none;
     border-radius: var(--radius-base);
@@ -4518,7 +4620,7 @@ use[href="#checkmark"] {
 }
 
 .btn-primary:hover {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 3px var(--shadow-2);
 }
 
 /* 主容器 */
@@ -4549,7 +4651,7 @@ use[href="#checkmark"] {
 }
 
 .rainbow-title span {
-    text-shadow: 0px 1px 1px rgba(0, 0, 0, 0.3);
+    text-shadow: 0px 1px 1px var(--shadow-3);
 }
 
 /* 多色标题样式 */
@@ -4642,7 +4744,7 @@ use[href="#checkmark"] {
 
 .index-footer {
     font-size: 0.8rem;
-    color: #2d241f;
+    color: var(--text-primary);
     text-align: center;
     margin-top: 20px;
     display: flex;
@@ -4679,7 +4781,7 @@ use[href="#checkmark"] {
 }
 
 .index-footer a {
-    color: #2d241f;
+    color: var(--text-primary);
     text-decoration: none;
     text-shadow: none;
 }
@@ -4750,7 +4852,7 @@ use[href="#checkmark"] {
     backface-visibility: hidden;
     z-index: -1;
     box-sizing: border-box;
-    box-shadow: 0 4px 4px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 4px var(--shadow-3);
 }
 
 .index-content .control-panel {
@@ -4817,7 +4919,7 @@ use[href="#checkmark"] {
     border-radius: 6px;
     border: 2px solid var(--border-light);
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -4827,10 +4929,16 @@ use[href="#checkmark"] {
 
 .privacy-toggle-btn:hover {
     font-weight: bold;
-    background: #e9c1df;
+    background: var(--pink-soft);
 }
 .privacy-toggle-btn.active {
-    background: #e9c1df;
+    background: var(--pink-soft);
+}
+
+/* 选中/悬停时底是固定的浅粉，文字必须跟着固定成深墨，否则深色模式下会变白字压浅底 */
+:root[data-theme="dark"] .privacy-toggle-btn:hover,
+:root[data-theme="dark"] .privacy-toggle-btn.active {
+    color: var(--on-color-ink-strong);
 }
 .room-code-display {
     display: flex;
@@ -4841,13 +4949,13 @@ use[href="#checkmark"] {
 }
 
 .room-code-label {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: bold;
 }
 
 .room-code {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 14px;
     font-weight: bold;
     letter-spacing: 2px;
@@ -4871,7 +4979,7 @@ use[href="#checkmark"] {
 
 .player-count-info {
     text-align: center;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--white);
     font-size: 18px;
 }
 
@@ -4879,7 +4987,7 @@ use[href="#checkmark"] {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: rgba(45, 36, 31, 0.85);
+    color: var(--text-primary-soft);
     font-size: 14px;
     padding-top: 5px;
     border-top: 1px solid var(--border-soft);
@@ -4893,13 +5001,13 @@ use[href="#checkmark"] {
 .player-count-setting h4,
 .rules-content h4 {
     margin: 10px;
-    color: #2d241f;
+    color: var(--text-primary);
     font-weight: bold;
     font-size: 16px;
 }
 
 .rules-content h5 {
-    color: rgba(45, 36, 31, 0.9);
+    color: var(--text-primary);
     margin: 0px 0 6px 0;
     font-size: 15px;
     font-weight: bold;
@@ -4939,8 +5047,8 @@ use[href="#checkmark"] {
     transition: all 0.3s ease;
     position: relative;
     border-color: transparent;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    color: #666;
+    box-shadow: 0 2px 6px var(--shadow-2);
+    color: var(--gray-mid);
 }
 
 .offline-countdown-overlay {
@@ -4950,8 +5058,8 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-full);
-    background: rgba(0, 0, 0, 0.45);
-    color: #ffffff;
+    background: var(--scrim);
+    color: var(--white);
     font-size: 16px;
     font-weight: 700;
     line-height: 1;
@@ -4978,7 +5086,7 @@ use[href="#checkmark"] {
 .kick-player-btn svg {
     width: 8px;
     height: 8px;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .kick-player-btn:hover {
@@ -5029,68 +5137,68 @@ use[href="#checkmark"] {
 }
 
 .color-option.selected .color-circle {
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 3px 8px var(--shadow-2);
 }
 
 .color-option.selected .player-1-color {
     background: var(--player-1-color);
     border: 2px solid var(--player-1-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-2);
+    color: var(--white);
 }
 
 .color-option.selected .player-1-color .multiplayer-emoji svg,
 .color-option.selected .player-1-color .multiplayer-emoji svg path {
-    fill: white !important;
-    stroke: white !important;
-    color: white !important;
+    fill: var(--white) !important;
+    stroke: var(--white) !important;
+    color: var(--white) !important;
 }
 
 .color-option.selected .player-2-color {
     background: var(--player-2-color);
     border: 2px solid var(--player-2-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-2);
+    color: var(--white);
 }
 
 .color-option.selected .player-2-color .multiplayer-emoji svg,
 .color-option.selected .player-2-color .multiplayer-emoji svg path {
-    fill: white !important;
-    stroke: white !important;
-    color: white !important;
+    fill: var(--white) !important;
+    stroke: var(--white) !important;
+    color: var(--white) !important;
 }
 
 .color-option.selected .player-3-color {
     background: var(--player-3-color);
     border: 2px solid var(--player-3-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-2);
+    color: var(--white);
 }
 
 .color-option.selected .player-3-color .multiplayer-emoji svg,
 .color-option.selected .player-3-color .multiplayer-emoji svg path {
-    fill: white !important;
-    stroke: white !important;
-    color: white !important;
+    fill: var(--white) !important;
+    stroke: var(--white) !important;
+    color: var(--white) !important;
 }
 
 .color-option.selected .player-4-color {
     background: var(--player-4-color);
     border: 2px solid var(--player-4-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-2);
+    color: var(--white);
 }
 
 .color-option.selected .player-4-color .multiplayer-emoji svg,
 .color-option.selected .player-4-color .multiplayer-emoji svg path {
-    fill: white !important;
-    stroke: white !important;
-    color: white !important;
+    fill: var(--white) !important;
+    stroke: var(--white) !important;
+    color: var(--white) !important;
 }
 
 .player-nickname {
     font-size: 12px;
-    color: rgba(45, 36, 31, 0.75);
+    color: var(--text-primary-soft);
     text-align: center;
     max-width: 58px;
     white-space: normal;
@@ -5108,13 +5216,13 @@ use[href="#checkmark"] {
 }
 
 .player-ready-status.ready {
-    color: rgba(30, 28, 25, 0.9);
+    color: var(--text-primary);
     background: rgba(124, 175, 136, 0.16);
     border: 1.5px solid rgba(124, 175, 136, 0.45);
 }
 
 .player-ready-status.host {
-    color: rgba(30, 28, 25, 0.9);
+    color: var(--text-primary);
     background: rgba(94, 164, 196, 0.16);
     border: 1.5px solid rgba(94, 164, 196, 0.45);
 }
@@ -5158,15 +5266,15 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     font-size: 16px;
-    color: #2d241f;
+    color: var(--text-primary);
     transition: all 0.3s ease;
     cursor: pointer;
 }
 
 .player-count-option:hover,
 .player-count-option.selected {
-    border: 2px solid #f1c40f;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    border: 2px solid var(--lightning);
+    box-shadow: 0 1px 3px var(--shadow-2);
 }
 
 /* 玩家设置区域 */
@@ -5191,7 +5299,7 @@ use[href="#checkmark"] {
 }
 
 .player-setup-item h5 {
-    color: #2d241f;
+    color: var(--text-primary);
     margin: 0;
     font-size: 1rem;
 }
@@ -5222,16 +5330,16 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     font-size: 16px;
-    color: #2d241f;
+    color: var(--text-primary);
     transition: all 0.3s ease;
     cursor: pointer;
 }
 
 .piece-count-option:hover,
 .piece-count-option.selected {
-    border: 2px solid #6e7bb0;
-    background: #bec7e9;
-    box-shadow: 0 1px 3px rgba(40, 40, 40, 0.6);
+    border: 2px solid var(--periwinkle);
+    background: var(--periwinkle-soft);
+    box-shadow: 0 1px 3px var(--shadow-1);
 }
 
 .local-piece-count-options {
@@ -5252,16 +5360,16 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     font-size: 16px;
-    color: #2d241f;
+    color: var(--text-primary);
     transition: all 0.3s ease;
     cursor: pointer;
 }
 
 .local-piece-count-option:hover,
 .local-piece-count-option.selected {
-    border: 2px solid #6e7bb0;
-    background: #bec7e9;
-    box-shadow: 0 1px 3px rgba(40, 40, 40, 0.6);
+    border: 2px solid var(--periwinkle);
+    background: var(--periwinkle-soft);
+    box-shadow: 0 1px 3px var(--shadow-1);
 }
 
 .username-input-group {
@@ -5288,7 +5396,7 @@ use[href="#checkmark"] {
     border: 2px solid var(--border-light);
     border-radius: var(--radius-base);
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 1rem;
     transition: all 0.3s ease;
     width: 100%;
@@ -5305,14 +5413,14 @@ use[href="#checkmark"] {
 }
 
 .form-input:focus {
-    color: #2d241f;
+    color: var(--text-primary);
     outline: none;
     border-color: var(--primary-color);
     box-shadow: none;
 }
 
 .form-input::placeholder {
-    color: rgba(255, 255, 255, 0.743);
+    color: var(--white);
 }
 
 .nickname-dice-btn {
@@ -5378,7 +5486,7 @@ use[href="#checkmark"] {
     height: 15px;
     border-radius: 50%;
     background: #aaa;
-    color: #fff;
+    color: var(--white);
     font-size: 10px;
     font-weight: bold;
     cursor: pointer;
@@ -5397,7 +5505,7 @@ use[href="#checkmark"] {
 }
 
 .toggle-label-text {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 16px;
     font-weight: 500;
     text-shadow: none;
@@ -5435,22 +5543,22 @@ use[href="#checkmark"] {
     height: 20px;
     left: 4px;
     top: 2.5px;
-    background: #2d241f;
+    background: var(--text-primary);
     border-radius: var(--radius-full);
     transition: all 0.3s ease-in-out;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 1px 2px var(--shadow-2);
 }
 
 .toggle-switch input[type="checkbox"]:checked+.toggle-slider {
-    background: #abe1f7;
-    border-color: #92d5ef;
+    background: var(--blue-soft);
+    border-color: var(--blue-line);
     box-shadow: none;
 }
 
 .toggle-switch input[type="checkbox"]:checked+.toggle-slider::after {
     transform: translateX(24px);
-    background: #ffffff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    background: var(--white);
+    box-shadow: 0 2px 4px var(--shadow-3);
 }
 
 .toggle-switch input[type="checkbox"]:active+.toggle-slider::after {
@@ -5481,7 +5589,7 @@ use[href="#checkmark"] {
 .emoji-nav-btn {
     background: none;
     border: none;
-    color: #2d241f;
+    color: var(--text-primary);
     cursor: pointer;
     font-size: 40px;
     display: flex;
@@ -5516,8 +5624,8 @@ use[href="#checkmark"] {
     position: relative;
     /* 默认状态下透明边框，等待颜色分配 */
     border: 3px solid transparent;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    color: #666;
+    box-shadow: 0 2px 6px var(--shadow-2);
+    color: var(--gray-mid);
 }
 
 /* 表情内容容器 */
@@ -5539,29 +5647,29 @@ use[href="#checkmark"] {
 .emoji-preview.player-1-color {
     background: var(--player-1-color);
     border: 2px solid var(--player-1-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-3);
+    color: var(--white);
 }
 
 .emoji-preview.player-2-color {
     background: var(--player-2-color);
     border: 2px solid var(--player-2-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-3);
+    color: var(--white);
 }
 
 .emoji-preview.player-3-color {
     background: var(--player-3-color);
     border: 2px solid var(--player-3-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-3);
+    color: var(--white);
 }
 
 .emoji-preview.player-4-color {
     background: var(--player-4-color);
     border: 2px solid var(--player-4-border);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-    color: white;
+    box-shadow: 0 3px 8px var(--shadow-3);
+    color: var(--white);
 }
 
 .current-emoji-display .emoji-preview svg {
@@ -5571,7 +5679,7 @@ use[href="#checkmark"] {
 
 .emoji-name {
     font-size: 0.9rem;
-    color: #2d241f;
+    color: var(--text-primary);
     text-align: center;
     font-weight: 500;
 }
@@ -5614,11 +5722,11 @@ use[href="#checkmark"] {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 6px var(--shadow-2);
 }
 
 .bot-add-option .add-icon {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 18px;
     font-weight: bold;
     text-shadow: none;
@@ -5631,7 +5739,7 @@ use[href="#checkmark"] {
 .black-icon {
     width: 15px;
     height: 15px;
-    color: var(--ui-default-color-hover);
+    color: var(--ui-hover-color);
 }
 
 .bot-add-option .placeholder-text {
@@ -5690,7 +5798,7 @@ use[href="#checkmark"] {
     border-radius: var(--radius-full);
     border: 2px solid;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 2px 5px var(--shadow-1);
 }
 
 .bot-player .remove-btn {
@@ -5711,7 +5819,7 @@ use[href="#checkmark"] {
 .bot-player .remove-btn svg {
     width: 8px;
     height: 8px;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .bot-player .remove-btn:hover {
@@ -5756,12 +5864,12 @@ use[href="#checkmark"] {
 }
 
 .bot-player span {
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 0.9rem;
 }
 
-.difficulty-text {
-    color: #2d241f;
+.bot-player .difficulty-text {
+    color: var(--on-color-ink-strong);
     font-size: 0.8rem;
     font-weight: bold;
     text-shadow: none;
@@ -5806,7 +5914,7 @@ use[href="#checkmark"] {
 }
 
 .rules-content {
-    color: rgba(45, 36, 31, 0.9);
+    color: var(--text-primary);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -5819,7 +5927,7 @@ use[href="#checkmark"] {
     padding: 10px 12px;
     border-radius: 8px;
     background: transparent;
-    color: rgba(45, 36, 31, 0.9);
+    color: var(--text-primary);
     width: 100%;
     max-width: 360px;
     box-sizing: border-box;
@@ -5831,7 +5939,7 @@ use[href="#checkmark"] {
 }
 
 .launch-item {
-    border: 2px solid rgba(166, 216, 183, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-1-color) 60%, transparent);
 }
 
 .move-item {
@@ -5843,19 +5951,19 @@ use[href="#checkmark"] {
 }
 
 .jump-item {
-    border: 2px solid rgba(175, 204, 234, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-3-color) 60%, transparent);
 }
 
 .fly-item {
-    border: 2px solid rgba(236, 189, 153, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-2-color) 60%, transparent);
 }
 
 .stack-item {
-    border: 2px solid rgba(247, 160, 153, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-4-color) 60%, transparent);
 }
 
 .beat-item {
-    border: 2px solid rgba(247, 160, 153, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-4-color) 60%, transparent);
 }
 
 .energy-item {
@@ -5870,7 +5978,7 @@ use[href="#checkmark"] {
     border: 2px solid rgba(239, 160, 192, 0.6);
 }
 .finish-item {
-    border: 2px solid rgba(166, 216, 183, 0.6);
+    border: 2px solid color-mix(in srgb, var(--player-1-color) 60%, transparent);
 }
 
 /* 通用子内容容器 */
@@ -5887,7 +5995,7 @@ use[href="#checkmark"] {
 }
 
 .launch-sub-item {
-    background: rgba(166, 216, 183, 0.15);
+    background: color-mix(in srgb, var(--player-1-color) 15%, transparent);
 }
 
 /* 移动子内容容器 */
@@ -5897,7 +6005,7 @@ use[href="#checkmark"] {
 
 /* 飞棋子内容容器 */
 .jump-sub-item {
-    background: rgba(175, 204, 234, 0.15);
+    background: color-mix(in srgb, var(--player-3-color) 15%, transparent);
 }
 
 /* 连投子内容容器 */
@@ -5907,22 +6015,22 @@ use[href="#checkmark"] {
 
 /* 撞机类型容器 */
 .beat-sub-item {
-    background: rgba(247, 160, 153, 0.15);
+    background: color-mix(in srgb, var(--player-4-color) 15%, transparent);
 }
 
 /* 飞棋子内容容器 */
 .fly-sub-item {
-    background: rgba(236, 189, 153, 0.15);
+    background: color-mix(in srgb, var(--player-2-color) 15%, transparent);
 }
 
 /* 叠子子内容容器 */
 .stack-sub-item {
-    background: rgba(247, 160, 153, 0.15);
+    background: color-mix(in srgb, var(--player-4-color) 15%, transparent);
 }
 
 /* 终点子内容容器 */
 .finish-sub-item {
-    background: rgba(166, 216, 183, 0.15);
+    background: color-mix(in srgb, var(--player-1-color) 15%, transparent);
 }
 
 .energy-sub-item {
@@ -5940,19 +6048,19 @@ use[href="#checkmark"] {
 /* 撞机详情 */
 .beat-detail {
     margin-left: 15px;
-    color: rgba(45, 36, 31, 0.85);
+    color: var(--text-primary-soft);
 }
 
 .rule-section p {
     margin: 8px 0;
-    color: rgba(45, 36, 31, 0.92);
+    color: var(--text-primary);
     line-height: 1.5;
     font-size: 14px;
     font-weight: 500;
 }
 
 .rule-section p strong {
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 /* 游戏规则面板中的特殊操作样式 - 移除边框，只保留颜色 */
@@ -5971,13 +6079,13 @@ use[href="#checkmark"] {
 .rules-content .move-type-fly,
 .rules-content .stack-text,
 .rules-content .beat-text {
-    color: #2d241f;
+    color: var(--text-primary);
     padding: 0;
     border-radius: 0;
 }
 
 .rules-content .move-type-launch {
-    background: rgba(166, 216, 183, 0.4);
+    background: color-mix(in srgb, var(--player-1-color) 40%, transparent);
 }
 
 .rules-content .move-type-move {
@@ -5985,15 +6093,15 @@ use[href="#checkmark"] {
 }
 
 .rules-content .move-type-jump {
-    background: rgba(175, 204, 234, 0.4);
+    background: color-mix(in srgb, var(--player-3-color) 40%, transparent);
 }
 
 .rules-content .move-type-fly {
-    background: rgba(236, 189, 153, 0.4);
+    background: color-mix(in srgb, var(--player-2-color) 40%, transparent);
 }
 
 .rules-content .stack-text {
-    background: rgba(247, 160, 153, 0.4);
+    background: color-mix(in srgb, var(--player-4-color) 40%, transparent);
 }
 
 .rules-content .beat-text {
@@ -6006,7 +6114,7 @@ use[href="#checkmark"] {
 }
 
 .game-rules-panel::-webkit-scrollbar-track {
-    background: var(--bg-almost-none);
+    background: var(--shadow-1);
     border-radius: 3px;
 }
 
@@ -6053,7 +6161,7 @@ use[href="#checkmark"] {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--scrim);
     z-index: 9999;
     align-items: center;
     justify-content: center;
@@ -6081,7 +6189,7 @@ use[href="#checkmark"] {
     border: 2px solid var(--border-light);
     border-radius: 12px;
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 1.5rem;
     font-weight: bold;
     text-align: center;
@@ -6111,7 +6219,7 @@ use[href="#checkmark"] {
     border: 2px solid var(--border-light);
     border-radius: var(--radius-base);
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
     font-size: 1rem;
     transition: all 0.3s ease;
     width: 100%;
@@ -6119,7 +6227,7 @@ use[href="#checkmark"] {
 }
 
 .room-code-input::placeholder {
-    color: rgba(255, 255, 255, 0.743);
+    color: var(--white);
 }
 
 .modal-error {
@@ -6140,7 +6248,7 @@ use[href="#checkmark"] {
     display: flex;
     gap: 10px;
     padding: 20px;
-    border-top: 1px solid var(--bg-almost-none);
+    border-top: 1px solid var(--shadow-1);
     background: var(--bg-soft);
 }
 
@@ -6154,11 +6262,11 @@ use[href="#checkmark"] {
     font-weight: bold;
     transition: all 0.3s ease;
     background: transparent;
-    color: #2d241f;
+    color: var(--text-primary);
 }
 
 .modal-btn.secondary {
-    border-color: var(--border-faint);
+    border-color: var(--border-soft);
 }
 
 .modal-btn.primary {
@@ -6166,7 +6274,7 @@ use[href="#checkmark"] {
 }
 
 .modal-btn:hover {
-    border-color: #2d241f;
+    border-color: var(--text-primary);
     box-shadow: none;
 }
 
@@ -6184,7 +6292,7 @@ use[href="#checkmark"] {
 
 .waiting-text {
     font-size: 18px;
-    color: #2d241f;
+    color: var(--text-primary);
     text-shadow: none;
 }
 
@@ -6193,15 +6301,15 @@ use[href="#checkmark"] {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(255, 106, 95);
-    color: #ffffff;
+    background: var(--alert);
+    color: var(--white);
     padding: 8px 16px;
     border-radius: 8px;
     z-index: 10000;
     text-align: center;
     font-size: 16px;
     font-weight: 600;
-    box-shadow: 0 4px 4px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 4px var(--shadow-2);
     backdrop-filter: blur(5px);
     border: 2px solid var(--border-light);
     pointer-events: none;
@@ -6224,10 +6332,10 @@ use[href="#checkmark"] {
     position: fixed;
     top: 20px;
     right: 20px;
-    background: rgba(255, 106, 95);
-    box-shadow: 0 4px 4px rgba(0, 0, 0, 0.2);
+    background: var(--alert);
+    box-shadow: 0 4px 4px var(--shadow-2);
     border: 2px solid var(--border-light);
-    color: white;
+    color: var(--white);
     padding: 10px 15px;
     border-radius: 8px;
     z-index: 10000;
@@ -6249,10 +6357,10 @@ use[href="#checkmark"] {
 
 .chat-message-content {
     position: absolute;
-    background: rgb(245, 245, 240);
+    background: var(--warm-white);
     border: 1.5px solid var(--ui-default-color);
     border-radius: 8px;
-    color: #2d241f;
+    color: var(--text-primary);
     padding: 5px 8px;
     font-size: 14px;
     font-weight: 500;
@@ -6272,7 +6380,7 @@ use[href="#checkmark"] {
     bottom: 20px;
     left: 20px;
     box-sizing: border-box;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px var(--shadow-1);
     white-space: nowrap;
 }
 
@@ -6291,13 +6399,13 @@ use[href="#checkmark"] {
     border: 2px solid var(--border-light);
     border-radius: 12px;
     padding: 0;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 3px var(--shadow-2);
     display: block;
     z-index: 1000;
 }
 
 .dice-selection-panel h3 {
-    color: #2d241f;
+    color: var(--text-primary);
     margin: 0;
     padding: 8px 12px;
     font-size: 14px;
@@ -6320,7 +6428,7 @@ use[href="#checkmark"] {
     height: 50px;
     font-size: 48px;
     font-weight: normal;
-    color: #2d241f;
+    color: var(--text-primary);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -6343,11 +6451,11 @@ use[href="#checkmark"] {
     left: 50%;
     transform: translateX(-50%);
     background: var(--bg-light-1);
-    color: rgba(45, 36, 31, 0.95);
+    color: var(--text-primary);
     padding: 7px 11px;
     border-radius: var(--radius-base);
     border: 1.5px solid var(--border-light);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 1px 3px var(--shadow-2);
     font-size: 16px;
     font-weight: 500;
     z-index: 10000;
@@ -7370,4 +7478,132 @@ use[href="#checkmark"] {
         left: 10px;
         max-width: 340px;
     }
+}
+
+/* 主题切换按钮：扁平圆钮，月亮/太阳两个 SVG 靠缩放旋转互换 */
+.theme-toggle {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 9999;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-full);
+    color: var(--text-primary);
+    opacity: 0.7;
+    transition: border-color 0.25s ease, color 0.25s ease, opacity 0.25s ease;
+}
+
+.theme-toggle:hover {
+    opacity: 1;
+    border-color: var(--text-primary);
+}
+
+.theme-icon {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    transition: transform 0.35s cubic-bezier(0.4, 0.1, 0.2, 1), opacity 0.35s ease;
+}
+
+.theme-icon-moon {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+}
+
+.theme-icon-sun {
+    transform: scale(0) rotate(90deg);
+    opacity: 0;
+}
+
+.theme-toggle.is-dark .theme-icon-moon {
+    transform: scale(0) rotate(-90deg);
+    opacity: 0;
+}
+
+.theme-toggle.is-dark .theme-icon-sun {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+}
+
+/* 游戏页：按钮落进信息面板头部，排在聊天切换按钮左边 */
+.theme-toggle-inline {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: 24px;
+    height: 24px;
+    margin-right: 6px;
+    border: 1.5px solid var(--border-light);
+}
+
+.theme-toggle-inline .theme-icon {
+    width: 15px;
+    height: 15px;
+}
+
+/* 首页：跟页脚版本号同一号字、同一颜色，无边框 */
+.theme-toggle-footer {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    display: inline-flex;
+    font-size: inherit;
+    width: 1em;
+    height: 1em;
+    padding: 0;
+    margin-left: 0.35em;
+    vertical-align: -0.1em;
+    border: none;
+    background: none;
+    color: inherit;
+    opacity: 1;
+}
+
+.theme-toggle-footer .theme-icon {
+    width: 1em;
+    height: 1em;
+}
+
+.info-header h3 {
+    margin-right: auto;
+}
+
+/* 席位点击反馈：左右摇摆一下（用独立 rotate 属性，不和 hover 的 transform 抢） */
+@keyframes seatSway {
+    0%, 100% { rotate: 0deg; }
+    20% { rotate: -8deg; }
+    45% { rotate: 7deg; }
+    70% { rotate: -4deg; }
+    85% { rotate: 2deg; }
+}
+
+.seat-sway {
+    animation: seatSway 0.6s ease-in-out;
+}
+
+/* 主题切换：从按钮位置开始的圆形扩散（View Transitions API） */
+@keyframes theme-reveal {
+    from { clip-path: circle(0% at var(--theme-transition-x, 100%) var(--theme-transition-y, 0%)); }
+    to { clip-path: circle(150% at var(--theme-transition-x, 100%) var(--theme-transition-y, 0%)); }
+}
+
+::view-transition-old(root) {
+    animation: none;
+    opacity: 1;
+}
+
+::view-transition-new(root) {
+    animation: theme-reveal 0.35s ease-out both;
+}
+
+::view-transition-image-pair(root) {
+    isolation: isolate;
 }

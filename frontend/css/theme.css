@@ -1,0 +1,149 @@
+:root {
+    /* 基础 */
+    --white: #ffffff;
+    --text-primary: #2d241f;
+    --text-secondary: var(--text-primary);
+    --text-gray: rgba(92, 83, 78, 1);
+    --font-faint: var(--text-gray);
+    --track-primary: rgb(61, 53, 45);
+    --track-accent: var(--text-primary);
+    --ui-default-color: rgba(56, 49, 81, 0.7);
+    --ui-hover-color: rgba(56, 49, 81, 0.9);
+
+    /* 玩家配色 */
+    --player-1-color: #a6d8b7;
+    --player-2-color: #ecbd99;
+    --player-3-color: #afccea;
+    --player-4-color: #f7a099;
+    --player-1-fill: #d4ede3;
+    --player-2-fill: #f5dcc8;
+    --player-3-fill: #dce8f5;
+    --player-4-fill: #fcc9c6;
+    --player-1-border: #93c8b2;
+    --player-2-border: #e9b489;
+    --player-3-border: #a3bfdc;
+    --player-4-border: #dd9793;
+    --player-1-dice: #35ae61;
+    --player-2-dice: #dd7022;
+    --player-3-dice: #4777c5;
+    --player-4-dice: #fc6666;
+    --player-1-stats-bg: #e6f5ec;
+    --player-2-stats-bg: #f9ede3;
+    --player-3-stats-bg: #e9f2fb;
+    --player-4-stats-bg: #fdf0ef;
+
+    /* 彩色/浅色块上的文字：块本身不随主题变，这里也就固定，不放进深色覆盖 */
+    --on-color-ink: rgba(92, 83, 78, 1);
+    --on-color-ink-strong: #2d241f;
+
+    /* 表面与反色 */
+    --surface: #ffffff;
+
+    /* 背景与描边 */
+    --bg-light-1: #f5f2ed;
+    --bg-light-2: #ebe8e3;
+    --bg-medium: rgb(255, 253, 250);
+    --bg-soft: rgba(255, 253, 250, 0.6);
+    --bg-faint: rgba(255, 253, 250, 0.4);
+    --border-light: rgba(61, 53, 45, 0.9);
+    --border-medium: rgba(61, 53, 45, 0.6);
+    --border-soft: rgba(61, 53, 45, 0.4);
+
+    /* 叠加层：阴影用黑、高光用白，各三档 / 两档 */
+    --shadow-1: rgba(0, 0, 0, 0.1);
+    --shadow-2: rgba(0, 0, 0, 0.2);
+    --shadow-3: rgba(0, 0, 0, 0.3);
+    --glow-1: rgba(255, 255, 255, 0.05);
+    --glow-2: rgba(255, 255, 255, 0.15);
+
+
+    /* 叠加与遮罩 */
+    --scrim: rgba(0, 0, 0, 0.5);
+    --scrim-strong: rgba(0, 0, 0, 0.7);
+    --overlay-warm: rgba(200, 195, 185, 0.3);
+    --text-primary-soft: rgba(45, 36, 31, 0.8);
+
+    /* 状态与点缀色 */
+    --status-ok: #5ca45f;
+    --status-wait: #e8c852;
+    --status-off: #9e9e9e;
+    --alert: rgb(255, 106, 95);
+    --lightning: #f1c40f;
+    --gold: #ffd700;
+    --gold-soft: rgba(187, 154, 101, 0.6);
+    --gold-muted: #c3a14e;
+    --task-blue: #3498db;
+    --task-green: #2ecc71;
+    --green: #4caf50;
+    --collision: #efa0c0;
+    --gray-mid: #666666;
+    --warm-white: #fdfaf7;
+    --blue-soft: #abe1f7;
+    --blue-line: #92d5ef;
+    --periwinkle: #6e7bb0;
+    --periwinkle-soft: #bec7e9;
+    --pink-soft: #e9c1df;
+
+    /* 禁用态透明度：深色下叠加会压暗彩色元素，需要更高 */
+    --disabled-opacity: 0.6;
+
+    /* 尺寸与阴影 */
+    --radius-base: 8px;
+    --radius-full: 50%;
+    --modal-shadow: 0 2px 8px rgba(92, 83, 78, 0.15);
+}
+
+/* 深色主题：只覆盖变量，其余 CSS 无需改动 */
+:root[data-theme="dark"] {
+    --text-primary: #ece7e0;
+    --text-secondary: var(--text-primary);
+    --text-gray: rgba(205, 196, 186, 1);
+    --font-faint: var(--text-gray);
+    --track-primary: rgb(214, 206, 196);
+    --track-accent: var(--text-primary);
+    --ui-default-color: rgba(212, 205, 226, 0.75);
+    --ui-hover-color: rgba(230, 224, 244, 0.95);
+
+    /* 暗色下玩家代表色整体压暗一档 */
+    --player-1-color: #92bea1;
+    --player-2-color: #d0a687;
+    --player-3-color: #9ab4ce;
+    --player-4-color: #d98d87;
+
+    /* 数据分析表格里的高亮格子：只混一点色味进深底，别整块亮起来 */
+    --player-1-stats-bg: color-mix(in srgb, var(--player-1-color) 25%, var(--bg-light-1));
+    --player-2-stats-bg: color-mix(in srgb, var(--player-2-color) 25%, var(--bg-light-1));
+    --player-3-stats-bg: color-mix(in srgb, var(--player-3-color) 25%, var(--bg-light-1));
+    --player-4-stats-bg: color-mix(in srgb, var(--player-4-color) 25%, var(--bg-light-1));
+
+    /* 暗色下骰面与玩家同色（亮色保留骰面专用的高饱和一组） */
+    --player-1-dice: var(--player-1-color);
+    --player-2-dice: var(--player-2-color);
+    --player-3-dice: var(--player-3-color);
+    --player-4-dice: var(--player-4-color);
+
+    --surface: #262321;
+    --bg-light-1: #1e1b18;
+    --bg-light-2: #262220;
+    --bg-medium: #24211f;
+    --bg-soft: rgba(38, 34, 31, 0.7);
+    --bg-faint: rgba(38, 34, 31, 0.45);
+    --border-light: rgba(226, 219, 208, 0.9);
+    --border-medium: rgba(226, 219, 208, 0.55);
+    --border-soft: rgba(226, 219, 208, 0.35);
+
+    --shadow-1: rgba(0, 0, 0, 0.45);
+    --shadow-2: rgba(0, 0, 0, 0.55);
+    --shadow-3: rgba(0, 0, 0, 0.65);
+    --glow-1: transparent;
+    --glow-2: transparent;
+
+    --disabled-opacity: 0.85;
+    --scrim: rgba(0, 0, 0, 0.65);
+    --scrim-strong: rgba(0, 0, 0, 0.8);
+    --overlay-warm: rgba(200, 195, 185, 0.18);
+    --text-primary-soft: rgba(236, 231, 224, 0.8);
+    --gray-mid: #a5a5a5;
+    --warm-white: #2a2724;
+    --modal-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}

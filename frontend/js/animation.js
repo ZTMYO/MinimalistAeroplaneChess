@@ -332,7 +332,7 @@ class Animation {
         const dy = Math.cos(rad).toFixed(3);
         
         // 应用阴影
-        chess.element.style.filter = `drop-shadow(${dx}px ${dy}px 0.5px rgba(0,0,0,0.15))`;
+        chess.element.style.filter = `drop-shadow(${dx}px ${dy}px 0.5px var(--shadow-2))`;
     }
 
     /**

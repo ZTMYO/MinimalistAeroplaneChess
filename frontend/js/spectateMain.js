@@ -5,6 +5,8 @@ import { uiUpdater } from './uiUpdater.js';
 import { audioManager } from './audioManager.js';
 import { WebSocketClient } from './websocketClient.js';
 import { FlyingChessGameBase, createGameRuntime } from './gameBase.js';
+import { resetTitlesViews } from './titlesGallery.js';
+import './theme.js';
 
 class FlyingChessGame extends FlyingChessGameBase {
     constructor() {
@@ -105,7 +107,10 @@ class FlyingChessGame extends FlyingChessGameBase {
         if (showRulesBtn) {
             showRulesBtn.addEventListener('click', () => {
                 const rulesModal = document.getElementById('rules-modal');
-                if (rulesModal) rulesModal.style.display = 'flex';
+                if (rulesModal) {
+                    resetTitlesViews();
+                    rulesModal.style.display = 'flex';
+                }
             });
         }
 

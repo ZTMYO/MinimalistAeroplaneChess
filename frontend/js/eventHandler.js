@@ -6,6 +6,7 @@ import { playerNameManager } from './playerNameManager.js';
 import { gameInfo } from './gameInfo.js';
 import { progressDisplay } from './progressDisplay.js';
 import { aiTakeoverManager } from './aiTakeoverManager.js';
+import { resetTitlesViews } from './titlesGallery.js';
 import { aiTurnTrigger } from './aiTurnTrigger.js';
 import { sanitizeUserText } from './contentModeration.js';
 import { debugSetDice, debugMoveChess, debugSetEnergy } from './debugTools.js';
@@ -541,6 +542,7 @@ class EventHandler {
         try {
             const rulesModal = document.getElementById('rules-modal');
             if (rulesModal) {
+                resetTitlesViews();
                 rulesModal.style.display = 'flex';
             }
         } catch (error) {
