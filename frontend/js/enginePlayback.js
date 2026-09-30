@@ -30,6 +30,8 @@ const BOX_REVEAL_DELAY = 1000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let lastMover = { player: null, chess: null };
+// 这一手正在动的是哪颗棋子（jump/fly 链都算同一手，用来认「击败我的那颗棋子」）
+let currentMoveChess = null;
 
 // 本次事件流中「无子可动/被跳过」的抖动请求，待骰子定格后由调用方触发
 let pendingShake = null;
@@ -530,23 +532,36 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             // 事件里带道具 id 说明是道具骰子，战报与统计据此生成
             if (event.item) recordItemResult(event.item, event.player, { diceValue: event.value });
             gameState.recordRollStreak(event.player, event.value, Boolean(event.item));
+            gameState.recordTurnStart(event.player);
             break;
         case 'launch':
+            gameState.recordLaunch(event.player, event.chess);
             await playLaunch(event);
             break;
         case 'walk':
+            currentMoveChess = { player: event.player, chess: event.chess };
+            gameState.recordAirportStep(event.player, event.chess, event.from);
             await playWalk(event);
             break;
         case 'jump':
+            currentMoveChess = { player: event.player, chess: event.chess };
             await playJumpLike(event, 'jump');
             break;
         case 'fly':
+            currentMoveChess = { player: event.player, chess: event.chess };
             await playJumpLike(event, 'fly');
             break;
         case 'finish':
             await playFinish(event);
             break;
         case 'beat':
+            gameState.recordRevengeKill(event.player, event.targetPlayer, event.chess);
+            if (currentMoveChess && currentMoveChess.player === event.player) {
+                gameState.recordOrioleKill(event.player, event.targetPlayer, event.chess);
+                gameState.recordBeatenBy(event.targetPlayer, event.player, currentMoveChess.chess);
+                gameState.recordKill(event.player, currentMoveChess.chess, event.targetPlayer);
+            }
+            gameState.recordBeatenHome(event.targetPlayer, event.chess);
             await playBeat(event);
             break;
         case 'collision_bonus':
@@ -570,6 +585,8 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
                 fromPosition: event.from,
                 toPosition: event.to
             });
+            if (event.to - event.from === 1) gameState.recordPettyTeleport(event.player);
+            gameState.recordAirportStep(event.player, event.chess, event.from);
             await playTeleport(event);
             break;
         case 'skip':
@@ -610,6 +627,7 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             break;
         case 'reroll':
             // 6 点连投奖励：走完这一手还归他（实时与刷新回放都从这里出）
+            gameState.markReroll(event.player);
             gameInfo.addConsecutiveBonus(event.player, true);
             break;
         default:
@@ -620,6 +638,7 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
 async function play(events) {
     if (!events || events.length === 0) return null;
     pendingShake = null;
+    currentMoveChess = null;
     moveDistances = new Map();
     moveBeats = new Map();
     moveCollisions = new Map();
@@ -671,6 +690,7 @@ async function playDiceShake(shake) {
 async function replay(events) {
     if (!events || events.length === 0) return;
     silentReplay = true;
+    currentMoveChess = null;
     moveDistances = new Map();
     moveBeats = new Map();
     moveCollisions = new Map();

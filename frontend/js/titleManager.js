@@ -19,7 +19,7 @@ const FAMILIES = [
         key: 'no_takeoff',
         value: (s, p) => s.maxConsecutiveNoTakeoff?.[p] || 0,
         levels: [
-            { id: 'unlucky_takeoff', name: '航班延误', desc: '连着三回合无法起飞', min: 3, tier: 'rare' },
+            { id: 'unlucky_takeoff', name: '航班延误', desc: '连着四回合无法起飞', min: 4, tier: 'rare' },
             { id: 'super_unlucky', name: '航班取消', desc: '连着六回合无法起飞', min: 6, tier: 'epic' },
             { id: 'forsaken', name: '天弃之子', desc: '连着十回合无法起飞', min: 10, tier: 'mythic' }
         ]
@@ -29,7 +29,7 @@ const FAMILIES = [
         value: (s, p) => s.maxConsecutiveSixes?.[p] || 0,
         levels: [
             { id: 'lucky_king', name: '欧皇', desc: '连投三次 6', min: 3, tier: 'rare' },
-            { id: 'six_streak', name: '六六大顺', desc: '连投四次 6', min: 4, tier: 'legendary' },
+            { id: 'six_streak', name: '六六大顺', desc: '连投四次 6', min: 4, tier: 'epic' },
             { id: 'dice_god', name: '鸿运当头', desc: '连投六次 6', min: 6, tier: 'mythic' }
         ]
     },
@@ -37,17 +37,18 @@ const FAMILIES = [
         key: 'move_distance',
         value: (s, p) => s.maxMoveDistance?.[p] || 0,
         levels: [
-            { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格', min: 25, tier: 'legendary' },
+            { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格', min: 25, tier: 'epic' },
             { id: 'sky_high', name: '九霄凌云', desc: '单次移动达到 35 格', min: 35, tier: 'mythic' }
         ]
     },
     {
         key: 'bounce',
         value: (s, p) => s.bounceSteps?.[p] || 0,
+        happyDisabled: true,
         levels: [
-            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数达到 25 格', min: 25, tier: 'rare' },
-            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数达到 50 格', min: 50, tier: 'legendary' },
-            { id: 'against_sky', name: '逆势天行', desc: '反弹总格数达到 100 格', min: 100, tier: 'mythic' }
+            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数达到 20 格', min: 20, tier: 'epic' },
+            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数达到 35 格', min: 35, tier: 'legendary' },
+            { id: 'against_sky', name: '逆势天行', desc: '反弹总格数达到 50 格', min: 50, tier: 'mythic' }
         ]
     },
     {
@@ -65,47 +66,53 @@ const FAMILIES = [
         value: (s, p) => s.maxCollideInMove?.[p] || 0,
         happyOnly: true,
         levels: [
-            { id: 'bumper_car', name: '碰碰车', desc: '单次移动碰撞 3 颗棋子', min: 3, tier: 'epic' },
-            { id: 'chain_crash', name: '连环碰撞', desc: '单次移动碰撞 5 颗棋子', min: 5, tier: 'legendary' },
-            { id: 'rampage', name: '所向披靡', desc: '单次移动碰撞 8 颗棋子', min: 8, tier: 'mythic' }
+            { id: 'bumper_car', name: '碰碰车', desc: '单次移动碰撞 2 颗棋子', min: 2, tier: 'rare' },
+            { id: 'chain_crash', name: '连环碰撞', desc: '单次移动碰撞 4 颗棋子', min: 4, tier: 'legendary' },
+            { id: 'rampage', name: '所向披靡', desc: '单次移动碰撞 6 颗棋子', min: 6, tier: 'mythic' }
         ]
     },
     {
         key: 'teleport',
         value: (s, p) => s.maxTeleportDistance?.[p] || 0,
+        itemOnly: true,
         levels: [
-            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送达到 35 格', min: 35, tier: 'common' },
-            { id: 'void_walker', name: '虚空行者', desc: '单次传送达到 40 格', min: 40, tier: 'rare' },
+            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送达到 35 格', min: 35, tier: 'rare' },
+            { id: 'void_walker', name: '虚空行者', desc: '单次传送达到 40 格', min: 40, tier: 'epic' },
             { id: 'void_overlord', name: '虚空主宰', desc: '单次传送达到 50 格', min: 50, tier: 'mythic' }
         ]
     },
     {
         key: 'mystery_box',
         value: (s, p) => s.mysteryBoxMax?.[p] || 0,
+        itemOnly: true,
         levels: [
-            { id: 'koi_fish', name: '锦鲤附体', desc: '盲盒开出达到 35 点积分', min: 35, tier: 'rare' },
-            { id: 'lucky_burst', name: '欧气爆棚', desc: '盲盒开出满分 40 点积分', min: 40, tier: 'epic' }
+            { id: 'koi_fish', name: '锦鲤附体', desc: '盲盒开出达到 35 点积分', min: 35, tier: 'common' },
+            { id: 'lucky_burst', name: '欧气爆棚', desc: '盲盒开出满分 40 点积分', min: 40, tier: 'rare' }
         ]
     },
     {
         key: 'skill_count',
         value: (s, p) => s.skillUseCount?.[p] || 0,
+        itemOnly: true,
         levels: [
-            { id: 'skill_mania', name: '道具狂人', desc: '使用道具达到 10 次', min: 10, tier: 'rare' },
-            { id: 'skill_master', name: '道具大师', desc: '使用道具达到 20 次', min: 20, tier: 'legendary' }
+            { id: 'skill_mania', name: '有啥用啥', desc: '使用道具达到 10 次', min: 10, tier: 'common' },
+            { id: 'skill_master', name: '道具狂人', desc: '使用道具达到 20 次', min: 20, tier: 'rare' },
+            { id: 'skill_grandmaster', name: '百宝奇兵', desc: '使用道具达到 40 次', min: 40, tier: 'legendary' }
         ]
     },
     {
         key: 'block',
         value: (s, p) => s.blockCount?.[p] || 0,
+        happyDisabled: true,
         levels: [
-            { id: 'gate_keeper', name: '一夫当关', desc: '用叠子阻挡对手 3 次', min: 3, tier: 'common' },
-            { id: 'impregnable', name: '万夫莫开', desc: '用叠子阻挡对手 6 次', min: 6, tier: 'rare' }
+            { id: 'gate_keeper', name: '一夫当关', desc: '用叠子阻挡对手 3 次', min: 3, tier: 'epic' },
+            { id: 'impregnable', name: '万夫莫开', desc: '用叠子阻挡对手 6 次', min: 6, tier: 'legendary' }
         ]
     },
     {
         key: 'poly_high',
         value: (s, p) => (s.polyhedralMax?.[p] >= 12 ? 1 : 0),
+        itemOnly: true,
         levels: [
             { id: 'destiny_child', name: '天命之子', desc: '多面骰子摇到 12 点', min: 1, tier: 'mythic' }
         ]
@@ -113,6 +120,7 @@ const FAMILIES = [
     {
         key: 'poly_low',
         value: (s, p) => (s.polyhedralMin?.[p] === 1 ? 1 : 0),
+        itemOnly: true,
         levels: [
             { id: 'unlucky_bear', name: '厄运降临', desc: '多面骰子摇到 1 点', min: 1, tier: 'mythic' }
         ]
@@ -120,8 +128,9 @@ const FAMILIES = [
     {
         key: 'box_zero',
         value: (s, p) => (s.mysteryBoxMin?.[p] === 0 ? 1 : 0),
+        itemOnly: true,
         levels: [
-            { id: 'philanthropist', name: '慈善家', desc: '盲盒开出 0 点积分', min: 1, tier: 'epic' }
+            { id: 'philanthropist', name: '慈善家', desc: '盲盒开出 0 点积分', min: 1, tier: 'rare' }
         ]
     },
     {
@@ -143,7 +152,39 @@ const FAMILIES = [
         value: (s, p) => s.runwayKills?.[p] || 0,
         happyDisabled: true,
         levels: [
-            { id: 'runway_killer', name: '终点杀手', desc: '在终点通道上击败对手', min: 1, tier: 'rare' }
+            { id: 'runway_killer', name: '飞来横祸', desc: '击败终点通道上的对手', min: 1, tier: 'rare' }
+        ]
+    },
+    {
+        key: 'airport_rekt',
+        value: (s, p) => s.airportRekt?.[p] || 0,
+        happyDisabled: true,
+        levels: [
+            { id: 'airport_rekt', name: '出师未捷', desc: '刚离开起飞点就被踩回基地', min: 1, tier: 'rare' }
+        ]
+    },
+    {
+        key: 'oriole_kill',
+        value: (s, p) => s.orioleKills?.[p] || 0,
+        happyDisabled: true,
+        levels: [
+            { id: 'oriole_kill', name: '黄雀在后', desc: '一回合内击败刚击败别人的那颗棋子', min: 1, tier: 'rare' }
+        ]
+    },
+    {
+        key: 'revenge_kill',
+        value: (s, p) => s.revengeKills?.[p] || 0,
+        happyDisabled: true,
+        levels: [
+            { id: 'revenge_kill', name: '以牙还牙', desc: '一回合内击败刚刚击败你的那颗棋子', min: 1, tier: 'epic' }
+        ]
+    },
+    {
+        key: 'petty_teleport',
+        value: (s, p) => s.pettyTeleports?.[p] || 0,
+        itemOnly: true,
+        levels: [
+            { id: 'petty_teleport', name: '寸步千金', desc: '单次传送前进了 1 格', min: 1, tier: 'epic' }
         ]
     }
 ];

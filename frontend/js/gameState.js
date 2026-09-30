@@ -111,7 +111,7 @@ class GameState {
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },    // 连续摇到1的次数
             sixStreak: { 1: 0, 2: 0, 3: 0, 4: 0 },           // 玩家自己连投 6 的次数（跨回合累计，不随三次 6 惩罚清零）
-            runwayKills: { 1: 0, 2: 0, 3: 0, 4: 0 },          // 在终点通道上击败对手的次数
+            runwayKills: { 1: 0, 2: 0, 3: 0, 4: 0 },          // 击败终点通道上的对手的次数
             blockCount: { 1: 0, 2: 0, 3: 0, 4: 0 },           // 用叠子阻挡对手的次数
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 连续无法起飞的次数
             maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },   // 历史最长连续1点（连击断了也留着）
@@ -128,7 +128,17 @@ class GameState {
             mysteryBoxMin: { 1: 99, 2: 99, 3: 99, 4: 99 },    // 盲盒开出最低积分（初始99确保0被记录）
             polyhedralMax: { 1: 0, 2: 0, 3: 0, 4: 0 },        // 多面骰子最大点数
             polyhedralMin: { 1: 99, 2: 99, 3: 99, 4: 99 },     // 多面骰子最小点数（初始99确保1被记录）
-            skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 }          // 累计使用道具次数
+            skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 },         // 累计使用道具次数
+            airportSteps: { 1: [], 2: [], 3: [], 4: [] }, // 每颗棋子出机场后走了几步（出师未捷）
+            airportClock: { 1: [], 2: [], 3: [], 4: [] }, // 出机场那一步的回合钟，用来判断「还没轮到它再动」
+            turnClock: 0,                                 // 全局掷骰计数：每掷一次加一，当回合钟用
+            airportRekt: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 出机场只走一步就被踩回基地的次数
+            pettyTeleports: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 传送门只前进 1 格的次数（有钱任性）
+            revenge: { 1: null, 2: null, 3: null, 4: null }, // 被谁、被哪颗棋子踩回家（以牙还牙）
+            revengeKills: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            lastKill: { 1: null, 2: null, 3: null, 4: null }, // 这一手刚得手的是哪颗棋子（黄雀在后）
+            orioleKills: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 吃掉刚得手棋子的次数
+            rerollSeat: null                              // 6 点连投：同一手还没结束
         };
 
         // 已播报过的流程内称号：key 为「玩家-家族」，值是已播到第几级（随对局重置）
@@ -360,7 +370,17 @@ class GameState {
             mysteryBoxMin: { 1: 99, 2: 99, 3: 99, 4: 99 },
             polyhedralMax: { 1: 0, 2: 0, 3: 0, 4: 0 },
             polyhedralMin: { 1: 99, 2: 99, 3: 99, 4: 99 },
-            skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 }
+            skillUseCount: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            airportSteps: { 1: [], 2: [], 3: [], 4: [] }, // 每颗棋子出机场后走了几步（出师未捷）
+            airportClock: { 1: [], 2: [], 3: [], 4: [] }, // 出机场那一步的回合钟，用来判断「还没轮到它再动」
+            turnClock: 0,                                 // 全局掷骰计数：每掷一次加一，当回合钟用
+            airportRekt: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 出机场只走一步就被踩回基地的次数
+            pettyTeleports: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 传送门只前进 1 格的次数（有钱任性）
+            revenge: { 1: null, 2: null, 3: null, 4: null }, // 被谁、被哪颗棋子踩回家（以牙还牙）
+            revengeKills: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            lastKill: { 1: null, 2: null, 3: null, 4: null }, // 这一手刚得手的是哪颗棋子（黄雀在后）
+            orioleKills: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 吃掉刚得手棋子的次数
+            rerollSeat: null                              // 6 点连投：同一手还没结束
         };
 
         // 重置已播报的流程内称号
@@ -386,6 +406,7 @@ class GameState {
     // 记录一次骰点（用于称号统计）：只累计「连续 1 点」。
     // 走事件流调用，所以调试改点、AI 出手、刷新回放都算数；道具骰子点数是预定的，不计也不打断
     recordRollStreak(player, value, isItemRoll = false) {
+        this.titleStats.turnClock = (this.titleStats.turnClock || 0) + 1;
         if (isItemRoll) return;
         if (value === 1) {
             const streak = this.titleStats.consecutiveOnes;
@@ -409,7 +430,105 @@ class GameState {
         }
     }
 
-    // 记录在终点通道上击败对手（用于称号统计）
+    // 记录棋子起飞（回基地后重飞也算），用于「出师未捷」的步数归零
+    recordLaunch(player, chess) {
+        const steps = this.titleStats.airportSteps?.[player];
+        if (steps) steps[chess] = 0;
+    }
+
+    // 出机场后的走动：踏出机场那一步开窗口，之后再动一步就关掉
+    recordAirportStep(player, chess, from) {
+        const steps = this.titleStats.airportSteps?.[player];
+        const clock = this.titleStats.airportClock?.[player];
+        if (!steps || !clock || steps[chess] === undefined) return;
+        if (from === 0) {
+            steps[chess] = 1;
+            clock[chess] = this.titleStats.turnClock;
+        } else {
+            steps[chess] = 2;
+            clock[chess] = -1;
+        }
+    }
+
+    // 被踩回基地：出门一步、且还没轮到它再动就被踩回去，算「出师未捷」
+    recordBeatenHome(player, chess) {
+        const steps = this.titleStats.airportSteps?.[player];
+        const clock = this.titleStats.airportClock?.[player];
+        if (!steps) return;
+        const walked = steps[chess];
+        const entered = clock ? clock[chess] : undefined;
+        steps[chess] = 0;
+        if (clock) clock[chess] = -1;
+        const seats = Object.keys(this.playerChess || {}).length || 4;
+        const fresh = walked === 1 && entered >= 0 && (this.titleStats.turnClock || 0) - entered <= seats - 1;
+        if (fresh) this.titleStats.airportRekt[player] += 1;
+    }
+
+    // 被踩回家：记住是对方的哪颗棋子干的，供「以牙还牙」比对
+    recordBeatenBy(victim, attacker, attackerChess) {
+        if (!this.titleStats.revenge || !Number.isInteger(attackerChess)) return;
+        this.titleStats.revenge[victim] = { attacker, chess: attackerChess, armed: false };
+    }
+
+    // 6 点连投：这一手还没结束，别把「刚得手」的窗口当成新回合关掉
+    markReroll(player) {
+        if (this.titleStats) this.titleStats.rerollSeat = player;
+    }
+
+    // 新回合开始：轮到自己就打开复仇窗口，别人开始回合则关掉还没兑现的窗口
+    recordTurnStart(player) {
+        const revenge = this.titleStats.revenge;
+        if (!revenge) return;
+        const isReroll = this.titleStats.rerollSeat === player;
+        this.titleStats.rerollSeat = null;
+        // 刚得手的窗口只开到「紧接着的下一回合」：开窗后第一次投骰有效，第二次投骰关窗
+        if (!isReroll && this.titleStats.lastKill) {
+            for (const key of Object.keys(this.titleStats.lastKill)) {
+                const kill = this.titleStats.lastKill[Number(key)];
+                if (!kill) continue;
+                if (kill.armed) this.titleStats.lastKill[Number(key)] = null;
+                else kill.armed = true;
+            }
+        }
+        for (const key of Object.keys(revenge)) {
+            const seat = Number(key);
+            const pending = revenge[seat];
+            if (pending && seat !== player && pending.armed) revenge[seat] = null;
+        }
+        if (revenge[player]) revenge[player].armed = true;
+    }
+
+    // 刚得手：记下是谁的哪颗棋子击败了谁（供「黄雀在后」比对）
+    recordKill(beater, beaterChess, victim) {
+        if (!this.titleStats.lastKill || !Number.isInteger(beaterChess)) return;
+        this.titleStats.lastKill[beater] = { chess: beaterChess, victim, armed: false };
+    }
+
+    // 黄雀在后：螳螂的下一个回合之前，第三家吃掉它刚得手的那颗棋子
+    recordOrioleKill(beater, targetPlayer, targetChess) {
+        const lastKill = this.titleStats.lastKill;
+        const kill = lastKill ? lastKill[targetPlayer] : null;
+        if (!kill || !kill.armed || kill.chess !== targetChess || kill.victim === beater) return;
+        lastKill[targetPlayer] = null;
+        this.titleStats.orioleKills[beater] += 1;
+    }
+
+    // 以牙还牙：在自己这一手里踩掉刚才把我踩回家的那颗棋子
+    recordRevengeKill(beater, victim, victimChess) {
+        const revenge = this.titleStats.revenge;
+        const pending = revenge ? revenge[beater] : null;
+        if (!pending || !pending.armed) return;
+        if (pending.attacker !== victim || pending.chess !== victimChess) return;
+        revenge[beater] = null;
+        this.titleStats.revengeKills[beater] += 1;
+    }
+
+    // 传送门只前进 1 格（用于称号统计）
+    recordPettyTeleport(player) {
+        this.titleStats.pettyTeleports[player] = (this.titleStats.pettyTeleports[player] || 0) + 1;
+    }
+
+    // 记录击败终点通道上的对手（用于称号统计）
     recordRunwayKill(player) {
         this.titleStats.runwayKills[player] += 1;
     }

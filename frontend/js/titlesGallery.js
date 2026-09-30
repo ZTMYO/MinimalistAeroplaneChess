@@ -24,9 +24,11 @@ function tagHtml(text) {
 }
 
 function modeTag(source) {
-    if (source.happyOnly) return tagHtml('欢乐模式');
-    if (source.happyDisabled) return tagHtml('欢乐模式不授予');
-    return '';
+    const tags = [];
+    if (source.happyOnly) tags.push('欢乐模式');
+    if (source.itemOnly) tags.push('道具模式');
+    if (source.happyDisabled) tags.push('非欢乐模式');
+    return tags.map(tagHtml).join('');
 }
 
 // 描述末尾的括号补充（撞叠子不算）单拎出来当标签，正文只留条件本身
@@ -56,11 +58,11 @@ function familyCard(family) {
             </article>`;
 }
 
-function soloCard(title) {
+function soloCard(title, source = title) {
     const split = splitNote(title.desc);
     const noteTags = split.notes.map(tagHtml).join('');
     return `<article class="title-card">
-                <div class="title-card-head">${chipHtml(title.name, title.tier)}${noteTags}${modeTag(title)}</div>
+                <div class="title-card-head">${chipHtml(title.name, title.tier)}${noteTags}${modeTag(source)}</div>
                 <p class="title-card-desc">${highlightDesc(split.text)}</p>
             </article>`;
 }
@@ -93,7 +95,7 @@ function buildGallery() {
     const solos = families
         .filter((family) => family.levels.length === 1)
         .sort((a, b) => tierRank(b.levels[0].tier) - tierRank(a.levels[0].tier))
-        .map((family) => soloCard(family.levels[0]))
+        .map((family) => soloCard(family.levels[0], family))
         .join('');
     const settled = [...Object.values(titleManager.UNIQUE_TITLES), ...Object.values(titleManager.FINAL_TITLES)]
         .sort((a, b) => tierRank(b.tier) - tierRank(a.tier))

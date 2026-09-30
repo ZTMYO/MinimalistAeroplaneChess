@@ -124,6 +124,7 @@ class SettlementModal {
 
         // 计算称号（自动结算也要算，否则战绩卡与称号一览都没有称号）
         const playerTitles = titleManager.calculateTitles(this.gameState, rankingsData);
+        this.rankedPlayers = rankingsData.map((data) => data.player);
         rankingsData.forEach(data => {
             data.title = playerTitles[data.player];
         });
@@ -203,6 +204,7 @@ class SettlementModal {
         });
         // 数据分析面板底部要按玩家列出全部称号
         this.playerTitles = playerTitles;
+        this.rankedPlayers = rankingsData.map((data) => data.player);
 
         // 渲染排名列表
         this.renderRankings(rankingsData);
@@ -492,9 +494,11 @@ class SettlementModal {
         const titlesByPlayer = this.playerTitles;
         if (!titlesByPlayer) return '';
 
-        const activePlayers = activePlayerManager.getActivePlayers();
+        const order = this.rankedPlayers && this.rankedPlayers.length
+            ? this.rankedPlayers
+            : activePlayerManager.getActivePlayers();
         const tierRank = titleManager.TIER_RANK || {};
-        const rows = activePlayers.map((player) => {
+        const rows = order.map((player) => {
             const titles = [...(titlesByPlayer[player] || [])]
                 .sort((a, b) => (tierRank[a.tier] ?? 9) - (tierRank[b.tier] ?? 9));
             const chips = titles.length
