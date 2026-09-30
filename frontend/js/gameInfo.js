@@ -221,21 +221,7 @@ class GameInfo {
         // 默认情况下使用 formatMessage() 作为 notificationText
         let notificationText = this.formatMessage(messageData);
 
-        if (type === 'skill_usage') {
-            if (messageData.data.skillName) {
-                if (messageData.data.skillName === '传送门' && messageData.data.moveType !== 'teleport') {
-                    // 如果只是激活传送门（未传送），不提示
-                    notificationText = '';
-                } else if (messageData.data.skillName === '传送门') {
-                    // 别人传送：提示里要带上「前进了多少格」，光说用了道具看不出发生了什么
-                    // （战报里那两条各写各的：道具一条、选子带距离一条）
-                    notificationText = this.formatTeleportNotification(player, messageData.data);
-                } else if (!isNonLocal && messageData.data.skillName !== '遥控骰子' && messageData.data.skillName !== '多面骰子') {
-                    // 其他道具只对非本地玩家提示
-                    notificationText = '';
-                }
-            }
-        } else if (type === 'chess_beat' && this._beatEnergyGain(messageData.data) > 0) {
+        if (type === 'chess_beat' && this._beatEnergyGain(messageData.data) > 0) {
             notificationText = '';
         } else if (type === 'collision_bonus') {
             // 欢乐模式碰撞奖励通知（道具模式下由 energy_gain 显示，这里不重复）
@@ -289,7 +275,13 @@ class GameInfo {
         }
 
         if (notificationText && !skipNotify && !this.silentMode && window.gameInstance?.skillManager) {
-            window.gameInstance.skillManager.showNotification(notificationText);
+            // 同一个道具的「使用」「结果」「开盒积分」共用一条气泡，后来那条改写前面那条
+            const isSkillLine = type === 'skill_usage' || type === 'skill_result';
+            const isBoxEnergy = type === 'energy_gain' && messageData.data.source === 'mysteryBox';
+            const key = isSkillLine && messageData.data.skillName
+                ? `skill-${player}-${messageData.data.skillName}`
+                : (isBoxEnergy ? `skill-${player}-盲盒` : null);
+            window.gameInstance.skillManager.showNotification(notificationText, { key });
         }
 
         return messageElement;
@@ -530,7 +522,7 @@ class GameInfo {
     formatTeleportNotification(player, data) {
         const playerName = this.getPlayerName(player);
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
-        const skillSpan = `<span class="action-text"> 使用了道具 </span><span class="skill-name-text">[传送门]</span>`;
+        const skillSpan = `<span class="action-text"> 使用了 </span><span class="skill-name-text">[传送门]</span>`;
         const fromPos = data.fromPosition === -1 ? 0 : data.fromPosition;
         const spaces = data.toPosition - fromPos;
         if (spaces > 0) {
@@ -583,7 +575,7 @@ class GameInfo {
     formatSkillUsage(player, data) {
         const playerName = this.getPlayerName(player);
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
-        const skillSpan = `<span class="action-text"> 使用了道具 </span>`;
+        const skillSpan = `<span class="action-text"> 使用了 </span>`;
         const skillNameSpan = `<span class="skill-name-text">[${data.skillName}]</span>`;
 
         return `${playerSpan}${skillSpan}${skillNameSpan}`;
@@ -595,6 +587,11 @@ class GameInfo {
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
         const actionSpan = `<span class="action-text"> 使用了 </span>`;
         const skillNameSpan = `<span class="skill-name-text">[${data.skillName}]</span>`;
+
+        // 传送门：落点确定后，把距离补在同一条上（激活那条只说「使用了」）
+        if (data.skillName === '传送门' && Number.isFinite(data.fromPosition) && Number.isFinite(data.toPosition)) {
+            return this.formatTeleportNotification(player, data);
+        }
 
         let extraInfo = '';
         if (data.diceValue) {

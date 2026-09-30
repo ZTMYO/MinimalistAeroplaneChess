@@ -413,50 +413,6 @@ body {
     }
 }
 
-@keyframes fadeInOutCenter {
-    0% {
-        opacity: 0;
-        transform: translate(-50%, -10px);
-    }
-
-    10% {
-        opacity: 1;
-        transform: translate(-50%, 0);
-    }
-
-    80% {
-        opacity: 1;
-        transform: translate(-50%, 0);
-    }
-
-    100% {
-        opacity: 0;
-        transform: translate(-50%, -10px);
-    }
-}
-
-@keyframes fadeInOutCenter {
-    0% {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-10px);
-    }
-
-    10% {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-
-    80% {
-        opacity: 1;
-        transform: translateX(-50%) translateY(0);
-    }
-
-    100% {
-        opacity: 0;
-        transform: translateX(-50%) translateY(-10px);
-    }
-}
-
 .is-hidden {
     display: none !important;
 }
@@ -4029,6 +3985,10 @@ use[href="#checkmark"] {
     color: #b7791f;
 }
 
+.title-earned-title.tier-mythic {
+    color: #c0453c;
+}
+
 /* 传说与神话档：一道光定期掠过 */
 .title-chip.tier-legendary::after,
 .title-chip.tier-mythic::after {
@@ -6550,11 +6510,19 @@ use[href="#checkmark"] {
 }
 
 /* ===== 道具通知样式 ===== */
-.game-notification {
+.game-message-stack {
     position: fixed;
     top: 20px;
     left: 50%;
     transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 10000;
+    pointer-events: none;
+}
+
+.game-notification {
     background: var(--bg-light-1);
     color: var(--text-primary);
     padding: 7px 11px;
@@ -6563,18 +6531,29 @@ use[href="#checkmark"] {
     box-shadow: 0 1px 3px var(--shadow-2);
     font-size: 16px;
     font-weight: 500;
-    z-index: 10000;
-    animation: fadeInOutCenter 3s ease forwards;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.22s ease, transform 0.22s ease, height 0.28s ease, margin-bottom 0.28s ease;
+    overflow: hidden;
+    box-sizing: border-box;
     backdrop-filter: none;
-    pointer-events: none !important; /* 强制不拦截任何鼠标事件 */
+    pointer-events: none !important;
     width: max-content;
-    max-width: 80%;
+    max-width: 100%;
     word-break: break-word;
     text-align: center;
-    /* 额外的安全措施 */
     user-select: none;
     -webkit-user-select: none;
     touch-action: none;
+}
+
+.game-notification.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.game-notification.leaving {
+    opacity: 0;
 }
 
 /* 平板和手机端通用样式 */
@@ -6606,9 +6585,6 @@ use[href="#checkmark"] {
     }
 
     .game-notification {
-        left: 50%;
-        transform: translateX(-50%);
-        animation: fadeInOutCenter 3s ease forwards;
         text-align: center;
     }
 
@@ -7543,9 +7519,6 @@ use[href="#checkmark"] {
 
     /* 移动端游戏通知弹窗适配 */
     .game-notification {
-        left: 50%;
-        transform: translateX(-50%);
-        animation: fadeInOutCenter 3s ease forwards;
         max-width: 90%;
         font-size: 14px;
         padding: 6px 10px;

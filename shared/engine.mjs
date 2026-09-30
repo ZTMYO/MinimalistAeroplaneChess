@@ -201,6 +201,32 @@ function sendHome(state, player, index) {
     chess.finished = false;
 }
 
+/** 传送门可选落点：空位，按距离由近到远 */
+export function teleportSpots(state, playerId, from) {
+    const spots = [];
+    for (let to = 1; to <= 50; to++) {
+        if (to === from) continue;
+        if (cellOccupied(state, cellOf(playerId, to))) continue;
+        spots.push({ to, distance: Math.abs(to - from) });
+    }
+    return spots.sort((a, b) => a.distance - b.distance);
+}
+
+/** 传送门落点：三段加权随机（近 5 / 中 3 / 远 2） */
+function teleportSpot(state, playerId, from, rng) {
+    const spots = teleportSpots(state, playerId, from);
+    if (!spots.length) return null;
+
+    const segment = Math.ceil(spots.length / 3);
+    const weightOf = (index) => (index < segment ? 5 : index < segment * 2 ? 3 : 2);
+    let roll = rng() * spots.reduce((sum, spot, index) => sum + weightOf(index), 0);
+    for (let index = 0; index < spots.length; index++) {
+        roll -= weightOf(index);
+        if (roll <= 0) return spots[index].to;
+    }
+    return spots[spots.length - 1].to;
+}
+
 /** 加积分并返回实际到账数（封顶后的增量），道具模式下才有 */
 function grantEnergy(state, player, amount) {
     if (!state.skillMode || amount <= 0) return 0;
@@ -733,14 +759,12 @@ export function apply(state, playerId, action, rng = Math.random) {
         if (chess.finished || chess.pos === BASE) {
             throw new Error('起始区或已完成的棋子无法传送');
         }
-        const to = action.to;
-        if (!Number.isInteger(to) || to < 1 || to > 50) throw new Error(`非法传送目标：${to}`);
-        if (to === chess.pos) throw new Error('传送目标与当前位置相同');
-        if (cellOccupied(next, cellOf(playerId, to))) throw new Error(`传送目标 ${to} 已被占用`);
         // 传送门同样先买后用
         if (next.pendingItem?.item !== 'teleport' || next.pendingItem.player !== playerId) {
             throw new Error('传送门尚未激活');
         }
+        const to = teleportSpot(next, playerId, chess.pos, rng);
+        if (to === null) throw new Error('没有可用的空位进行传送');
         next.pendingItem = null;
 
         const from = chess.pos;

@@ -45,9 +45,9 @@ const FAMILIES = [
         key: 'bounce',
         value: (s, p) => s.bounceSteps?.[p] || 0,
         levels: [
-            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数超过 25 格', min: 26, tier: 'rare' },
-            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数超过 50 格', min: 51, tier: 'legendary' },
-            { id: 'against_sky', name: '逆势天行', desc: '反弹总格数超过 100 格', min: 101, tier: 'mythic' }
+            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数达到 25 格', min: 25, tier: 'rare' },
+            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数达到 50 格', min: 50, tier: 'legendary' },
+            { id: 'against_sky', name: '逆势天行', desc: '反弹总格数达到 100 格', min: 100, tier: 'mythic' }
         ]
     },
     {
@@ -74,15 +74,16 @@ const FAMILIES = [
         key: 'teleport',
         value: (s, p) => s.maxTeleportDistance?.[p] || 0,
         levels: [
-            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送超过 35 格', min: 36, tier: 'common' },
-            { id: 'void_walker', name: '虚空行者', desc: '单次传送超过 40 格', min: 41, tier: 'rare' }
+            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送达到 35 格', min: 35, tier: 'common' },
+            { id: 'void_walker', name: '虚空行者', desc: '单次传送达到 40 格', min: 40, tier: 'rare' },
+            { id: 'void_overlord', name: '虚空主宰', desc: '单次传送达到 50 格', min: 50, tier: 'mythic' }
         ]
     },
     {
         key: 'mystery_box',
         value: (s, p) => s.mysteryBoxMax?.[p] || 0,
         levels: [
-            { id: 'koi_fish', name: '锦鲤附体', desc: '盲盒开出超过 35 点积分', min: 36, tier: 'rare' },
+            { id: 'koi_fish', name: '锦鲤附体', desc: '盲盒开出达到 35 点积分', min: 35, tier: 'rare' },
             { id: 'lucky_burst', name: '欧气爆棚', desc: '盲盒开出满分 40 点积分', min: 40, tier: 'epic' }
         ]
     },
@@ -90,8 +91,16 @@ const FAMILIES = [
         key: 'skill_count',
         value: (s, p) => s.skillUseCount?.[p] || 0,
         levels: [
-            { id: 'skill_mania', name: '道具狂人', desc: '使用道具次数超过 10 次', min: 11, tier: 'rare' },
-            { id: 'skill_master', name: '道具大师', desc: '使用道具次数超过 20 次', min: 21, tier: 'legendary' }
+            { id: 'skill_mania', name: '道具狂人', desc: '使用道具达到 10 次', min: 10, tier: 'rare' },
+            { id: 'skill_master', name: '道具大师', desc: '使用道具达到 20 次', min: 20, tier: 'legendary' }
+        ]
+    },
+    {
+        key: 'block',
+        value: (s, p) => s.blockCount?.[p] || 0,
+        levels: [
+            { id: 'gate_keeper', name: '一夫当关', desc: '用叠子阻挡对手 3 次', min: 3, tier: 'common' },
+            { id: 'impregnable', name: '万夫莫开', desc: '用叠子阻挡对手 6 次', min: 6, tier: 'rare' }
         ]
     },
     {
@@ -128,6 +137,14 @@ const FAMILIES = [
         levels: [
             { id: 'first_blood', name: '第一滴血', desc: '本局第一个击败对手', min: 1, tier: 'common' }
         ]
+    },
+    {
+        key: 'runway_kill',
+        value: (s, p) => s.runwayKills?.[p] || 0,
+        happyDisabled: true,
+        levels: [
+            { id: 'runway_killer', name: '终点杀手', desc: '在终点通道上击败对手', min: 1, tier: 'rare' }
+        ]
     }
 ];
 
@@ -149,7 +166,7 @@ class TitleManager {
         // 结算专用的整局型称号：只在正常收官时才算数
         this.FINAL_TITLES = {
             INVISIBLE: { id: 'invisible', name: '不灭之躯', desc: '整局未被击败过', tier: 'mythic', happyDisabled: true },
-            PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手', tier: 'mythic' },
+            PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手', tier: 'epic' },
             TAILWIND_WALKER: { id: 'tailwind_walker', name: '顺风行者', desc: '在整局未发生过反弹的情况下获胜', tier: 'epic', happyDisabled: true }
         };
 

@@ -111,6 +111,8 @@ class GameState {
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },    // 连续摇到1的次数
             sixStreak: { 1: 0, 2: 0, 3: 0, 4: 0 },           // 玩家自己连投 6 的次数（跨回合累计，不随三次 6 惩罚清零）
+            runwayKills: { 1: 0, 2: 0, 3: 0, 4: 0 },          // 在终点通道上击败对手的次数
+            blockCount: { 1: 0, 2: 0, 3: 0, 4: 0 },           // 用叠子阻挡对手的次数
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 连续无法起飞的次数
             maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },   // 历史最长连续1点（连击断了也留着）
             maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 历史最长连续无法起飞
@@ -341,6 +343,8 @@ class GameState {
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             sixStreak: { 1: 0, 2: 0, 3: 0, 4: 0 },      // 玩家自己连投 6 的次数（跨回合累计，不随三次 6 惩罚清零）
+            runwayKills: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            blockCount: { 1: 0, 2: 0, 3: 0, 4: 0 },
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
@@ -394,7 +398,7 @@ class GameState {
     }
 
     // 记录最大连续 6 点（用于称号统计）
-    // 「连投」按玩家自己连着几次掷出 6 算：跨回合、跨三次 6 惩罚都不断，
+    // 「连投」按玩家自己连着几次摇到6 算：跨回合、跨三次 6 惩罚都不断，
     // 中间别人掷出什么都不影响他（引擎里的同名计数只管惩罚与红光，回合结束就清零）
     recordDiceRollForTitle(player, isItemRoll = false, value = null) {
         if (isItemRoll) return;
@@ -403,6 +407,16 @@ class GameState {
         if (streak[player] > this.titleStats.maxConsecutiveSixes[player]) {
             this.titleStats.maxConsecutiveSixes[player] = streak[player];
         }
+    }
+
+    // 记录在终点通道上击败对手（用于称号统计）
+    recordRunwayKill(player) {
+        this.titleStats.runwayKills[player] += 1;
+    }
+
+    // 记录用叠子阻挡对手（用于称号统计）
+    recordBlock(player) {
+        this.titleStats.blockCount[player] += 1;
     }
 
     // 记录起飞尝试结果（用于称号统计）

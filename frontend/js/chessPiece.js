@@ -114,57 +114,6 @@ class ChessPiece {
     }
 
     /**
-     * 选择传送门目标位置（三段式概率分配）
-     * @param {number} currentPosition - 当前位置
-     * @param {Array} validPositions - 有效位置列表
-     * @returns {number} 选定的目标位置
-     */
-    selectTeleportTarget(currentPosition, validPositions) {
-        // 按位移距离（绝对值）排序
-        const sortedPositions = validPositions.map(pos => ({
-            position: pos,
-            displacement: pos - currentPosition,
-            distance: Math.abs(pos - currentPosition)
-        })).sort((a, b) => a.distance - b.distance);
-
-        // 平均分成三段
-        const total = sortedPositions.length;
-        const segmentSize = Math.ceil(total / 3);
-
-        // 近距离段（前1/3）：高权重 5.0
-        // 中距离段（中1/3）：中权重 3.0
-        // 远距离段（后1/3）：低权重 2.0
-        const positionsWithWeight = sortedPositions.map((item, index) => {
-            let weight;
-            if (index < segmentSize) {
-                weight = 5.0; // 近距离：50%概率
-            } else if (index < segmentSize * 2) {
-                weight = 3.0; // 中距离：30%概率
-            } else {
-                weight = 2.0; // 远距离：20%概率
-            }
-            return { ...item, weight };
-        });
-
-        // 计算总权重
-        const totalWeight = positionsWithWeight.reduce((sum, item) => sum + item.weight, 0);
-
-        // 使用加权随机选择
-        let randomValue = Math.random() * totalWeight;
-        for (const item of positionsWithWeight) {
-            randomValue -= item.weight;
-            if (randomValue <= 0) {
-                console.log(`[传送门] 从位置${currentPosition}传送到${item.position}，位移${item.displacement > 0 ? '+' : ''}${item.displacement}`);
-                return item.position;
-            }
-        }
-
-        // 兜底：返回最后一个
-        return positionsWithWeight[positionsWithWeight.length - 1].position;
-    }
-
-
-    /**
      * 清除传送门格子高亮
      */
     clearTeleportHighlights() {
@@ -194,30 +143,14 @@ class ChessPiece {
                 return;
             }
 
-            const validPositions = this.calcTeleportPositions(player, chessIndex, chess.position);
-
-            // 如果没有有效位置，取消传送并退出传送门模式
-            if (validPositions.length === 0) {
-                import('./skillManager.js').then(module => {
-                    if (module.skillManager) {
-                        module.skillManager.showNotification('没有可用的空位进行传送！');
-                    }
-                });
-                this.exitTeleportMode({ notifyServer: true });
-                return;
-            }
-
-            const targetPosition = this.selectTeleportTarget(chess.position, validPositions);
-
-            // 联机模式：目标位置由本地选定，棋子落点与回合推进交给服务端裁决
+            // 联机模式：只报传哪颗棋子，落点与回合推进交给服务端裁决
             if (this.gameState.isOnlineMultiplayer &&
                 window.gameInstance && window.gameInstance.multiplayerGameManager) {
                 this.exitTeleportMode();
                 this.gameState.setChessMoving(true);
                 window.gameInstance.multiplayerGameManager.sendIntent({
                     type: 'teleport',
-                    chessIndex,
-                    to: targetPosition
+                    chessIndex
                 });
                 return;
             }
@@ -225,7 +158,7 @@ class ChessPiece {
             // 单机模式：落点与回合推进交给共享引擎裁决（战报与距离由事件流统一记录）
             this.exitTeleportMode();
 
-            await this.handleEngineTeleport(player, chessIndex, targetPosition);
+            await this.handleEngineTeleport(player, chessIndex);
         } catch (error) {
             console.error('[传送门] 处理传送时出错:', error);
             // 清除格子高亮
@@ -235,12 +168,12 @@ class ChessPiece {
     }
 
     /**
-     * 引擎驱动的传送门：把落点交给引擎裁决，再回放事件流
+     * 引擎驱动的传送门：只报要传的棋子，落点由引擎摇，再回放事件流
      */
-    async handleEngineTeleport(player, chessIndex, to) {
+    async handleEngineTeleport(player, chessIndex) {
         this.gameState.setChessMoving(true);
         try {
-            const { events } = engineAdapter.teleport(chessIndex, to);
+            const { events } = engineAdapter.teleport(chessIndex);
             await enginePlayback.play(events);
             engineAdapter.projectTo(this.gameState);
 
@@ -263,6 +196,7 @@ class ChessPiece {
             this.uiUpdater.updateUI();
         } catch (error) {
             console.error('引擎拒绝本次传送:', error);
+            import('./skillManager.js').then(module => module.skillManager?.showNotification(error.message));
             engineAdapter.projectTo(this.gameState);
             this.uiUpdater.updateUI();
         } finally {
@@ -290,44 +224,6 @@ class ChessPiece {
         if (notifyServer) window.gameInstance.skillManager?.cancelItem();
         window.gameInstance.skillManager?.restoreDiceIcon();
     }
-
-    /**
-     * 计算传送门的候选取格：主轨道 1-50 内排除自身位置、且绝对位置无其他棋子的格子
-     * @param {number} player - 玩家编号
-     * @param {number} chessIndex - 棋子索引
-     * @param {number} currentPosition - 棋子当前相对位置
-     * @returns {Array<number>} 候选目标位置列表
-     */
-    calcTeleportPositions(player, chessIndex, currentPosition) {
-        const validPositions = [];
-        for (let pos = 1; pos <= 50; pos++) {
-            if (pos === currentPosition) continue;
-
-            const absolutePosition = this.utils.getAbsolutePosition(player, pos);
-            const occupied = this.getOccupiedPositions(player, chessIndex).has(absolutePosition);
-            if (!occupied) validPositions.push(pos);
-        }
-        return validPositions;
-    }
-
-    /**
-     * 收集棋盘上所有其他棋子的绝对位置（排除指定棋子）
-     */
-    getOccupiedPositions(player, chessIndex) {
-        const occupied = new Set();
-        for (let p = 1; p <= 4; p++) {
-            for (let i = 0; i < this.gameState.pieceCount; i++) {
-                if (p === player && i === chessIndex) continue;
-
-                const chess = this.gameState.playerChess[p][i];
-                if (chess.finished || chess.position === -1 || chess.position >= 51) continue;
-
-                occupied.add(this.utils.getAbsolutePosition(p, chess.position));
-            }
-        }
-        return occupied;
-    }
-
 
     /**
      * 移动选中的棋子
@@ -389,7 +285,7 @@ class ChessPiece {
                     }
                 }, 1000);
             } else {
-                // 引擎未推进回合说明掷出 6 点，本回合继续
+                // 引擎未推进回合说明摇到6 点，本回合继续
                 this.gameState.canReroll = !events.some((event) => event.type === 'turn');
                 this.handleMoveComplete(player);
             }

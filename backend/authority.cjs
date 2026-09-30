@@ -23,7 +23,7 @@ function sanitizeIntent(intent) {
         case 'move':
             return { type: 'move', chessIndex: Number(intent.chessIndex) };
         case 'teleport':
-            return { type: 'teleport', chessIndex: Number(intent.chessIndex), to: Number(intent.to) };
+            return { type: 'teleport', chessIndex: Number(intent.chessIndex) };
         case 'skip':
             return { type: 'skip', reason: intent.reason === 'mysteryBox' ? 'mysteryBox' : null };
         case 'roll': {

@@ -182,8 +182,8 @@ class EngineAdapter {
         return this._apply({ type: 'debug', op: 'energy', player, value });
     }
 
-    teleport(chessIndex, to) {
-        return this._apply({ type: 'teleport', chessIndex, to });
+    teleport(chessIndex) {
+        return this._apply({ type: 'teleport', chessIndex });
     }
 
     skip(reason = null) {

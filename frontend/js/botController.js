@@ -91,7 +91,7 @@ class BotController {
                 await chessPiece?.handleEngineMove?.(player, action.chessIndex);
                 return;
             case 'teleport':
-                await chessPiece?.handleEngineTeleport?.(player, action.chessIndex, action.to);
+                await chessPiece?.handleEngineTeleport?.(player, action.chessIndex);
                 return;
             default:
                 return;

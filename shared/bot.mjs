@@ -2,7 +2,7 @@
  * AI 决策：只吃引擎状态，返回一个待执行的动作，服务端与单机共用。
  * 走法评分读引擎 preview 的事件流（击败、跳子、飞棋、终点、碰撞都在里面）。
  */
-import { ITEM_COSTS, BASE, TRACK_END, cellOf, chessProgress, movableChess, preview } from './engine.mjs';
+import { ITEM_COSTS, BASE, TRACK_END, cellOf, chessProgress, movableChess, preview, teleportSpots } from './engine.mjs';
 
 const SCORE = {
     winNow: 2000,       // 这一步直接赢
@@ -112,27 +112,15 @@ function hasChessOnTrack(state, player) {
     return state.players[player].chesses.some((chess) => !chess.finished && chess.pos >= 0 && chess.pos < TRACK_END);
 }
 
-/** 传送门落点：往前最远的空位，没有就退而求其次选最靠前的位置 */
-function bestTeleport(state, player) {
+/** 传送门：挑自己最靠前、还在主轨道上的那颗，落点交给引擎摇 */
+function teleportPick(state, player) {
     const chess = state.players[player].chesses
         .map((item, index) => ({ item, index }))
         .filter(({ item }) => !item.finished && item.pos >= 0 && item.pos < 51)
         .sort((a, b) => b.item.pos - a.item.pos)[0];
     if (!chess) return null;
-
-    const occupied = new Set();
-    for (const id of state.order) {
-        for (const other of state.players[id].chesses) {
-            if (other.finished || other.pos === BASE) continue;
-            occupied.add(cellOf(id, other.pos));
-        }
-    }
-    for (let to = 50; to >= 1; to--) {
-        if (to === chess.item.pos) continue;
-        if (occupied.has(cellOf(player, to))) continue;
-        return { chessIndex: chess.index, to };
-    }
-    return null;
+    if (!teleportSpots(state, player, chess.item.pos).length) return null;
+    return { chessIndex: chess.index };
 }
 
 /**
@@ -151,7 +139,7 @@ export function chooseAction(state, player, { rng = Math.random, difficulty = 'h
         if (threat && threat.score >= SCORE.beat && energy >= ITEM_COSTS['remote-dice']) {
             return { type: 'item', item: 'remote-dice' };
         }
-        if (isBehind(state, player) && hasChessOnTrack(state, player) && energy >= ITEM_COSTS.teleport && bestTeleport(state, player)) {
+        if (isBehind(state, player) && hasChessOnTrack(state, player) && energy >= ITEM_COSTS.teleport && teleportPick(state, player)) {
             return { type: 'item', item: 'teleport' };
         }
         if (isFarBehind(state, player) && energy >= ITEM_COSTS.mysteryBox && energy < ITEM_COSTS.teleport) {
@@ -169,8 +157,8 @@ export function chooseAction(state, player, { rng = Math.random, difficulty = 'h
             return { type: 'roll', value: best ? best.value : undefined, maxDice: 6, noBonus: true, item: 'remote-dice' };
         }
         if (state.pendingItem.item === 'teleport') {
-            const target = bestTeleport(state, player);
-            if (target) return { type: 'teleport', chessIndex: target.chessIndex, to: target.to };
+            const target = teleportPick(state, player);
+            if (target) return { type: 'teleport', chessIndex: target.chessIndex };
         }
     }
 

@@ -9,6 +9,7 @@ import { audioManager } from './audioManager.js';
 import { energyManager } from './energyManager.js';
 import { titleManager } from './titleManager.js';
 import { DICE_SYMBOLS, calculateChessProgress } from './utils.js';
+import { RUNWAY_BASE, CROSS_BASE } from '../../shared/engine.mjs';
 
 const STEP_DELAY = 190;
 const FINISH_DELAY = 500;
@@ -120,6 +121,7 @@ async function playWalk(event) {
         gameInfo.addChessMove(player, chess, 'move', from, to, true);
         if (bounced && bounceReason === 'stack' && blocker !== null) {
             gameInfo.addStackBlock(player, blocker, true);
+            gameState.recordBlock(blocker);
         }
         return;
     }
@@ -137,6 +139,7 @@ async function playWalk(event) {
         if (bounceSteps) gameState.recordBounceSteps(player, bounceSteps);
         if (bounceReason === 'stack' && blocker !== null) {
             gameInfo.addStackBlock(player, blocker, true);
+            gameState.recordBlock(blocker);
         }
     }
 }
@@ -212,11 +215,19 @@ async function playCollisionBonus(event) {
     await sleep(COLLISION_BONUS_DELAY);
 }
 
+/** 终点通道：各家的直达格（RUNWAY_BASE 起，每人 10 格）+ 通道中段那格交叉格（CROSS_BASE） */
+function isRunwayCell(cell) {
+    if (!Number.isInteger(cell)) return false;
+    if (cell >= RUNWAY_BASE && cell < RUNWAY_BASE + 40) return true;
+    return cell >= CROSS_BASE && cell < CROSS_BASE + 2;
+}
+
 async function playBeat(event) {
     const { player, targetPlayer, chess, itemRoll } = event;
     // 遥控骰子的击败没有积分行，面板据此保留这一条（其余击败在道具模式下由积分行代替）
     const isRemoteDiceMove = itemRoll === 'remote-dice';
     gameState.recordFirstBeater(player);
+    if (isRunwayCell(event.cell)) gameState.recordRunwayKill(player);
     moveBeats.set(player, (moveBeats.get(player) || 0) + 1);
     if (silentReplay) {
         gameInfo.addChessBeat(player, targetPlayer, chess, true, isRemoteDiceMove, beatDisplayEnergy(event));
@@ -424,14 +435,21 @@ async function playTeleport(event) {
 }
 
 /** 道具使用的战报与统计，实时与静默回放共用（刷新后战报能重建、各端统计一致） */
+/** 道具「使用」这条：只出战报，使用次数等结果那一步再记，避免取消道具也计数 */
 function recordItemUsage(item, player, extra = {}) {
     const skillName = ITEM_SKILL_NAMES[item];
     if (!skillName) return;
 
     gameInfo.addSkillUsage(player, skillName, extra, true, silentReplay);
-    // 结果单独一条，和「使用了道具」那条成对（形状照盲盒的「使用了 [盲盒]，获得 N 点积分」）
-    if (extra.diceValue) {
-        gameInfo.addSkillResult(player, skillName, { diceValue: extra.diceValue }, true, silentReplay);
+}
+
+/** 道具「结果」这条（谁用了什么、摇到几点）+ 使用次数与相关统计 */
+function recordItemResult(item, player, extra = {}) {
+    const skillName = ITEM_SKILL_NAMES[item];
+    if (!skillName) return;
+
+    if (extra.diceValue || (item === 'teleport' && Number.isFinite(extra.fromPosition) && Number.isFinite(extra.toPosition))) {
+        gameInfo.addSkillResult(player, skillName, extra, true, silentReplay);
     }
 
     const stats = gameState.titleStats;
@@ -510,7 +528,7 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             // 实时路径的掷骰战报由快照投影负责，这里只在静默回放时补上，保证两侧战报一致
             if (silentReplay) gameInfo.addDiceRoll(event.player, event.value, true);
             // 事件里带道具 id 说明是道具骰子，战报与统计据此生成
-            if (event.item) recordItemUsage(event.item, event.player, { diceValue: event.value });
+            if (event.item) recordItemResult(event.item, event.player, { diceValue: event.value });
             gameState.recordRollStreak(event.player, event.value, Boolean(event.item));
             break;
         case 'launch':
@@ -538,6 +556,7 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             await playCollide(event);
             break;
         case 'blocked':
+            if (Number.isInteger(event.targetPlayer)) gameState.recordBlock(event.targetPlayer);
             gameInfo.addStackBlock(event.player, event.targetPlayer, true);
             break;
         case 'stack':
@@ -547,10 +566,9 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
             await playReset(event, lastDiceValue);
             break;
         case 'teleport':
-            recordItemUsage('teleport', event.player, {
+            recordItemResult('teleport', event.player, {
                 fromPosition: event.from,
-                toPosition: event.to,
-                moveType: 'teleport'
+                toPosition: event.to
             });
             await playTeleport(event);
             break;
@@ -572,11 +590,13 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
         case 'item_activate':
             // 道具是服务端出手的（AI/托管），声音得由事件流补上
             if (!silentReplay) audioManager.playSkillSound?.();
+            recordItemUsage(event.item, event.player);
             break;
         case 'mystery_box': {
             const { player, amount, energy } = event;
             // 开盒放弃本回合，使用次数与开出的点数都从这一个事件记（回放也能重建）
-            recordItemUsage('mysteryBox', player, { amount });
+            recordItemUsage('mysteryBox', player);
+            recordItemResult('mysteryBox', player, { amount });
             if (silentReplay) {
                 if (energy > 0) energyManager.addEnergyLine(player, energy, 'mysteryBox');
                 break;
@@ -673,5 +693,5 @@ async function replay(events) {
     announceLiveTitles();
 }
 
-export const enginePlayback = { play, replay, playDiceShake, announceLiveTitles };
+export const enginePlayback = { play, replay, playDiceShake, announceLiveTitles, recordItemUsage };
 export default enginePlayback;
