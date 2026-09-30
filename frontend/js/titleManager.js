@@ -11,17 +11,17 @@ const FAMILIES = [
         key: 'ones',
         value: (s, p) => s.maxConsecutiveOnes?.[p] || 0,
         levels: [
-            { id: 'bad_luck', name: '运气不佳', desc: '连着三回合都摇到 1 点', min: 3, tier: 'common' },
-            { id: 'reverse_lucky', name: '反向欧皇', desc: '连着五回合都摇到 1 点', min: 5, tier: 'rare' }
+            { id: 'bad_luck', name: '非酋', desc: '连着三回合都摇到 1 点', min: 3, tier: 'rare' },
+            { id: 'reverse_lucky', name: '反向欧皇', desc: '连着五回合都摇到 1 点', min: 5, tier: 'legendary' }
         ]
     },
     {
         key: 'no_takeoff',
         value: (s, p) => s.maxConsecutiveNoTakeoff?.[p] || 0,
         levels: [
-            { id: 'unlucky_takeoff', name: '非酋', desc: '连着三回合无法起飞', min: 3, tier: 'common' },
-            { id: 'super_unlucky', name: '超级非酋', desc: '连着六回合无法起飞', min: 6, tier: 'rare' },
-            { id: 'forsaken', name: '天弃之子', desc: '连着十回合无法起飞', min: 10, tier: 'epic' }
+            { id: 'unlucky_takeoff', name: '航班延误', desc: '连着三回合无法起飞', min: 3, tier: 'rare' },
+            { id: 'super_unlucky', name: '航班取消', desc: '连着六回合无法起飞', min: 6, tier: 'epic' },
+            { id: 'forsaken', name: '天弃之子', desc: '连着十回合无法起飞', min: 10, tier: 'mythic' }
         ]
     },
     {
@@ -29,24 +29,24 @@ const FAMILIES = [
         value: (s, p) => s.maxConsecutiveSixes?.[p] || 0,
         levels: [
             { id: 'lucky_king', name: '欧皇', desc: '连投三次 6', min: 3, tier: 'rare' },
-            { id: 'six_streak', name: '六六大顺', desc: '连投四次 6', min: 4, tier: 'epic' },
-            { id: 'dice_god', name: '天命骰神', desc: '连投五次 6', min: 5, tier: 'legendary' }
+            { id: 'six_streak', name: '六六大顺', desc: '连投四次 6', min: 4, tier: 'legendary' },
+            { id: 'dice_god', name: '天命骰神', desc: '连投五次 6', min: 5, tier: 'mythic' }
         ]
     },
     {
         key: 'move_distance',
         value: (s, p) => s.maxMoveDistance?.[p] || 0,
         levels: [
-            { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格', min: 25, tier: 'rare' },
-            { id: 'sky_high', name: '一步登天', desc: '单次移动达到 35 格', min: 35, tier: 'epic' }
+            { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格', min: 25, tier: 'legendary' },
+            { id: 'sky_high', name: '一步登天', desc: '单次移动达到 35 格', min: 35, tier: 'mythic' }
         ]
     },
     {
         key: 'bounce',
         value: (s, p) => s.bounceSteps?.[p] || 0,
         levels: [
-            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数超过 50 格', min: 51, tier: 'rare' },
-            { id: 'bounce_master', name: '弹球大师', desc: '反弹总格数超过 100 格', min: 101, tier: 'epic' }
+            { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数超过 50 格', min: 51, tier: 'legendary' },
+            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数超过 100 格', min: 101, tier: 'mythic' }
         ]
     },
     {
@@ -54,9 +54,9 @@ const FAMILIES = [
         value: (s, p) => s.maxBeatsInMove?.[p] || 0,
         happyDisabled: true,
         levels: [
-            { id: 'double_kill', name: '一箭双雕', desc: '单次移动击败 2 颗棋子（撞叠子不算）', min: 2, tier: 'rare' },
-            { id: 'triple_kill', name: '三连绝世', desc: '单次移动击败 3 颗棋子（撞叠子不算）', min: 3, tier: 'epic' },
-            { id: 'quad_kill', name: '横扫千军', desc: '单次移动击败 4 颗棋子（撞叠子不算）', min: 4, tier: 'legendary' }
+            { id: 'double_kill', name: '一箭双雕', desc: '单次移动击败 2 颗棋子（撞叠子不算）', min: 2, tier: 'epic' },
+            { id: 'triple_kill', name: '三连绝世', desc: '单次移动击败 3 颗棋子（撞叠子不算）', min: 3, tier: 'legendary' },
+            { id: 'quad_kill', name: '横扫千军', desc: '单次移动击败 4 颗棋子（撞叠子不算）', min: 4, tier: 'mythic' }
         ]
     },
     {
@@ -64,18 +64,17 @@ const FAMILIES = [
         value: (s, p) => s.maxCollideInMove?.[p] || 0,
         happyOnly: true,
         levels: [
-            { id: 'bumper_car', name: '碰碰车', desc: '单次移动碰撞 3 颗棋子', min: 3, tier: 'common' },
-            { id: 'chain_crash', name: '连环碰撞', desc: '单次移动碰撞 5 颗棋子', min: 5, tier: 'rare' },
-            { id: 'rampage', name: '横冲直撞', desc: '单次移动碰撞 8 颗棋子', min: 8, tier: 'epic' }
+            { id: 'bumper_car', name: '碰碰车', desc: '单次移动碰撞 3 颗棋子', min: 3, tier: 'epic' },
+            { id: 'chain_crash', name: '连环碰撞', desc: '单次移动碰撞 5 颗棋子', min: 5, tier: 'legendary' },
+            { id: 'rampage', name: '横冲直撞', desc: '单次移动碰撞 8 颗棋子', min: 8, tier: 'mythic' }
         ]
     },
     {
         key: 'teleport',
         value: (s, p) => s.maxTeleportDistance?.[p] || 0,
         levels: [
-            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送超过 20 格', min: 21, tier: 'rare' },
-            { id: 'void_walker', name: '虚空行者', desc: '单次传送超过 35 格', min: 36, tier: 'epic' },
-            { id: 'teleport_master', name: '传送大师', desc: '单次传送超过 40 格', min: 41, tier: 'legendary' }
+            { id: 'dimension_traveler', name: '次元旅人', desc: '单次传送超过 35 格', min: 36, tier: 'common' },
+            { id: 'void_walker', name: '虚空行者', desc: '单次传送超过 40 格', min: 41, tier: 'rare' }
         ]
     },
     {
@@ -91,21 +90,21 @@ const FAMILIES = [
         value: (s, p) => s.skillUseCount?.[p] || 0,
         levels: [
             { id: 'skill_mania', name: '道具狂人', desc: '使用道具次数超过 10 次', min: 11, tier: 'rare' },
-            { id: 'skill_master', name: '道具大师', desc: '使用道具次数超过 20 次', min: 21, tier: 'epic' }
+            { id: 'skill_master', name: '道具大师', desc: '使用道具次数超过 20 次', min: 21, tier: 'legendary' }
         ]
     },
     {
         key: 'poly_high',
         value: (s, p) => (s.polyhedralMax?.[p] >= 12 ? 1 : 0),
         levels: [
-            { id: 'destiny_child', name: '天命之子', desc: '多面骰子摇到 12 点', min: 1, tier: 'epic' }
+            { id: 'destiny_child', name: '天命之子', desc: '多面骰子摇到 12 点', min: 1, tier: 'mythic' }
         ]
     },
     {
         key: 'poly_low',
         value: (s, p) => (s.polyhedralMin?.[p] === 1 ? 1 : 0),
         levels: [
-            { id: 'unlucky_bear', name: '倒霉熊', desc: '多面骰子摇到 1 点', min: 1, tier: 'epic' }
+            { id: 'unlucky_bear', name: '倒霉熊', desc: '多面骰子摇到 1 点', min: 1, tier: 'mythic' }
         ]
     },
     {
@@ -119,14 +118,14 @@ const FAMILIES = [
         key: 'first_finish',
         value: (s, p) => (s.firstFinishedPlayer === p ? 1 : 0),
         levels: [
-            { id: 'speed_legend', name: '最速传说', desc: '首个使棋子抵达终点', min: 1, tier: 'rare' }
+            { id: 'speed_legend', name: '最速传说', desc: '首个使棋子抵达终点', min: 1, tier: 'common' }
         ]
     },
     {
         key: 'first_blood',
         value: (s, p) => (s.firstBeaterPlayer === p ? 1 : 0),
         levels: [
-            { id: 'first_blood', name: '第一滴血', desc: '本局第一个击败对手', min: 1, tier: 'rare' }
+            { id: 'first_blood', name: '第一滴血', desc: '本局第一个击败对手', min: 1, tier: 'common' }
         ]
     }
 ];
@@ -142,15 +141,15 @@ class TitleManager {
             KILLER: { id: 'killer', name: '收割者', desc: '击败对手次数最多', tier: 'common' },
             HOME_VISITOR: { id: 'home_visitor', name: '回家常客', desc: '被对手击败次数最多', tier: 'common', happyDisabled: true },
             STEADY_DOG: { id: 'steady_dog', name: '避战大师', desc: '被击败次数全场最少', tier: 'common' },
-            CHESS_KING: { id: 'chess_king', name: '棋王', desc: '本局第一名', tier: 'epic' },
-            COMEBACK: { id: 'comeback', name: '逆风翻盘', desc: '整局 60% 时间处于垫底，最后反败为胜', tier: 'legendary' }
+            CHESS_KING: { id: 'chess_king', name: '棋王', desc: '本局第一名', tier: 'common' },
+            COMEBACK: { id: 'comeback', name: '逆风翻盘', desc: '整局 60% 时间处于垫底，最后反败为胜', tier: 'mythic' }
         };
 
         // 结算专用的整局型称号：只在正常收官时才算数
         this.FINAL_TITLES = {
-            INVISIBLE: { id: 'invisible', name: '不死传说', desc: '整局未被击败过', tier: 'legendary', happyDisabled: true },
-            PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手', tier: 'rare' },
-            TAILWIND_WALKER: { id: 'tailwind_walker', name: '顺风行者', desc: '在整局未发生过反弹的情况下获胜', tier: 'legendary', happyDisabled: true }
+            INVISIBLE: { id: 'invisible', name: '不死传说', desc: '整局未被击败过', tier: 'mythic', happyDisabled: true },
+            PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手', tier: 'mythic' },
+            TAILWIND_WALKER: { id: 'tailwind_walker', name: '顺风行者', desc: '在整局未发生过反弹的情况下获胜', tier: 'epic', happyDisabled: true }
         };
 
         this.DEFAULT_TITLE = { id: 'default', name: '平凡棋手', desc: '平平淡淡才是真', tier: 'common' };
@@ -159,9 +158,9 @@ class TitleManager {
         this.ANNOUNCE_ORDER = ['first_blood', 'speed_legend'];
 
         // 称号分级：只决定配色，不参与任何判定
-        this.TIER_NAMES = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
+        this.TIER_NAMES = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说', mythic: '神话' };
         // 越靠前越厉害，展示时按这个顺序把强称号排在前面
-        this.TIER_RANK = { legendary: 0, epic: 1, rare: 2, common: 3 };
+        this.TIER_RANK = { mythic: 0, legendary: 1, epic: 2, rare: 3, common: 4 };
     }
 
     /** 家族里当前达成的最高一级；一个都没达到返回 null */
@@ -214,6 +213,18 @@ class TitleManager {
             name: title.name ? title.name.replaceAll('击败', '碰撞') : title.name,
             desc: title.desc ? title.desc.replaceAll('击败', '碰撞') : title.desc
         };
+    }
+
+    /** 该玩家此刻已经达成的称号（只读，不碰播报记录）：每族取最高一级，厉害的排前面 */
+    currentTitles(player, gameState) {
+        const stats = gameState?.titleStats;
+        if (!stats) return [];
+        const isHappy = Boolean(gameState?.isHappyMode?.());
+        return this.FAMILIES
+            .map((family) => this._topLevel(family, stats, player, isHappy))
+            .filter(Boolean)
+            .map((top) => top.level)
+            .sort((a, b) => (this.TIER_RANK[a.tier] ?? 99) - (this.TIER_RANK[b.tier] ?? 99));
     }
 
     /**

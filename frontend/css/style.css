@@ -696,6 +696,12 @@ body {
     align-items: center;
     justify-content: center;
     box-shadow: 0 2px 8px var(--shadow-2);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.player-avatar:hover {
+    transform: scale(1.06);
 }
 
 .player-emoji {
@@ -3960,26 +3966,87 @@ use[href="#checkmark"] {
 
 .title-chip.tier-common {
     color: #7d7269;
-    background: rgba(140, 130, 120, 0.14);
+    background: #eae6e2;
     border-color: rgba(140, 130, 120, 0.35);
 }
 
 .title-chip.tier-rare {
     color: #3f7fb5;
-    background: rgba(74, 144, 217, 0.14);
+    background: #e0e8f0;
     border-color: rgba(74, 144, 217, 0.4);
 }
 
 .title-chip.tier-epic {
     color: #8455b8;
-    background: rgba(155, 107, 211, 0.16);
+    background: #ebe1ef;
     border-color: rgba(155, 107, 211, 0.45);
+}
+
+.title-chip.tier-legendary,
+.title-chip.tier-mythic {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
 }
 
 .title-chip.tier-legendary {
     color: #b7791f;
-    background: rgba(224, 161, 58, 0.18);
+    background: #f5e8d2;
     border-color: rgba(224, 161, 58, 0.5);
+}
+
+/* 神话档：红色系（实色底 + 同色系描边） */
+.title-chip.tier-mythic {
+    color: #c0453c;
+    background: #f9dedb;
+    border-color: rgba(192, 69, 60, 0.5);
+}
+
+/* 称号播报里的称号名：按稀有度上色 */
+.title-earned-title {
+    font-weight: bold;
+}
+
+.title-earned-title.tier-common {
+    color: #7d7269;
+}
+
+.title-earned-title.tier-rare {
+    color: #3f7fb5;
+}
+
+.title-earned-title.tier-epic {
+    color: #8455b8;
+}
+
+.title-earned-title.tier-legendary {
+    color: #b7791f;
+}
+
+/* 传说与神话档：一道光定期掠过 */
+.title-chip.tier-legendary::after,
+.title-chip.tier-mythic::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -50%;
+    width: 45%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+    transform: skewX(-18deg);
+    animation: titleSweep 3.2s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes titleSweep {
+    0% {
+        left: -50%;
+    }
+
+    55%,
+    100% {
+        left: 110%;
+    }
 }
 
 /* 「称号一览」切换按钮：首页规则面板与局内规则弹框共用同一颗胶囊 */
@@ -3992,11 +4059,15 @@ use[href="#checkmark"] {
     color: var(--text-primary);
     cursor: pointer;
     white-space: nowrap;
-    transition: border-color 0.25s ease;
+    transition: transform 0.25s ease;
 }
 
 .rules-view-toggle:hover {
-    border-color: var(--text-primary);
+    transform: translateY(-2px);
+}
+
+.rules-view-toggle:active {
+    transform: translateY(-2px) scale(0.95);
 }
 
 /* 首页规则面板：标题居中，按钮贴右上角 */
@@ -4077,7 +4148,7 @@ use[href="#checkmark"] {
     font-size: 12px;
 }
 
-.title-mode-tag {
+.title-tag {
     padding: 1px 7px;
     border-radius: 999px;
     border: 1px dashed var(--border-soft);
@@ -4125,6 +4196,52 @@ use[href="#checkmark"] {
 
 .titles-default-note {
     margin: 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ui-default-color);
+}
+
+/* 头像悬浮卡：内容自己撑开，但给个最小尺寸，别缩成一小条 */
+.titles-hover-card {
+    position: fixed;
+    z-index: 3000;
+    display: none;
+    min-width: 168px;
+    min-height: 72px;
+    /* 宽度上限就跟着走势图（172）+ 左右内边距（24），称号标签在这宽度里换行 */
+    max-width: 196px;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-light-1);
+    box-shadow: 0 2px 6px var(--shadow-1);
+    pointer-events: none;
+}
+
+.titles-hover-head {
+    margin-bottom: 8px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--ui-default-color);
+}
+
+.titles-hover-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.titles-hover-trend {
+    display: block;
+    width: 172px;
+    height: 46px;
+    margin: 2px 0 10px;
+}
+
+.titles-hover-empty {
+    flex: 1;
     text-align: center;
     font-size: 12px;
     color: var(--ui-default-color);
@@ -6133,24 +6250,6 @@ use[href="#checkmark"] {
 #checkmark circle[fill="transparent"],
 #chess circle[fill="transparent"] {
     pointer-events: all;
-}
-
-/* AI托管遮罩层样式 */
-.ai-takeover-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: transparent;
-    z-index: 50;
-    display: none;
-    pointer-events: none;
-}
-
-.ai-takeover-overlay.active {
-    display: block;
-    pointer-events: auto;
 }
 
 /* 模态框样式 */

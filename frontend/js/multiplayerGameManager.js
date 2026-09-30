@@ -1279,12 +1279,12 @@ class MultiplayerGameManager {
         // 不把服务端的窗口写进本地显示：进度条由本机按「阶段」自己跑（进新阶段才重置）。
         // 服务端那扇窗口仍由服务端用于超时裁决，前端只做展示，否则演出期间会被拉回去/向后走
 
-        // 称号统计依赖投影后的 consecutiveSixes，须在 projectTo 之后记录
+        // 称号统计从事件流里记；「连投 6」由 gameState 按玩家自己累计，跨回合不断
         for (const event of events) {
             if (event.type !== 'dice') continue;
             if (typeof gs.recordDiceRollForTitle === 'function') {
                 // 道具骰子不参与普通骰子的称号统计
-                gs.recordDiceRollForTitle(event.player, Boolean(event.item));
+                gs.recordDiceRollForTitle(event.player, Boolean(event.item), event.value);
             }
             // 点数统计：联机下点数由服务端产出，只能从事件流里记（道具骰子点数可超过 6，不计入）
             const stats = gs.diceStatistics && gs.diceStatistics[event.player];
@@ -1627,7 +1627,6 @@ class MultiplayerGameManager {
                             if (window.gameState && typeof window.gameState.setAITakeover === 'function') {
                                 window.gameState.setAITakeover(true);
                             }
-                            aiTakeoverManager.showOverlay();
                             aiTakeoverManager.updateToggleButton();
                             aiTakeoverManager.updateControlButtons();
                             // 恢复昵称标记（如果需要）
@@ -2626,7 +2625,6 @@ class MultiplayerGameManager {
                                     if (window.gameState && typeof window.gameState.setAITakeover === 'function') {
                                         window.gameState.setAITakeover(true);
                                     }
-                                    aiTakeoverManager.showOverlay();
                                     aiTakeoverManager.updateToggleButton();
                                     aiTakeoverManager.updateControlButtons();
                                     // 恢复昵称标记（如果需要）

@@ -23,8 +23,6 @@ class AITakeoverManager {
     constructor() {
         this.isActive = false;
         this.originalNames = {};
-        // 绑定事件处理函数，确保在添加和移除监听器时使用相同的引用
-        this.boundHandleOverlayClick = this.handleOverlayClick.bind(this);
     }
 
     /**
@@ -100,7 +98,6 @@ class AITakeoverManager {
         this.updateToggleButton();
         // 如果之前是托管状态，需要显示遮罩等
         if (this.isActive) {
-            this.showOverlay();
         }
     }
 
@@ -117,8 +114,6 @@ class AITakeoverManager {
 
         // 启用botController以支持AI托管
         botController.setEnabled(true);
-        // 显示遮罩层
-        this.showOverlay();
         // 存储并修改所有人类玩家的昵称
         this.modifyHumanPlayerNames();
 
@@ -180,8 +175,6 @@ class AITakeoverManager {
         this.isActive = false;
         gameState.setAITakeover(false);
 
-        // 隐藏遮罩层
-        this.hideOverlay();
 
         // 恢复所有玩家的原始昵称
         this.restoreOriginalNames();
@@ -260,7 +253,6 @@ class AITakeoverManager {
 
         if (isActive) {
             document.title = 'AI托管中...';
-            this.showOverlay();
             
             // 启用botController
             if (window.botController) {
@@ -271,7 +263,6 @@ class AITakeoverManager {
             this.updateControlButtons();
         } else {
             updatePageTitle();
-            this.hideOverlay();
             
             // 更新控制按钮
             this.updateControlButtons();
@@ -564,97 +555,6 @@ class AITakeoverManager {
         if (this.isActive) {
             this.modifyHumanPlayerNames();
         }
-    }
-
-    /**
-     * 显示AI托管遮罩层
-     */
-    showOverlay() {
-        const overlay = document.getElementById('ai-takeover-overlay');
-        if (overlay) {
-            overlay.classList.add('active');
-
-            // 添加事件监听器来阻止用户点击
-            overlay.addEventListener('click', this.boundHandleOverlayClick);
-            overlay.addEventListener('mousedown', this.boundHandleOverlayClick);
-            overlay.addEventListener('touchstart', this.boundHandleOverlayClick, { passive: false });
-        }
-    }
-
-    /**
-     * 隐藏AI托管遮罩层
-     */
-    hideOverlay() {
-        const overlay = document.getElementById('ai-takeover-overlay');
-        if (overlay) {
-            overlay.classList.remove('active');
-
-            // 移除事件监听器
-            overlay.removeEventListener('click', this.boundHandleOverlayClick);
-            overlay.removeEventListener('mousedown', this.boundHandleOverlayClick);
-            overlay.removeEventListener('touchstart', this.boundHandleOverlayClick);
-
-            console.log('隐藏AI托管遮罩层');
-        }
-    }
-
-    /**
-     * 处理遮罩层点击事件
-     */
-    handleOverlayClick(event) {
-        // 检测是否为触摸滚动事件
-        if (event.type === 'touchstart') {
-            // 记录初始触摸位置
-            this.initialTouchY = event.touches[0].clientY;
-            this.initialTouchX = event.touches[0].clientX;
-
-            // 添加临时的touchmove和touchend监听器
-            const handleTouchMove = (moveEvent) => {
-                const deltaY = Math.abs(moveEvent.touches[0].clientY - this.initialTouchY);
-                const deltaX = Math.abs(moveEvent.touches[0].clientX - this.initialTouchX);
-
-                // 如果是滚动手势（垂直移动距离大于水平移动距离且超过阈值）
-                if (deltaY > deltaX && deltaY > 10) {
-                    // 允许滚动，不阻止事件
-                    return;
-                }
-
-                // 否则阻止事件（点击或水平滑动）
-                if (moveEvent.cancelable) {
-                    moveEvent.preventDefault();
-                }
-                moveEvent.stopPropagation();
-            };
-
-            const handleTouchEnd = (endEvent) => {
-                const deltaY = Math.abs(endEvent.changedTouches[0].clientY - this.initialTouchY);
-                const deltaX = Math.abs(endEvent.changedTouches[0].clientX - this.initialTouchX);
-
-                // 如果移动距离很小，认为是点击
-                if (deltaY < 10 && deltaX < 10) {
-                    if (endEvent.cancelable) {
-                        endEvent.preventDefault();
-                    }
-                    endEvent.stopPropagation();
-                }
-
-                // 移除临时监听器
-                event.target.removeEventListener('touchmove', handleTouchMove);
-                event.target.removeEventListener('touchend', handleTouchEnd);
-            };
-
-            // 添加临时监听器
-            event.target.addEventListener('touchmove', handleTouchMove, { passive: false });
-            event.target.addEventListener('touchend', handleTouchEnd, { passive: false });
-
-            return;
-        }
-
-        // 对于非触摸事件（鼠标点击），直接阻止
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        return false;
     }
 }
 

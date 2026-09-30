@@ -28,3 +28,6 @@ docs/poster/
 
 # Local content moderation dictionary
 frontend/assets/违规词库.txt
+
+# Local-only dev scripts
+/tools/title-stats.mjs

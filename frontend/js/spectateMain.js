@@ -6,6 +6,7 @@ import { audioManager } from './audioManager.js';
 import { WebSocketClient } from './websocketClient.js';
 import { FlyingChessGameBase, createGameRuntime } from './gameBase.js';
 import { resetTitlesViews } from './titlesGallery.js';
+import './titlesHoverCard.js';
 import './theme.js';
 
 class FlyingChessGame extends FlyingChessGameBase {

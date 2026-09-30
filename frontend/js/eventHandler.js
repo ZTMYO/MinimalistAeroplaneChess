@@ -40,7 +40,10 @@ class EventHandler {
     setupDiceEvents() {
         const diceDisplay = document.getElementById('diceDisplay');
         if (diceDisplay) {
-            diceDisplay.addEventListener('click', () => this.handleDiceClick());
+            diceDisplay.addEventListener('click', () => {
+                if (gameState.getIsAITakeover()) return;
+                this.handleDiceClick();
+            });
         }
     }
 
@@ -423,7 +426,10 @@ class EventHandler {
             const isOnlineMultiplayer = gameState.getIsOnlineMultiplayer();
             const isBotPlayer = gameState.isBotPlayer(currentPlayer);
 
-            // AI托管模式下允许人类玩家点击棋子（简化逻辑）
+            // AI托管期间由 AI 出手，玩家的棋子点击一律忽略
+            if (gameState.getIsAITakeover()) {
+                return;
+            }
 
             // 检查游戏是否暂停
             if (isPaused) {
@@ -505,6 +511,7 @@ class EventHandler {
             switch (event.key) {
                 case ' ': // 空格键掷骰子
                     event.preventDefault();
+                    if (gameState.getIsAITakeover()) break;
                     this.handleDiceClick();
                     break;
                 case 'Enter': // 回车键触发聊天（仅联机模式）

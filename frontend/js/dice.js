@@ -168,7 +168,7 @@ class Dice {
         this.gameState.canReroll = phase === 'selecting' && engineAdapter.state.dice === 6;
         this.gameState.isRolling = false;
 
-        this.gameState.recordDiceRollForTitle(roller, this.gameState.isRemoteDice === true);
+        this.gameState.recordDiceRollForTitle(roller, this.gameState.isRemoteDice === true, value);
         this.gameState.isRemoteDice = false;
         enginePlayback.announceLiveTitles();
 

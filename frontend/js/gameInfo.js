@@ -257,6 +257,13 @@ class GameInfo {
                 const targetName = hasTarget ? this.getPlayerName(targetPlayer) : '对手';
                 const targetSpan = hasTarget ? `<span class="player-text player-${targetPlayer}">${targetName}</span>` : `<span class="action-text">对手</span>`;
                 notificationText = `${playerSpan}<span class="beat-text"> 碰撞 </span>${targetSpan} ${energySpan}`;
+            } else if (messageData.data.source === 'mysteryBox') {
+                // 盲盒结果本机也要看：这是自己这一手唯一的反馈，不能只提示别人
+                const amountStr = Number.isInteger(messageData.data.amount) ? messageData.data.amount : messageData.data.amount.toFixed(1);
+                const playerName = this.getPlayerName(player);
+                const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+                const energySpan = `<span class="energy-value-text">+${amountStr}积分</span>`;
+                notificationText = `${playerSpan}<span class="action-text"> 使用了 </span><span class="skill-name-text">[盲盒]</span> ${energySpan}`;
             } else if (messageData.data.source !== 'kill' && !isNonLocal) {
                 notificationText = '';
             } else {
@@ -303,7 +310,7 @@ class GameInfo {
                 return this.formatChessBeat(player, data.targetPlayer, data.targetChess, data.position);
 
             case 'title_earned':
-                return this.formatTitleEarned(player, data.titleName);
+                return this.formatTitleEarned(player, data.titleName, data.tier);
 
             case 'chess_launch':
                 return this.formatChessLaunch(player, data.chessIndex);
@@ -474,12 +481,12 @@ class GameInfo {
         return `${playerSpan}${actionSpan}${targetSpan}${exclamationSpan}`;
     }
 
-    // 格式化称号达成消息
-    formatTitleEarned(player, titleName) {
+    // 格式化称号达成消息（称号名按稀有度上色，神话那档在 CSS 里换成彩虹跑马灯）
+    formatTitleEarned(player, titleName, tier = 'common') {
         const playerName = this.getPlayerName(player);
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
         const actionSpan = `<span class="action-text"> 达成称号 </span>`;
-        const titleSpan = `<span class="skill-name-text">[${titleName}]</span>`;
+        const titleSpan = `<span class="title-earned-title tier-${tier}">[${titleName}]</span>`;
         const exclamationSpan = `<span class="action-text">！</span>`;
 
         return `${playerSpan}${actionSpan}${titleSpan}${exclamationSpan}`;
@@ -757,11 +764,11 @@ class GameInfo {
     }
 
     // 便捷方法：添加称号达成信息
-    addTitleEarned(player, titleName, skipSync = true) {
+    addTitleEarned(player, titleName, tier = 'common', skipSync = true) {
         this.addMessage({
             type: 'title_earned',
             player: player,
-            data: { titleName }
+            data: { titleName, tier }
         }, skipSync);
     }
 

@@ -67,7 +67,7 @@ function flushMoveDistances() {
 function announceLiveTitles() {
     for (let player = 1; player <= 4; player++) {
         titleManager.collectLiveTitles(player, gameState).forEach((title) => {
-            gameInfo.addTitleEarned(player, title.name);
+            gameInfo.addTitleEarned(player, title.name, title.tier);
         });
     }
 }

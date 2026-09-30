@@ -12,6 +12,7 @@ import { playerNameManager } from './playerNameManager.js';
 import { lightningManager } from './lightningManager.js';
 import { engineAdapter } from './engineAdapter.js';
 import { FlyingChessGameBase, createGameRuntime } from './gameBase.js';
+import './titlesHoverCard.js';
 import './theme.js';
 
 class FlyingChessGame extends FlyingChessGameBase {

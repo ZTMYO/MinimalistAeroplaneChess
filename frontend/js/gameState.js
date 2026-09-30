@@ -110,6 +110,7 @@ class GameState {
         // 称号相关统计数据
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },    // 连续摇到1的次数
+            sixStreak: { 1: 0, 2: 0, 3: 0, 4: 0 },           // 玩家自己连投 6 的次数（跨回合累计，不随三次 6 惩罚清零）
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 连续无法起飞的次数
             maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },   // 历史最长连续1点（连击断了也留着）
             maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 }, // 历史最长连续无法起飞
@@ -339,6 +340,7 @@ class GameState {
         // 重置称号统计
         this.titleStats = {
             consecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            sixStreak: { 1: 0, 2: 0, 3: 0, 4: 0 },      // 玩家自己连投 6 的次数（跨回合累计，不随三次 6 惩罚清零）
             consecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxConsecutiveOnes: { 1: 0, 2: 0, 3: 0, 4: 0 },
             maxConsecutiveNoTakeoff: { 1: 0, 2: 0, 3: 0, 4: 0 },
@@ -392,12 +394,14 @@ class GameState {
     }
 
     // 记录最大连续 6 点（用于称号统计）
-    // 注意：consecutiveSixes 会在 Dice.js 或 server 同步中更新
-    // 这里记录它达到的历史最大值
-    recordDiceRollForTitle(player, isItemRoll = false) {
+    // 「连投」按玩家自己连着几次掷出 6 算：跨回合、跨三次 6 惩罚都不断，
+    // 中间别人掷出什么都不影响他（引擎里的同名计数只管惩罚与红光，回合结束就清零）
+    recordDiceRollForTitle(player, isItemRoll = false, value = null) {
         if (isItemRoll) return;
-        if (this.consecutiveSixes > this.titleStats.maxConsecutiveSixes[player]) {
-            this.titleStats.maxConsecutiveSixes[player] = this.consecutiveSixes;
+        const streak = this.titleStats.sixStreak;
+        streak[player] = value === 6 ? (streak[player] || 0) + 1 : 0;
+        if (streak[player] > this.titleStats.maxConsecutiveSixes[player]) {
+            this.titleStats.maxConsecutiveSixes[player] = streak[player];
         }
     }
 

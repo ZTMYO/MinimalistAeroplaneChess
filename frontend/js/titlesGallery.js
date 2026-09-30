@@ -3,9 +3,11 @@ import { titleManager } from './titleManager.js';
 let galleryHtml = null;
 
 // 条件里的数量词（三回合 / 25 格 / 12 点）提亮，读起来先看见门槛
-const KEYWORD_UNITS = '回合|次|格|点|颗棋子|颗|分|名|人';
+// 不含「名」：那是序数（本局第一名），不是数量
+// 空格留在匹配之外：数字前后本来就有空格，别被提亮这一步吃掉
+const KEYWORD_UNITS = '回合|次|格|点|颗棋子|颗|分|人';
 const KEYWORD_PATTERN = new RegExp(
-    `\\d+(?:\\.\\d+)?%?\\s*(?:${KEYWORD_UNITS})?|[一二三四五六七八九十]+\\s*(?:${KEYWORD_UNITS})`,
+    `\\d+(?:\\.\\d+)?%?(?:\\s*(?:${KEYWORD_UNITS}))?|[一二三四五六七八九十]+(?:\\s*(?:${KEYWORD_UNITS}))`,
     'g'
 );
 
@@ -18,7 +20,7 @@ function chipHtml(name, tier) {
 }
 
 function tagHtml(text) {
-    return `<span class="title-mode-tag">${text}</span>`;
+    return `<span class="title-tag">${text}</span>`;
 }
 
 function modeTag(source) {
@@ -27,21 +29,39 @@ function modeTag(source) {
     return '';
 }
 
+// 描述末尾的括号补充（撞叠子不算）单拎出来当标签，正文只留条件本身
+function splitNote(text) {
+    const matched = String(text).match(/^([\s\S]*?)（([^（）]+)）\s*$/);
+    if (!matched) return { text, notes: [] };
+    return {
+        text: matched[1],
+        notes: matched[2].split(/[；;]/).map((note) => note.trim()).filter(Boolean),
+    };
+}
+
 function familyCard(family) {
     const chain = family.levels
         .map((level) => chipHtml(level.name, level.tier))
         .join('<span class="title-chain-arrow">→</span>');
-    const lines = family.levels.map((level) => `<li>${highlightDesc(level.desc)}</li>`).join('');
+    const notes = new Set();
+    const lines = family.levels.map((level) => {
+        const split = splitNote(level.desc);
+        split.notes.forEach((note) => notes.add(note));
+        return `<li>${highlightDesc(split.text)}</li>`;
+    }).join('');
+    const noteTags = [...notes].map(tagHtml).join('');
     return `<article class="title-card">
-                <div class="title-card-head">${chain}${modeTag(family)}</div>
+                <div class="title-card-head">${chain}${noteTags}${modeTag(family)}</div>
                 <ul class="title-card-list">${lines}</ul>
             </article>`;
 }
 
 function soloCard(title) {
+    const split = splitNote(title.desc);
+    const noteTags = split.notes.map(tagHtml).join('');
     return `<article class="title-card">
-                <div class="title-card-head">${chipHtml(title.name, title.tier)}${modeTag(title)}</div>
-                <p class="title-card-desc">${highlightDesc(title.desc)}</p>
+                <div class="title-card-head">${chipHtml(title.name, title.tier)}${noteTags}${modeTag(title)}</div>
+                <p class="title-card-desc">${highlightDesc(split.text)}</p>
             </article>`;
 }
 
@@ -93,6 +113,16 @@ function buildGallery() {
     return galleryHtml;
 }
 
+// 换视图后把沿途所有能滚的容器都拉回顶部
+function resetScroll(element) {
+    let node = element;
+    while (node && node !== document.body) {
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if (/(auto|scroll)/.test(overflowY) && node.scrollTop > 0) node.scrollTop = 0;
+        node = node.parentElement;
+    }
+}
+
 function showView(root, view) {
     const toggle = root.querySelector('[data-rules-toggle]');
     const rules = root.querySelector('[data-rules-body]');
@@ -104,6 +134,7 @@ function showView(root, view) {
     if (showTitles && !gallery.innerHTML) gallery.innerHTML = buildGallery();
     gallery.style.display = showTitles ? 'flex' : 'none';
     rules.style.display = showTitles ? 'none' : 'flex';
+    resetScroll(showTitles ? gallery : rules);
     toggle.textContent = showTitles ? '游戏规则' : '称号一览';
     if (title) title.textContent = showTitles ? '称号一览' : '游戏规则';
 }
