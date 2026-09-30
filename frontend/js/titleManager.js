@@ -11,7 +11,7 @@ const FAMILIES = [
         key: 'ones',
         value: (s, p) => s.maxConsecutiveOnes?.[p] || 0,
         levels: [
-            { id: 'bad_luck', name: '非酋', desc: '连着三回合都摇到 1 点', min: 3, tier: 'rare' },
+            { id: 'bad_luck', name: '倒霉熊', desc: '连着三回合都摇到 1 点', min: 3, tier: 'rare' },
             { id: 'reverse_lucky', name: '反向欧皇', desc: '连着五回合都摇到 1 点', min: 5, tier: 'legendary' }
         ]
     },
@@ -30,7 +30,7 @@ const FAMILIES = [
         levels: [
             { id: 'lucky_king', name: '欧皇', desc: '连投三次 6', min: 3, tier: 'rare' },
             { id: 'six_streak', name: '六六大顺', desc: '连投四次 6', min: 4, tier: 'legendary' },
-            { id: 'dice_god', name: '天命骰神', desc: '连投五次 6', min: 5, tier: 'mythic' }
+            { id: 'dice_god', name: '鸿运当头', desc: '连投六次 6', min: 6, tier: 'mythic' }
         ]
     },
     {
@@ -38,15 +38,16 @@ const FAMILIES = [
         value: (s, p) => s.maxMoveDistance?.[p] || 0,
         levels: [
             { id: 'soaring', name: '一飞冲天', desc: '单次移动达到 25 格', min: 25, tier: 'legendary' },
-            { id: 'sky_high', name: '一步登天', desc: '单次移动达到 35 格', min: 35, tier: 'mythic' }
+            { id: 'sky_high', name: '九霄凌云', desc: '单次移动达到 35 格', min: 35, tier: 'mythic' }
         ]
     },
     {
         key: 'bounce',
         value: (s, p) => s.bounceSteps?.[p] || 0,
         levels: [
+            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数超过 25 格', min: 26, tier: 'rare' },
             { id: 'wind_walker', name: '逆风行者', desc: '反弹总格数超过 50 格', min: 51, tier: 'legendary' },
-            { id: 'bounce_master', name: '硬碰硬', desc: '反弹总格数超过 100 格', min: 101, tier: 'mythic' }
+            { id: 'against_sky', name: '逆势天行', desc: '反弹总格数超过 100 格', min: 101, tier: 'mythic' }
         ]
     },
     {
@@ -66,7 +67,7 @@ const FAMILIES = [
         levels: [
             { id: 'bumper_car', name: '碰碰车', desc: '单次移动碰撞 3 颗棋子', min: 3, tier: 'epic' },
             { id: 'chain_crash', name: '连环碰撞', desc: '单次移动碰撞 5 颗棋子', min: 5, tier: 'legendary' },
-            { id: 'rampage', name: '横冲直撞', desc: '单次移动碰撞 8 颗棋子', min: 8, tier: 'mythic' }
+            { id: 'rampage', name: '所向披靡', desc: '单次移动碰撞 8 颗棋子', min: 8, tier: 'mythic' }
         ]
     },
     {
@@ -104,7 +105,7 @@ const FAMILIES = [
         key: 'poly_low',
         value: (s, p) => (s.polyhedralMin?.[p] === 1 ? 1 : 0),
         levels: [
-            { id: 'unlucky_bear', name: '倒霉熊', desc: '多面骰子摇到 1 点', min: 1, tier: 'mythic' }
+            { id: 'unlucky_bear', name: '厄运降临', desc: '多面骰子摇到 1 点', min: 1, tier: 'mythic' }
         ]
     },
     {
@@ -138,16 +139,16 @@ class TitleManager {
         this.UNIQUE_TITLES = {
             MARATHON: { id: 'marathon', name: '长跑冠军', desc: '移动格数全场最多', tier: 'common' },
             SIX_MASTER: { id: 'six_master', name: '六点狂魔', desc: '摇到 6 的次数全场最多', tier: 'common' },
-            KILLER: { id: 'killer', name: '收割者', desc: '击败对手次数最多', tier: 'common' },
+            KILLER: { id: 'killer', name: '猎杀号', desc: '击败对手次数最多', tier: 'common' },
             HOME_VISITOR: { id: 'home_visitor', name: '回家常客', desc: '被对手击败次数最多', tier: 'common', happyDisabled: true },
-            STEADY_DOG: { id: 'steady_dog', name: '避战大师', desc: '被击败次数全场最少', tier: 'common' },
+            STEADY_DOG: { id: 'steady_dog', name: '幸存者', desc: '被击败次数全场最少', tier: 'common' },
             CHESS_KING: { id: 'chess_king', name: '棋王', desc: '本局第一名', tier: 'common' },
             COMEBACK: { id: 'comeback', name: '逆风翻盘', desc: '整局 60% 时间处于垫底，最后反败为胜', tier: 'mythic' }
         };
 
         // 结算专用的整局型称号：只在正常收官时才算数
         this.FINAL_TITLES = {
-            INVISIBLE: { id: 'invisible', name: '不死传说', desc: '整局未被击败过', tier: 'mythic', happyDisabled: true },
+            INVISIBLE: { id: 'invisible', name: '不灭之躯', desc: '整局未被击败过', tier: 'mythic', happyDisabled: true },
             PEACE_MAKER: { id: 'peace_maker', name: '和平使者', desc: '未击败任何对手', tier: 'mythic' },
             TAILWIND_WALKER: { id: 'tailwind_walker', name: '顺风行者', desc: '在整局未发生过反弹的情况下获胜', tier: 'epic', happyDisabled: true }
         };
@@ -328,7 +329,7 @@ class TitleManager {
         // 长跑冠军 - 距离最高，平局取编号小者
         winners.marathon = this._findTiebreakWinner(activePlayers, stats.totalDistances, 'max', 1);
         
-        // 收割者 - 击败最多，平局取编号小者
+        // 猎杀号 - 击败最多，平局取编号小者
         winners.killer = this._findTiebreakWinner(activePlayers, stats.defeatOthersCounts, 'max', 1);
         
         // 六点狂魔 - 六点最多，平局取编号小者
@@ -337,7 +338,7 @@ class TitleManager {
         // 回家常客 - 被击败最多，平局取编号小者
         winners.homeVisitor = this._findTiebreakWinner(activePlayers, stats.beenDefeatedCounts, 'max', 1);
         
-        // 避战大师 - 被击败最少（且>0），平局取编号小者
+        // 幸存者 - 被击败最少（且>0），平局取编号小者
         winners.steadyDog = this._findTiebreakWinner(activePlayers, stats.beenDefeatedCounts, 'min', 1);
 
         // 棋王 - 第一名，且必须在完成度上独占第一（与第二名同分时视为并列，不授予）

@@ -659,7 +659,7 @@ export function apply(state, playerId, action, rng = Math.random) {
         next.dice = value;
         next.diceItem = countsSix ? false : (action.item || true);
         next.consecutiveSixes = countsSix && value === 6 ? next.consecutiveSixes + 1 : 0;
-        events.push({ type: 'dice', player: playerId, value, item: next.diceItem || null, cost });
+        events.push({ type: 'dice', player: playerId, value, item: next.diceItem || null, cost, sixStreak: next.consecutiveSixes });
 
         if (next.consecutiveSixes >= 3 && !next.happy) {
             // 已经抵达终点的棋子留在终点，不跟着回基地

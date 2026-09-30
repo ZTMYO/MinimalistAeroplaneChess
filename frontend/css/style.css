@@ -3965,6 +3965,12 @@ use[href="#checkmark"] {
 }
 
 .title-chip.tier-common {
+    color: #4b8a63;
+    background: #e3f1e8;
+    border-color: rgba(75, 138, 99, 0.4);
+}
+
+.title-chip.title-chip-default {
     color: #7d7269;
     background: #eae6e2;
     border-color: rgba(140, 130, 120, 0.35);
@@ -4008,7 +4014,7 @@ use[href="#checkmark"] {
 }
 
 .title-earned-title.tier-common {
-    color: #7d7269;
+    color: #4b8a63;
 }
 
 .title-earned-title.tier-rare {

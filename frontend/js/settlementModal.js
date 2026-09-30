@@ -500,7 +500,8 @@ class SettlementModal {
             const chips = titles.length
                 ? titles.map((t) => {
                     const tier = titleManager.TIER_NAMES?.[t.tier] || '普通';
-                    return `<span class="title-chip tier-${t.tier || 'common'}" title="${tier}｜${t.desc || ''}">${t.name}</span>`;
+                    const fallback = t.id === 'default' ? ' title-chip-default' : '';
+                    return `<span class="title-chip tier-${t.tier || 'common'}${fallback}" title="${tier}｜${t.desc || ''}">${t.name}</span>`;
                 }).join('')
                 : '<span class="title-chip title-chip-empty">暂无</span>';
             return `
