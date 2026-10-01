@@ -4,6 +4,9 @@
  * 单机模式不再由前端自行推导规则，而是复用 shared/engine.mjs 里的纯函数引擎。
  * 本模块只负责「引擎状态 ↔ 前端 gameState」的搬运，不触碰 DOM。
  */
+import { encodeReplayAction } from '../../shared/replayCodec.mjs';
+import { saveLocalGame, flushLocalGame, clearCurrentLocalGame, currentGameMode } from './replayShare.js';
+import { gameState } from './gameState.js';
 import {
     apply,
     preview,
@@ -13,6 +16,8 @@ import {
     countBeats,
     toSnapshot,
     isJumpRel,
+    makeRng,
+    ENGINE_VERSION,
     PLAYERS,
     BASE,
     LAUNCH,
@@ -26,6 +31,36 @@ const PHASE_TO_UI = {
     selecting: 'selecting',
     ended: 'finished'
 };
+
+function collectClientState() {
+    if (!gameState) return null;
+    return {
+        titleStats: gameState.titleStats || null,
+        announcedTitles: gameState.announcedTitles ? [...gameState.announcedTitles] : null,
+        diceStatistics: gameState.diceStatistics || null,
+        progressHistory: gameState.progressHistory || null,
+        gameStartTime: gameState.gameStartTime || null,
+        gameConfig: sessionStorage.getItem('gameConfig'),
+        totalEnergyGained: gameState.totalEnergyGained || null,
+        skillUsage: gameState.skillUsage || null
+    };
+}
+
+function restoreClientState(client) {
+    if (!gameState || !client) return;
+    if (client.titleStats) Object.assign(gameState.titleStats, client.titleStats);
+    if (Array.isArray(client.announcedTitles)) gameState.announcedTitles = new Map(client.announcedTitles);
+    if (client.diceStatistics) gameState.diceStatistics = client.diceStatistics;
+    if (Array.isArray(client.progressHistory)) gameState.progressHistory = client.progressHistory;
+    if (client.gameStartTime) gameState.gameStartTime = client.gameStartTime;
+    if (client.gameConfig) {
+        try {
+            sessionStorage.setItem('gameConfig', client.gameConfig);
+        } catch (error) { }
+    }
+    if (client.totalEnergyGained) gameState.totalEnergyGained = client.totalEnergyGained;
+    if (client.skillUsage) gameState.skillUsage = client.skillUsage;
+}
 
 class EngineAdapter {
     constructor() {
@@ -45,6 +80,10 @@ class EngineAdapter {
     reset({ players = PLAYERS, piecesPerPlayer = 4, happy = false, skillMode = false, currentPlayer = null } = {}) {
         this.state = createState({ players, piecesPerPlayer, happy, skillMode });
         this.defeatCounts = emptyDefeatMatrix(players);
+        // 单机也要能回放：一局一颗种子，动作按序留档（和联机的服务端档案同一套口径）
+        this.seed = Math.floor(Math.random() * 0xffffffff);
+        this.rng = makeRng(this.seed);
+        this.actions = [];
         if (currentPlayer !== null && this.state.order.includes(currentPlayer)) {
             this.state.currentIndex = this.state.order.indexOf(currentPlayer);
             this.state.currentPlayer = currentPlayer;
@@ -207,10 +246,100 @@ class EngineAdapter {
     }
 
     _apply(action) {
-        const { state, events } = apply(this.state, this.state.currentPlayer, action);
+        const actor = this.state.currentPlayer;
+        const { state, events } = apply(this.state, actor, action, this.rng);
+        this.state = state;
+        this.actions.push([actor, ...encodeReplayAction(action)]);
+        countBeats(this.defeatCounts, events);
+        if (state.phase === 'ended') {
+            clearCurrentLocalGame();
+        } else {
+            this.saveSnapshot();
+        }
+        return { state, events };
+    }
+
+    /** 回放：按档案的开局配置与种子重建，动作不入档、也不投影，交给调用方逐步驱动 */
+    restoreReplay(archive) {
+        this.state = createState({
+            players: archive.colors,
+            piecesPerPlayer: archive.pieceCount || 4,
+            happy: Boolean(archive.happy),
+            skillMode: Boolean(archive.skillMode),
+            startEnergy: Number(archive.startEnergy) || 0
+        });
+        this.defeatCounts = emptyDefeatMatrix(archive.colors);
+        this.seed = archive.seed;
+        this.rng = makeRng(archive.seed);
+        this.actions = [];
+        return this.state;
+    }
+
+    /** 回放专用：指定玩家执行一手，只推进状态并返回事件，不记档 */
+    applyReplayAction(player, action) {
+        const { state, events } = apply(this.state, player, action, this.rng);
         this.state = state;
         countBeats(this.defeatCounts, events);
         return { state, events };
+    }
+
+    saveSnapshot({ force = false } = {}) {
+        // 已经收场（自然终局，或手动结算把前端阶段置成 finished）就别再落档，
+        // 否则离开页面时那次补写会把刚清掉的存档又写回来
+        if (!this.state || this.state.phase === 'ended' || gameState.getGamePhase?.() === 'finished') return;
+        const payload = {
+            state: this.state,
+            defeats: this.defeatCounts,
+            seed: this.seed,
+            rngState: this.rng.current ? this.rng.current() : null,
+            actions: this.actions,
+            client: collectClientState(),
+            savedAt: Date.now()
+        };
+        if (force) flushLocalGame(payload);
+        else saveLocalGame(payload);
+    }
+
+    /** 续局：直接接管一份保存下来的局面（不重放动作） */
+    adoptState(state, { defeats = null, seed = null, rngState = null, actions = [], client = null } = {}) {
+        this.state = state;
+        this.defeatCounts = defeats || emptyDefeatMatrix(state.order);
+        this.seed = Number.isInteger(seed) ? seed : Math.floor(Math.random() * 0xffffffff);
+        this.rng = makeRng(this.seed, rngState);
+        this.actions = Array.isArray(actions) ? actions : [];
+        this.pendingClientState = client || null;
+        restoreClientState(client);
+        return this.state;
+    }
+
+    /** 续局收尾：流程起来后再套一次客户端状态 */
+    reapplyClientState() {
+        if (!this.pendingClientState) return false;
+        restoreClientState(this.pendingClientState);
+        return true;
+    }
+
+    /** 单机整局档案：种子 + 动作流，够回放用（联机那份由服务端会话产出，字段一致） */
+    getReplay(players = []) {
+        if (!this.state) return null;
+        return {
+            format: 1,
+            engineVersion: ENGINE_VERSION,
+            // 下载文件名要用它区分人机 / 本地，存档里带一份
+            mode: currentGameMode() || '',
+            seed: this.seed,
+            colors: [...this.state.order],
+            pieceCount: this.state.players[this.state.order[0]].chesses.length,
+            happy: this.state.happy ? 1 : 0,
+            skillMode: this.state.skillMode ? 1 : 0,
+            startEnergy: 0,
+            players: (players || []).map((p) => [p.color, p.nickname, p.isAI ? 1 : 0, p.emoji || '']),
+            actionCount: this.actions.length,
+            actions: this.actions,
+            finished: this.state.phase === 'ended' ? 1 : 0,
+            winner: this.state.winner || 0,
+            turn: this.state.turn || 0
+        };
     }
 
     /**

@@ -61,13 +61,17 @@ class PlayerIdManager {
      * 保存玩家昵称到本地存储
      * @param {string} nickname - 要保存的昵称
      */
-    saveNickname(nickname) {
+    nicknameKey(mode) {
+        return mode ? 'aeroplaneChess_playerNickname.' + mode : 'aeroplaneChess_playerNickname';
+    }
+
+    saveNickname(nickname, mode = null) {
         if (!nickname || !nickname.trim()) {
             // 如果昵称为空，删除存储的昵称
-            localStorage.removeItem('aeroplaneChess_playerNickname');
+            localStorage.removeItem(this.nicknameKey(mode));
             console.log('清除存储的昵称');
         } else {
-            localStorage.setItem('aeroplaneChess_playerNickname', nickname.trim());
+            localStorage.setItem(this.nicknameKey(mode), nickname.trim());
             console.log('保存昵称到本地存储:', nickname.trim());
         }
     }

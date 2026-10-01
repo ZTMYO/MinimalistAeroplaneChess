@@ -66,13 +66,21 @@ function flushMoveDistances() {
     moveCollisions = new Map();
 }
 
+let announceSilent = false;
+
 // 一批事件演完后，把本批新达成的「流程内称号」播报出去（各端都从同一份事件流得出）
 function announceLiveTitles() {
+    if (announceSilent) return;
     for (let player = 1; player <= 4; player++) {
         titleManager.collectLiveTitles(player, gameState).forEach((title) => {
             gameInfo.addTitleEarned(player, title.name, title.tier);
         });
     }
+}
+
+/** 静默补统计期间用：只算称号、不往战报里播报（回放点格子重建时不该冒出播报） */
+function setAnnounceSilent(silent) {
+    announceSilent = Boolean(silent);
 }
 
 // 道具 id → 战报名与统计键；道具使用记录统一从权威事件流生成，
@@ -103,6 +111,8 @@ function stepTo(player, chessIndex, position) {
 async function playLaunch(event) {
     const { player, chess, to } = event;
     lastMover = { player, chess };
+    // 统计先记：静默重建也要有，否则刷新或回放时这些称号会缺
+    gameState.recordTakeoffAttempt(player, true);
     if (silentReplay) {
         gameInfo.addChessMove(player, chess, 'launch', -1, to, true);
         return;
@@ -111,7 +121,6 @@ async function playLaunch(event) {
     animation.bringToFront(player, chess);
     stepTo(player, chess, to);
     gameInfo.addChessMove(player, chess, 'launch', -1, to, true);
-    gameState.recordTakeoffAttempt(player, true);
     await sleep(STEP_DELAY);
 }
 
@@ -119,12 +128,14 @@ async function playWalk(event) {
     const { player, chess, from, to, path, bounced, bounceReason, bounceSteps, blocker } = event;
     lastMover = { player, chess };
     addMoveDistance(player, chess, to - from);
+    // 统计先记：静默重建也要有，否则刷新或回放时这些称号会缺
+    if (bounced) {
+        if (bounceSteps) gameState.recordBounceSteps(player, bounceSteps);
+        if (bounceReason === 'stack' && blocker !== null) gameState.recordBlock(blocker);
+    }
     if (silentReplay) {
         gameInfo.addChessMove(player, chess, 'move', from, to, true);
-        if (bounced && bounceReason === 'stack' && blocker !== null) {
-            gameInfo.addStackBlock(player, blocker, true);
-            gameState.recordBlock(blocker);
-        }
+        if (bounced && bounceReason === 'stack' && blocker !== null) gameInfo.addStackBlock(player, blocker, true);
         return;
     }
     animation.bringToFront(player, chess);
@@ -136,14 +147,7 @@ async function playWalk(event) {
     }
 
     gameInfo.addChessMove(player, chess, 'move', from, to, true);
-
-    if (bounced) {
-        if (bounceSteps) gameState.recordBounceSteps(player, bounceSteps);
-        if (bounceReason === 'stack' && blocker !== null) {
-            gameInfo.addStackBlock(player, blocker, true);
-            gameState.recordBlock(blocker);
-        }
-    }
+    if (bounced && bounceReason === 'stack' && blocker !== null) gameInfo.addStackBlock(player, blocker, true);
 }
 
 async function playJumpLike(event, moveType) {
@@ -509,6 +513,26 @@ function shakeElement(element) {
 }
 
 /**
+ * 掷骰演出：先闪一段随机点数再定格（与实时掷骰同一套观感）。
+ * 定格只写点数，颜色交给调用方的 updateDiceDisplay。
+ */
+async function playRollAnimation(value) {
+    const diceDisplay = document.getElementById('diceDisplay');
+    if (!diceDisplay || !value) return;
+    audioManager.playRollingSound();
+    diceDisplay.className = 'dice-icon';
+    void diceDisplay.offsetWidth;
+    diceDisplay.classList.add('dice-flashing');
+    const flashInterval = setInterval(() => {
+        diceDisplay.textContent = DICE_SYMBOLS[Math.floor(Math.random() * DICE_SYMBOLS.length)];
+    }, 100);
+    await sleep(500);
+    clearInterval(flashInterval);
+    diceDisplay.classList.remove('dice-flashing');
+    diceDisplay.textContent = DICE_SYMBOLS[value - 1] || diceDisplay.textContent;
+}
+
+/**
  * 无法移动/被跳过时骰面震动：只摘闪烁与警告红，颜色保持此刻的样子。
  */
 function shakeDice(value) {
@@ -713,5 +737,5 @@ async function replay(events) {
     announceLiveTitles();
 }
 
-export const enginePlayback = { play, replay, playDiceShake, announceLiveTitles, recordItemUsage };
+export const enginePlayback = { play, replay, playDiceShake, playRollAnimation, announceLiveTitles, setAnnounceSilent, recordItemUsage };
 export default enginePlayback;

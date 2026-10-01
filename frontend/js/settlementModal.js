@@ -3,11 +3,28 @@ import { activePlayerManager } from './activePlayerManager.js';
 import { reconnectManager } from './reconnectManager.js';
 import { titleManager } from './titleManager.js';
 import { aiTakeoverManager } from './aiTakeoverManager.js';
+import { engineAdapter } from './engineAdapter.js';
+import { buildReplayHref, addRecentReplay, clearCurrentLocalGame } from './replayShare.js';
+import { decodeArchive } from '../../shared/replayCodec.mjs';
 
 function getDisplayName(player) {
     const cleanName = aiTakeoverManager?.originalNames?.[player];
     if (cleanName) return cleanName;
     return playerNameManager.getPlayerName(player) || `玩家${player}`;
+}
+
+/* 回放档案要带上座位信息（AI 与否、选定表情），还原时才摆得出原来的头像 */
+function seatConfig(color) {
+    try {
+        const config = JSON.parse(sessionStorage.getItem('gameConfig') || '{}');
+        if (config.mode === 'local_multiplayer') {
+            return (config.players || []).find((player) => player.id === color) || null;
+        }
+        if (color === config.humanPlayer) return { isAI: false, emoji: { key: config.humanEmoji } };
+        return { isAI: true, emoji: { key: 'bot' } };
+    } catch (error) {
+        return null;
+    }
 }
 
 class SettlementModal {
@@ -134,6 +151,7 @@ class SettlementModal {
         this.renderRankings(rankingsData);
 
         // 结算弹框模式标记
+        this._settleLocalGame();
         this._updateModeLabel();
 
         // 更新时间戳
@@ -141,6 +159,7 @@ class SettlementModal {
 
         // 显示模态框
         this.modal.classList.add('show');
+        this.mountReplayEntry();
 
         // 触发依次翻转动画
         this.triggerSequentialFlip();
@@ -210,6 +229,7 @@ class SettlementModal {
         this.renderRankings(rankingsData);
 
         // 结算弹框模式标记
+        this._settleLocalGame();
         this._updateModeLabel();
 
         // 更新时间戳
@@ -217,6 +237,7 @@ class SettlementModal {
 
         // 显示模态框
         this.modal.classList.add('show');
+        this.mountReplayEntry();
 
         // 触发依次翻转动画
         this.triggerSequentialFlip();
@@ -525,6 +546,63 @@ class SettlementModal {
                 <div class="title-list">${rows}</div>
             </div>
         `;
+    }
+
+    /**
+     * 回放入口：联机取服务端会话档案，单机取本地引擎适配层的档案，两边同一套播放器
+     */
+    renderReplayEntry() {
+        const sessionId = window.multiplayerGameManager?.gameSessionId;
+        // 联机局的权威档案在服务端，本地引擎里没有它的数据
+        const archive = !sessionId && engineAdapter?.ready
+            ? engineAdapter.getReplay(activePlayerManager.getActivePlayers().map((color) => {
+                const seat = seatConfig(color);
+                return {
+                    color,
+                    nickname: getDisplayName(color),
+                    isAI: Boolean(seat && seat.isAI),
+                    emoji: seat && seat.emoji ? seat.emoji.key : null
+                };
+            }))
+            : null;
+        if (archive) {
+            // 单机这局顺手记进「最近对局」，首页面板里能直接重看
+            addRecentReplay(archive);
+        } else if (sessionId) {
+            // 联机这局得把服务端档案取回来再入库，否则列表里查不到它
+            this.cacheRemoteReplay(sessionId);
+        }
+
+        const href = buildReplayHref(archive);
+        if (!href) return '';
+
+        // 联机档案在服务端，新开标签页看；单机的在会话存储里，只能本页看
+        const blank = sessionId ? ' target="_blank"' : '';
+
+        return `<a class="btn-primary replay-entry-btn" href="${href}"${blank}>查看回放</a>`;
+    }
+
+    async cacheRemoteReplay(sessionId) {
+        try {
+            const response = await fetch(`/api/replay/${encodeURIComponent(sessionId)}`);
+            if (!response.ok) return;
+            const packed = await response.json();
+            packed.mode = 'online_multiplayer'; // 服务端档案不带模式，入库前补上
+            addRecentReplay(decodeArchive(packed));
+        } catch (error) { }
+    }
+
+    /** 把回放入口摆到面板底部按钮区：数据分析的左边 */
+    mountReplayEntry() {
+        const footer = this.modal?.querySelector('.modal-footer');
+        if (!footer) return;
+        footer.querySelectorAll('.replay-entry-btn').forEach((element) => element.remove());
+
+        const html = this.renderReplayEntry();
+        if (!html) return;
+        const holder = document.createElement('div');
+        holder.innerHTML = html;
+        footer.insertBefore(holder.firstElementChild, footer.querySelector('#data-analysis-btn'));
     }
 
     /**
@@ -1113,6 +1191,17 @@ class SettlementModal {
             const gameDuration = this.gameState.getFormattedGameDuration();
             durationElement.textContent = `${gameDuration}`;
         }
+    }
+
+    /**
+     * 收尾善后：单机局到此为止，清掉续局存档，
+     * 免得回首页后还被问「是否继续上一局」
+     */
+    _settleLocalGame() {
+        // 回放页看的不是自己的对局，别去动它的存档
+        if (document.body.classList.contains('replay-mode')) return;
+        if (window.multiplayerGameManager?.isOnlineMode) return;
+        clearCurrentLocalGame();
     }
 
     /**

@@ -81,8 +81,9 @@ function calcPlayerProgress(state, color, trackEnd) {
 }
 
 class AuthoritySession {
-    constructor(engine, { gameSessionId, colors, pieceCount, happy, skillMode = false, startEnergy = 0 }) {
+    constructor(engine, { gameSessionId, colors, pieceCount, happy, skillMode = false, startEnergy = 0, seed = null, players = [] }, codec) {
         this.engine = engine;
+        this.codec = codec;
         this.gameSessionId = gameSessionId;
         // 引擎的 order 就是回合顺序，必须按颜色升序归一化（即顺时针 1→2→3→4）；
         // 调用方传进来的是玩家加入顺序，直接使用会让下家乱跳。
@@ -98,6 +99,44 @@ class AuthoritySession {
         this.eventLog = [];
         // 最近一次成功意图的时间戳，看门狗据此判断某位玩家是否已停止推进
         this.lastIntentAt = Date.now();
+
+        // 回放档案：一颗种子定死全部随机，动作在裁决成功后按序留档
+        this.seed = Number.isInteger(seed) ? seed : Math.floor(Math.random() * 0xffffffff);
+        this.rng = engine.makeRng(this.seed);
+        this.actions = [];
+        this.replayConfig = {
+            gameSessionId,
+            engineVersion: engine.ENGINE_VERSION,
+            colors: this.colors,
+            pieceCount,
+            happy,
+            skillMode,
+            startEnergy,
+            players: Array.isArray(players) ? players : []
+        };
+    }
+
+    /* 成功动作入档，玩家、AI、超时替走都走这里；内存里就存紧凑元组，一手约 7 字节 */
+    recordAction(color, action) {
+        this.actions.push([color, ...this.codec.encodeReplayAction(action)]);
+    }
+
+    /* 整局档案：够重放用，不含事件流（事件重放时现场生成，体积是动作流的十倍） */
+    getReplay() {
+        const { players = [], ...config } = this.replayConfig;
+        return {
+            format: 1,
+            ...config,
+            seed: this.seed,
+            players: players.map((player) => [player.color, player.nickname, player.isAI ? 1 : 0]),
+            happy: config.happy ? 1 : 0,
+            skillMode: config.skillMode ? 1 : 0,
+            finished: this.state.phase === 'ended' ? 1 : 0,
+            winner: this.state.winner || 0,
+            turn: this.state.turn || 0,
+            actionCount: this.actions.length,
+            actions: this.actions
+        };
     }
 
     /* 事件流留档，超限时从旧到新截断 */
@@ -145,7 +184,7 @@ class AuthoritySession {
      * 接受一名玩家的意图，在服务端算完规则后返回新快照。
      * 非法意图不改变任何状态，只返回 ok:false。
      */
-    applyIntent(color, intent, rng = Math.random) {
+    applyIntent(color, intent, rng = this.rng) {
         if (!intent || typeof intent.type !== 'string') {
             return { ok: false, error: '缺少动作类型' };
         }
@@ -176,6 +215,7 @@ class AuthoritySession {
         this.engine.countBeats(this.defeats, result.events);
         this.recordProgress(this.state.turn);
         this.recordEvents(result.events);
+        this.recordAction(color, sanitized);
         this.lastIntentAt = Date.now();
 
         return { ok: true, snapshot: this.snapshot(result.events) };
@@ -193,7 +233,7 @@ class AuthoritySession {
      * engine.apply 每次返回新对象，因此循环里必须重新读取 this.state，
      * 否则会一直盯着进入函数时的那帧旧状态，永远推进不去。
      */
-    advanceStuckTurn(rng = Math.random) {
+    advanceStuckTurn(rng = this.rng) {
         const results = [];
         for (let i = 0; i < STUCK_MAX_STEPS; i++) {
             const cur = this.state;
@@ -220,7 +260,7 @@ class AuthoritySession {
 }
 
 async function createAuthoritySession(options) {
-    const engine = await enginePromise;
+    const [engine, codec] = await Promise.all([enginePromise, import('../shared/replayCodec.mjs')]);
     return new AuthoritySession(engine, {
         gameSessionId: options.gameSessionId,
         colors: options.colors,
@@ -228,7 +268,9 @@ async function createAuthoritySession(options) {
         happy: Boolean(options.happy),
         skillMode: Boolean(options.skillMode),
         startEnergy: Number(options.startEnergy) || 0,
-    });
+        seed: options.seed,
+        players: options.players,
+    }, codec);
 }
 
 module.exports = { createAuthoritySession };

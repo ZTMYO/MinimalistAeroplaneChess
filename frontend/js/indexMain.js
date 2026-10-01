@@ -1,3 +1,8 @@
+import {
+    clearLocalGame, loadLocalGame, importReplayFile,
+    listRecentReplays, readRecentReplay, removeRecentReplay, replaySummary, replayFileName
+} from './replayShare.js';
+import { decodeArchive } from '../../shared/replayCodec.mjs';
 import { emojis, defaultEmoji } from '../assets/emojis.js';
 import { MultiplayerManager } from './multiplayerManager.js';
 import { nicknameGenerator } from './nicknameGenerator.js';
@@ -78,6 +83,7 @@ class GameTipsCarousel {
             "悬停玩家头像，可看已获得称号与完成度走势",
             "结算面板可以看到本场游戏的称号一览",
             "欢乐模式撞机不触发击败，而是奖励步数",
+            "你可以查看最近五场棋局的回放"
         ];
         this.currentIndex = 0;
         this.tipElement = null;
@@ -134,6 +140,163 @@ class GameTipsCarousel {
 
 // 玩家设置管理
 class PlayerSetup {
+    persistMode() {
+        if (this.currentMode === 'ai') return 'ai_battle';
+        if (this.currentMode === 'local') return 'local_multiplayer';
+        return null;
+    }
+
+    enterAIConfig() {
+        this.currentMode = 'ai';
+        const savedName = window.playerIdManager && window.playerIdManager.getSavedNickname('ai_battle');
+        const nameInput = document.getElementById('playerUsername');
+        if (savedName && nameInput) {
+            nameInput.value = savedName;
+            this.playerUsername = savedName;
+        }
+
+        const configTitle = document.getElementById('configTitle');
+        const mainMenuContainer = document.getElementById('mainMenuContainer');
+        const playerConfigWrapper = document.getElementById('playerConfigWrapper');
+        if (configTitle) configTitle.textContent = '人机对战设置';
+        if (mainMenuContainer) mainMenuContainer.style.display = 'none';
+        if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
+        this.showConfigPanel();
+        this.showAIConfig();
+    }
+
+    enterReplayConfig() {
+        this.currentMode = 'replay';
+        const configTitle = document.getElementById('configTitle');
+        const mainMenuContainer = document.getElementById('mainMenuContainer');
+        const playerConfigWrapper = document.getElementById('playerConfigWrapper');
+        if (configTitle) configTitle.textContent = '对局回放';
+        if (mainMenuContainer) mainMenuContainer.style.display = 'none';
+        if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
+        this.showConfigPanel();
+        this.renderRecentReplays();
+    }
+
+    /* 最近对局列表：点开看回放，右侧两个图标管下载和删除 */
+    renderRecentReplays() {
+        const box = document.getElementById('recentReplayList');
+        if (!box) return;
+        const list = listRecentReplays();
+        if (!list.length) {
+            box.innerHTML = '<p class="recent-replay-empty">暂无回放</p>';
+            return;
+        }
+
+        box.innerHTML = list.map((item) => {
+            const archive = decodeArchive(item.archive) || {};
+            const summary = replaySummary(archive);
+            const time = new Date(item.at).toLocaleString('zh-CN', {
+                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
+            // 胜者显示档案里的昵称，查不到才退回「玩家 N」
+            const winnerSeat = (archive.players || []).find((player) => player.color === archive.winner);
+            const winnerName = archive.winner ? (winnerSeat && winnerSeat.nickname) || `玩家 ${archive.winner}` : '';
+            const winner = winnerName ? `｜${winnerName} 胜` : '';
+            const tags = [`<span class="recent-replay-tag mode-${summary.modeKey}">${summary.mode}</span>`]
+                .concat([`${summary.players}人`, `${summary.pieces}子`, summary.kind, `${summary.hands} 手`]
+                    .map((text) => `<span class="recent-replay-tag">${text}</span>`))
+                .join('');
+            return `<div class="recent-replay-row">
+                        <button type="button" class="recent-replay-open" data-open="${item.id}">
+                            <span class="recent-replay-tags">${tags}</span>
+                            <span class="recent-replay-meta">${time}${winner}</span>
+                        </button>
+                        <button type="button" class="recent-replay-icon" data-download="${item.id}" title="下载">
+                            <svg viewBox="95 130 855 800" width="14" height="13" fill="currentColor"><path d="M896 672c-17.066667 0-32 14.933333-32 32v128c0 6.4-4.266667 10.666667-10.666667 10.666667H170.666667c-6.4 0-10.666667-4.266667-10.666667-10.666667v-128c0-17.066667-14.933333-32-32-32s-32 14.933333-32 32v128c0 40.533333 34.133333 74.666667 74.666667 74.666667h682.666666c40.533333 0 74.666667-34.133333 74.666667-74.666667v-128c0-17.066667-14.933333-32-32-32z"/><path d="M488.533333 727.466667c6.4 6.4 14.933333 8.533333 23.466667 8.533333s17.066667-2.133333 23.466667-8.533333l213.333333-213.333334c12.8-12.8 12.8-32 0-44.8-12.8-12.8-32-12.8-44.8 0l-157.866667 157.866667V170.666667c0-17.066667-14.933333-32-32-32s-34.133333 14.933333-34.133333 32v456.533333L322.133333 469.333333c-12.8-12.8-32-12.8-44.8 0-12.8 12.8-12.8 32 0 44.8l211.2 213.333334z"/></svg>
+                        </button>
+                        <button type="button" class="recent-replay-icon" data-delete="${item.id}" title="删除">
+                            <svg viewBox="0 0 1024 1024" width="13" height="13" fill="currentColor"><path d="M781.28 851.36a58.56 58.56 0 0 1-58.56 58.56H301.28a58.72 58.72 0 0 1-58.56-58.56V230.4h538.56z m-421.6-725.92a11.84 11.84 0 0 1 12-12h281.28a11.84 11.84 0 0 1 12 12V160H359.68zM956.8 160H734.72v-34.56a81.76 81.76 0 0 0-81.76-81.76H371.68a82.08 82.08 0 0 0-81.76 81.76V160H67.2a35.36 35.36 0 0 0 0 70.56h105.12v620.8a128.96 128.96 0 0 0 128.96 128.96h421.44a128.96 128.96 0 0 0 128.96-128.96V230.4H956.8a35.2 35.2 0 0 0 35.2-35.2 34.56 34.56 0 0 0-35.2-35.2zM512 804.16a35.2 35.2 0 0 0 35.2-35.36V393.92a35.2 35.2 0 1 0-70.4 0V768.8a35.2 35.2 0 0 0 35.2 35.36m-164.32 0a35.36 35.36 0 0 0 35.36-35.36V393.92a35.36 35.36 0 1 0-70.56 0V768.8a36.32 36.32 0 0 0 35.2 35.36m328.64 0a35.36 35.36 0 0 0 35.2-35.36V393.92a35.36 35.36 0 1 0-70.56 0V768.8a35.36 35.36 0 0 0 35.36 35.36"/></svg>
+                        </button>
+                    </div>`;
+        }).join('');
+    }
+
+    /* 下载列表里的某一场：和回放页同一套命名 */
+    downloadRecentReplay(id) {
+        const stored = readRecentReplay(id);
+        if (!stored) return;
+        const blob = new Blob([JSON.stringify(stored)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = replayFileName(decodeArchive(stored));
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+
+    enterLocalConfig() {
+        this.currentMode = 'local';
+        const configTitle = document.getElementById('configTitle');
+        const mainMenuContainer = document.getElementById('mainMenuContainer');
+        const playerConfigWrapper = document.getElementById('playerConfigWrapper');
+        if (configTitle) configTitle.textContent = '本地多人设置';
+        if (mainMenuContainer) mainMenuContainer.style.display = 'none';
+        if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
+        this.showConfigPanel();
+        this.hideAIConfig();
+    }
+
+    askResumeFirst(mode, enterPanel) {
+        const saved = loadLocalGame(mode);
+        if (!saved || !saved.state) return false;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay show resume-modal ' + (mode === 'ai_battle' ? 'mode-ai' : 'mode-local');
+        overlay.innerHTML = '<div class="modal-content">'
+            + '<h3>发现未完成的对局</h3>'
+            + '<p>第 ' + (saved.state.turn || 0) + ' 回合 · ' + (mode === 'ai_battle' ? '人机对战' : '本地多人') + '</p>'
+            + '<div class="resume-modal-actions">'
+            + '<button type="button" class="resume-btn" data-resume="no">新开一局</button>'
+            + '<button type="button" class="resume-btn resume-btn-primary" data-resume="yes">继续上局</button>'
+            + '</div></div>';
+
+        overlay.addEventListener('click', (event) => {
+            const choice = event.target && event.target.dataset ? event.target.dataset.resume : null;
+            if (!choice) {
+                if (event.target === overlay) overlay.remove();
+                return;
+            }
+            overlay.remove();
+            if (choice === 'yes') {
+                this.resumeSavedGame(saved, mode);
+                return;
+            }
+            clearLocalGame(mode);
+            enterPanel();
+        });
+
+        document.body.appendChild(overlay);
+        return true;
+    }
+
+    resumeSavedGame(saved, mode) {
+        const state = saved.state;
+        const original = saved.client && saved.client.gameConfig;
+        sessionStorage.removeItem('multiplayerGameData');
+        if (original) {
+            sessionStorage.setItem('gameConfig', original);
+            window.location.href = '/game';
+            return;
+        }
+
+        const colors = (state.order || [1, 2, 3, 4]).slice();
+        const first = state.players && state.players[colors[0]];
+        sessionStorage.setItem('gameConfig', JSON.stringify({
+            mode: mode || 'local_multiplayer',
+            playerCount: colors.length,
+            pieceCount: first && first.chesses ? first.chesses.length : 4,
+            skillMode: Boolean(state.skillMode),
+            happyMode: Boolean(state.happy),
+            players: colors.map((color) => ({ playerNumber: color, nickname: '' }))
+        }));
+        window.location.href = '/game';
+    }
+
     constructor() {
         this.selectedPlayer = 1;
         this.playerUsername = '玩家';
@@ -903,24 +1066,16 @@ class PlayerSetup {
         // 人机对战
         if (menuAiBtn) {
             menuAiBtn.addEventListener('click', () => {
-                this.currentMode = 'ai';
-                if (configTitle) configTitle.textContent = '人机对战设置';
-                if (mainMenuContainer) mainMenuContainer.style.display = 'none';
-                if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
-                this.showConfigPanel();
-                this.showAIConfig();
+                if (this.askResumeFirst('ai_battle', () => this.enterAIConfig())) return;
+                this.enterAIConfig();
             });
         }
 
         // 本地多人
         if (menuLocalBtn) {
             menuLocalBtn.addEventListener('click', () => {
-                this.currentMode = 'local';
-                if (configTitle) configTitle.textContent = '本地多人设置';
-                if (mainMenuContainer) mainMenuContainer.style.display = 'none';
-                if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
-                this.showConfigPanel();
-                this.hideAIConfig();
+                if (this.askResumeFirst('local_multiplayer', () => this.enterLocalConfig())) return;
+                this.enterLocalConfig();
             });
         }
 
@@ -930,6 +1085,42 @@ class PlayerSetup {
                 resetTitlesViews();
                 if (mainMenuContainer) mainMenuContainer.style.display = 'none';
                 if (rulesPanelWrapper) rulesPanelWrapper.style.display = 'block';
+            });
+        }
+
+        // 对局回放（页脚入口）
+        const footerReplayBtn = document.getElementById('footerReplayBtn');
+        if (footerReplayBtn) {
+            footerReplayBtn.addEventListener('click', () => this.enterReplayConfig());
+        }
+
+        const replayFilePicker = document.getElementById('replayFilePicker');
+        if (replayFilePicker) {
+            replayFilePicker.addEventListener('change', async (event) => {
+                const file = event.target.files && event.target.files[0];
+                event.target.value = '';
+                if (!file) return;
+                try {
+                    window.location.href = await importReplayFile(file);
+                } catch (error) {
+                    alert(`导入失败：${error.message}`);
+                }
+            });
+        }
+
+        const recentReplayList = document.getElementById('recentReplayList');
+        if (recentReplayList) {
+            recentReplayList.addEventListener('click', (event) => {
+                const target = event.target.closest('[data-open], [data-download], [data-delete]');
+                if (!target) return;
+                if (target.dataset.open) {
+                    window.location.href = `replay.html?recent=${encodeURIComponent(target.dataset.open)}`;
+                } else if (target.dataset.download) {
+                    this.downloadRecentReplay(target.dataset.download);
+                } else {
+                    removeRecentReplay(target.dataset.delete);
+                    this.renderRecentReplays();
+                }
             });
         }
 
@@ -990,6 +1181,11 @@ class PlayerSetup {
             if (document.getElementById('localMultiplayerConfig')) document.getElementById('localMultiplayerConfig').style.display = 'none';
             if (document.getElementById('aiBattleConfig')) document.getElementById('aiBattleConfig').style.display = 'flex';
             if (document.getElementById('onlineMultiplayerConfig')) document.getElementById('onlineMultiplayerConfig').style.display = 'none';
+        } else if (this.currentMode === 'replay') {
+            if (document.getElementById('localMultiplayerConfig')) document.getElementById('localMultiplayerConfig').style.display = 'none';
+            if (document.getElementById('aiBattleConfig')) document.getElementById('aiBattleConfig').style.display = 'none';
+            if (document.getElementById('onlineMultiplayerConfig')) document.getElementById('onlineMultiplayerConfig').style.display = 'none';
+            if (document.getElementById('replayConfig')) document.getElementById('replayConfig').style.display = 'flex';
         }
     }
 
@@ -1002,6 +1198,7 @@ class PlayerSetup {
         const localMultiplayerConfig = document.getElementById('localMultiplayerConfig');
         const onlineMultiplayerConfig = document.getElementById('onlineMultiplayerConfig');
         const aiBattleConfig = document.getElementById('aiBattleConfig');
+        const replayConfig = document.getElementById('replayConfig');
 
         if (localMultiplayerConfig) {
             localMultiplayerConfig.style.display = 'none';
@@ -1011,6 +1208,9 @@ class PlayerSetup {
         }
         if (aiBattleConfig) {
             aiBattleConfig.style.display = 'none';
+        }
+        if (replayConfig) {
+            replayConfig.style.display = 'none';
         }
 
         // 重置在线多人配置的子面板
@@ -1217,7 +1417,7 @@ class PlayerSetup {
                 this.playerUsername = e.target.value.trim();
                 // 持久化保存到 localStorage
                 if (window.playerIdManager) {
-                    window.playerIdManager.saveNickname(this.playerUsername);
+                    window.playerIdManager.saveNickname(this.playerUsername, this.persistMode());
                 }
             });
         }
@@ -1238,7 +1438,7 @@ class PlayerSetup {
                     this.playerUsername = randomNickname;
                     // 持久化保存到 localStorage
                     if (window.playerIdManager) {
-                        window.playerIdManager.saveNickname(randomNickname);
+                        window.playerIdManager.saveNickname(randomNickname, this.persistMode());
                     }
                 }
             });
@@ -1657,6 +1857,7 @@ class PlayerSetup {
         };
 
         console.log('游戏配置:', gameConfig);
+        clearLocalGame('ai_battle');
         sessionStorage.setItem('gameConfig', JSON.stringify(gameConfig));
 
         // 保存当前游戏模式状态和详细配置
@@ -1736,6 +1937,7 @@ class PlayerSetup {
         }
 
         console.log('本地多人游戏配置:', localGameConfig);
+        clearLocalGame('local_multiplayer');
         sessionStorage.setItem('gameConfig', JSON.stringify(localGameConfig));
 
         // 保存当前游戏模式状态和详细配置

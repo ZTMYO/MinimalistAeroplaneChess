@@ -10,7 +10,7 @@
   <a href="https://chess.shiliu.space/">
     <img src="https://img.shields.io/badge/立即试玩-chess.shiliu.space-A6D8B7?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZlcnNpb249IjEiIHdpZHRoPSI2MDAiIGhlaWdodD0iNjAwIj48cGF0aCBkPSJNMTI5IDExMWMtNTUgNC05MyA2Ni05MyA3OEwwIDM5OGMtMiA3MCAzNiA5MiA2OSA5MWgxYzc5IDAgODctNTcgMTMwLTEyOGgyMDFjNDMgNzEgNTAgMTI4IDEyOSAxMjhoMWMzMyAxIDcxLTIxIDY5LTkxbC0zNi0yMDljMC0xMi00MC03OC05OC03OGgtMTBjLTYzIDAtOTIgMzUtOTIgNDJIMjM2YzAtNy0yOS00Mi05Mi00MmgtMTV6IiBmaWxsPSIjZmZmIi8+PC9zdmc+&logoColor=white" alt="Play Now">
   </a>
-  <img src="https://img.shields.io/badge/version-v1.0.0-A6D8B7?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.1.0-A6D8B7?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -46,6 +46,11 @@
 
 #### 实时观战
 - **观战模式**：支持通过房间列表直接进入正在进行的对局，以“上帝视角”实时观摩场上战况。
+
+#### 对局回放
+- **进度条可拖**：按回合切格，走过的实心、含击败的标红，可切换「击败 / 称号 / 道具」标记，点格即从那一回合重播。
+- **完整还原**：走位、骰子动画、战报与结算面板都与实时对局一致。
+- **导入导出**：支持下载与导入档案，首页面板保留最近 5 场，随时重看或删除。
 
 #### 深度数据分析与称号系统
 - **过程统计**：实时记录每位玩家的移动距离、击败次数、投掷点数等情况。

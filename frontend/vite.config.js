@@ -10,7 +10,8 @@ export default defineConfig({
         main: 'index.html',
         game: 'game.html',
         admin: 'admin.html',
-        spectate: 'spectate.html'
+        spectate: 'spectate.html',
+        replay: 'replay.html'
       }
     }
   },

@@ -11,6 +11,7 @@ import { aiTakeoverManager } from './aiTakeoverManager.js';
 import { playerNameManager } from './playerNameManager.js';
 import { lightningManager } from './lightningManager.js';
 import { engineAdapter } from './engineAdapter.js';
+import { loadLocalGame } from './replayShare.js';
 import { FlyingChessGameBase, createGameRuntime } from './gameBase.js';
 import './titlesHoverCard.js';
 import './theme.js';
@@ -126,19 +127,37 @@ class FlyingChessGame extends FlyingChessGameBase {
             this.handleUrlParameters();
 
             // 2.5 单机模式：交由共享规则引擎持权威棋面
+            let resumePending = false;
             if (!sessionStorage.getItem('multiplayerGameData')) {
-                engineAdapter.reset({
-                    players: activePlayerManager.getActivePlayers(),
-                    piecesPerPlayer: gameState.pieceCount,
-                    happy: gameState.isHappyMode(),
-                    skillMode: gameState.isSkillModeEnabled(),
-                    currentPlayer: gameState.currentPlayer
-                });
+                // 单机续局：有存档就静默重放回当前局面，没有才开新局
+                const saved = loadLocalGame();
+                const snapshot = saved && saved.state ? saved : null;
+                if (snapshot) {
+                    // 局面快照：直接接管，不用重放动作，也就不受回合指针影响
+                    engineAdapter.adoptState(snapshot.state, snapshot);
+                    resumePending = true;
+                } else {
+                    engineAdapter.reset({
+                        players: activePlayerManager.getActivePlayers(),
+                        piecesPerPlayer: gameState.pieceCount,
+                        happy: gameState.isHappyMode(),
+                        skillMode: gameState.isSkillModeEnabled(),
+                        currentPlayer: gameState.currentPlayer
+                    });
+                }
                 gameState.engineDriven = true;
+                // 离开页面（刷新/关标签/跳走）前补写一次，最后一手不丢
+                window.addEventListener('pagehide', () => engineAdapter.saveSnapshot({ force: true }));
             }
 
             // 3. 设置棋子元素
             this.setupChessElements();
+
+            // 续局恢复：棋子元素就位后，把保存的局面投影到棋盘上
+            if (resumePending && engineAdapter.ready) {
+                engineAdapter.projectTo(gameState);
+                uiUpdater.updateUI();
+            }
 
             // 4. 设置事件监听器
             eventHandler.setGameInstance(this);
@@ -170,6 +189,7 @@ class FlyingChessGame extends FlyingChessGameBase {
             // 9. 初始化bot控制器并处理游戏开始
             botController.setEnabled(true);
             this.handleGameStart();
+            if (resumePending) engineAdapter.reapplyClientState();
 
             // 10. 记录游戏开始时间
             gameState.recordGameStartTime();

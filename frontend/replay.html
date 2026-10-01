@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>对局回放</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem("flyingChess.theme")==="dark"?"dark":"light";}catch(e){}</script>
+
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/replay.css">
+</head>
+
+<body>
+    <!-- 聊天消息显示容器 -->
+    <div id="chatMessageDisplay" class="chat-message-display">
+        <div class="chat-message-content" id="chatMessageContent"></div>
+    </div>
+
+    <div class="main-layout">
+        <!-- 游戏区域 -->
+        <div class="game-container">
+            <!-- 移动端上方玩家 -->
+            <div class="players-top">
+                <div class="player-info player-4-info">
+                    <div class="player-main">
+                        <div class="player-avatar player-4-avatar">
+                            <div class="player-emoji" id="player-4-emoji-mobile"></div>
+                        </div>
+                        <div class="player-name">Player 4</div>
+                    </div>
+                    <div class="defeat-counts defeat-counts-mobile">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-mobile-4-1">0</div>
+                        <div class="defeat-count player-2-defeat" id="defeat-count-mobile-4-2">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-mobile-4-3">0</div>
+                    </div>
+                </div>
+                <div class="player-info player-1-info">
+                    <div class="defeat-counts defeat-counts-mobile">
+                        <div class="defeat-count player-2-defeat" id="defeat-count-mobile-1-2">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-mobile-1-3">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-mobile-1-4">0</div>
+                    </div>
+                    <div class="player-main">
+                        <div class="player-avatar player-1-avatar">
+                            <div class="player-emoji" id="player-1-emoji-mobile"></div>
+                        </div>
+                        <div class="player-name">Player 1</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 玩家信息区域（桌面端使用） -->
+            <div class="players-info">
+                <div class="player-info player-1-info">
+                    <div class="defeat-counts">
+                        <div class="defeat-count player-2-defeat" id="defeat-count-1-2">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-1-3">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-1-4">0</div>
+                    </div>
+                    <div class="player-main">
+                        <div class="player-avatar player-1-avatar">
+                            <div class="player-emoji" id="player-1-emoji"></div>
+                        </div>
+                        <div class="player-name">Player 1</div>
+                    </div>
+                </div>
+                <div class="player-info player-2-info">
+                    <div class="defeat-counts">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-2-1">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-2-3">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-2-4">0</div>
+                    </div>
+                    <div class="player-main">
+                        <div class="player-avatar player-2-avatar">
+                            <div class="player-emoji" id="player-2-emoji"></div>
+                        </div>
+                        <div class="player-name">Player 2</div>
+                    </div>
+                </div>
+                <div class="player-info player-3-info">
+                    <div class="player-main">
+                        <div class="player-avatar player-3-avatar">
+                            <div class="player-emoji" id="player-3-emoji"></div>
+                        </div>
+                        <div class="player-name">Player 3</div>
+                    </div>
+                    <div class="defeat-counts">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-3-1">0</div>
+                        <div class="defeat-count player-2-defeat" id="defeat-count-3-2">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-3-4">0</div>
+                    </div>
+                </div>
+                <div class="player-info player-4-info">
+                    <div class="player-main">
+                        <div class="player-avatar player-4-avatar">
+                            <div class="player-emoji" id="player-4-emoji"></div>
+                        </div>
+                        <div class="player-name">Player 4</div>
+                    </div>
+                    <div class="defeat-counts">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-4-1">0</div>
+                        <div class="defeat-count player-2-defeat" id="defeat-count-4-2">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-4-3">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="board-container">
+                <svg id="board-svg" viewBox="-95,-95,190,190" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <!-- 发光滤镜 -->
+                        <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur stdDeviation="1.5" result="coloredBlur" />
+                            <feMerge>
+                                <feMergeNode in="coloredBlur" />
+                                <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                        </filter>
+
+                        <filter id="strongGlow" x="-100%" y="-100%" width="300%" height="300%">
+                            <feGaussianBlur stdDeviation="1" result="blur1" />
+                            <feGaussianBlur stdDeviation="2" result="blur2" />
+                            <feGaussianBlur stdDeviation="4" result="blur3" />
+                            <feMerge>
+                                <feMerge>
+                                    <feMergeNode in="blur3" />
+                                    <feMergeNode in="blur2" />
+                                    <feMergeNode in="blur1" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                        </filter>
+
+                        <!-- 棋子阴影滤镜 -->
+                        <filter id="chessShadow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur in="SourceAlpha" stdDeviation="0.5" />
+                            <feOffset id="chessShadowOffset" dx="0" dy="1" result="offsetblur" />
+                            <feFlood class="chess-shadow-flood" flood-opacity="0.15" />
+                            <feComposite in2="offsetblur" operator="in" />
+                            <feMerge>
+                                <feMergeNode />
+                                <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                        </filter>
+
+                        <!-- 基础组件定义 -->
+                        <rect id="vr" rx="2" ry="2" x="-5.5" y="-7.5" width="11" height="15" stroke-width="0.8" fill="currentColor" />
+                        <rect id="hr" rx="2" ry="2" x="-7.5" y="-5.5" width="15" height="11" stroke-width="0.8" fill="currentColor" />
+                        <rect id="vr2" rx="2" ry="2" x="-5" y="-5.5" width="10" height="11" stroke-width="0.8" fill="currentColor" />
+                        <rect id="hr2" rx="2" ry="2" x="-5.5" y="-5" width="11" height="10" stroke-width="0.8" fill="currentColor" />
+
+                        <!-- 转角组件 -->
+                        <path id="t1" d="M6.16 6.45A0.5 0.5 0 0 1 5.81 7.3H-5.5A2 2 0 0 1 -7.5 5.3V-5.81A0.5 0.5 0 0 1 -6.65 -6.16Z" stroke-width="0.8" fill="currentColor" />
+                        <path id="t2" d="M-6.16 6.45A0.5 0.5 0 0 0 -5.81 7.3H5.5A2 2 0 0 0 7.5 5.3V-5.81A0.5 0.5 0 0 0 6.65 -6.16Z" stroke-width="0.8" fill="currentColor" />
+                        <path id="t3" d="M6.16 -6.45A0.5 0.5 0 0 0 5.81 -7.3H-5.5A2 2 0 0 0 -7.5 -5.3V5.81A0.5 0.5 0 0 0 -6.65 6.16Z" stroke-width="0.8" fill="currentColor" />
+                        <path id="t4" d="M-6.16 -6.45A0.5 0.5 0 0 1 -5.81 -7.3H5.5A2 2 0 0 1 7.5 -5.3V5.81A0.5 0.5 0 0 1 6.65 6.16Z" stroke-width="0.8" fill="currentColor" />
+
+                        <!-- 终点三角形 -->
+                        <path id="end" d="M0,0L-10,10Q-8,10 -6,10H6Q8,10 10,10L0,0Z" stroke-width="0.6" fill="currentColor" stroke-linejoin="round" stroke-linecap="round" />
+                        <!-- 起飞区域 -->
+                        <g id="start">
+                            <rect width="28" height="28" x="-14" y="-14" rx="2" ry="2" stroke-width="0.6" fill="none" />
+                            <circle r="4.8" cx="5.8" cy="5.8" stroke-width="0.6" fill="none" />
+                            <circle r="4.8" cx="-5.8" cy="5.8" stroke-width="0.6" fill="none" />
+                            <circle r="4.8" cx="5.8" cy="-5.8" stroke-width="0.6" fill="none" />
+                            <circle r="4.8" cx="-5.8" cy="-5.8" stroke-width="0.6" fill="none" />
+                        </g>
+                        <!-- 箭头指示 -->
+                        <path id="arrow" transform="scale(0.8)" d="M8.29289 2.29289C8.68342 1.90237 9.31658 1.90237 9.70711 2.29289L14.2071 6.79289C14.5976 7.18342 14.5976 7.81658 14.2071 8.20711L9.70711 12.7071C9.31658 13.0976 8.68342 13.0976 8.29289 12.7071C7.90237 12.3166 7.90237 11.6834 8.29289 11.2929L11 8.5H1.5C0.947715 8.5 0.5 8.05228 0.5 7.5C0.5 6.94772 0.947715 6.5 1.5 6.5H11L8.29289 3.70711C7.90237 3.31658 7.90237 2.68342 8.29289 2.29289Z" />
+                        <g id="chess" viewBox="0 0 33 33" transform="scale(0.34)">
+                            <circle cx="16.5" cy="16.5" r="16" fill="transparent" stroke="none" />
+                            <circle cx="16.5" cy="16.5" r="14" fill="none" stroke="currentColor" stroke-width="3" />
+                            <circle cx="16.5" cy="16.5" r="13" fill="currentColor" class="chess-fill" />
+                            <!-- 飞机中心图案 -->
+                            <path class="chess-airplane" d="M599.06048 831.309824l12.106752-193.404928 372.860928 184.430592L984.02816 710.206464 617.906176 367.33952 617.906176 151.638016c0-56.974336-46.188544-143.064064-103.158784-143.064064-56.974336 0-103.158784 86.089728-103.158784 143.064064L411.588608 367.33952 45.461504 710.206464l0 112.129024 366.660608-184.430592 14.999552 209.27488c0 5.05344 0.594944 9.892864 1.124352 14.749696l-66.591744 60.348416 0 66.587648 153.986048-50.879488 2.43712-0.80896 147.439616 51.688448 0-66.587648-68.758528-62.253056L599.06048 831.309824z" fill="white" transform="translate(16.5, 16.5) rotate(90) scale(0.018) translate(-512, -512)" />
+                        </g>
+
+                        <!-- 勾号图案（到达终点） -->
+                        <g id="checkmark" viewBox="0 0 33 33" transform="scale(0.34)">
+                            <circle cx="16.5" cy="16.5" r="14" fill="none" stroke="currentColor" stroke-width="3" />
+                            <circle cx="16.5" cy="16.5" r="13" fill="currentColor" />
+                            <path d="M9 17L14.5 22.5L24 11" fill="none" stroke="rgba(255, 255, 255, 0.6)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+                        </g>
+                    </defs>
+
+                    <!-- 上方通道 -->
+                    <use href="#vr" x="0" y="-80" class="player-1" data-cpos="50" />
+                    <use href="#vr" x="-12" y="-80" class="player-4" data-cpos="49" />
+                    <use href="#vr" x="-24" y="-80" class="player-3" data-cpos="48" />
+                    <use href="#vr" x="12" y="-80" class="player-2" data-cpos="-3" />
+                    <use href="#vr" x="24" y="-80" class="player-3" data-cpos="-2" />
+
+                    <!-- 上方转角 -->
+                    <use href="#t2" x="-38" y="-80" class="player-2" data-cpos="47" />
+                    <use href="#t1" x="38" y="-80" class="player-4" data-cpos="1" />
+
+                    <!-- 上方侧边通道 -->
+                    <use href="#hr" x="-38.5" y="-66" class="player-1" data-cpos="46" />
+                    <use href="#hr" x="-38.5" y="-53.5" class="player-4" data-cpos="45" />
+                    <use href="#hr" x="38.5" y="-66" class="player-1" data-cpos="2" />
+                    <use href="#hr" x="38.5" y="-53.5" class="player-2" data-cpos="3" />
+
+                    <!-- 上方内侧转角 -->
+                    <use href="#t3" x="38.5" y="-39" class="player-3" data-cpos="4" />
+                    <use href="#t2" x="38.5" y="-38" class="player-4" data-cpos="5" />
+                    <use href="#t4" x="-38.5" y="-39" class="player-3" data-cpos="44" />
+                    <use href="#t1" x="-38.5" y="-38" class="player-2" data-cpos="43" />
+
+                    <!-- 下方通道 -->
+                    <use href="#vr" x="0" y="80" class="player-3" data-cpos="24" />
+                    <use href="#vr" x="-12" y="80" class="player-4" data-cpos="25" />
+                    <use href="#vr" x="-24" y="80" class="player-1" data-cpos="26" />
+                    <use href="#vr" x="12" y="80" class="player-2" data-cpos="23" />
+                    <use href="#vr" x="24" y="80" class="player-1" data-cpos="22" />
+
+                    <!-- 下方转角 -->
+                    <use href="#t4" x="-38" y="80" class="player-2" data-cpos="27" />
+                    <use href="#t3" x="38" y="80" class="player-4" data-cpos="21" />
+
+                    <!-- 下方侧边通道 -->
+                    <use href="#hr" x="-38.5" y="66" class="player-3" data-cpos="28" />
+                    <use href="#hr" x="-38.5" y="53.5" class="player-4" data-cpos="29" />
+                    <use href="#hr" x="38.5" y="66" class="player-3" data-cpos="20" />
+                    <use href="#hr" x="38.5" y="53.5" class="player-2" data-cpos="19" />
+
+                    <!-- 下方内侧转角 -->
+                    <use href="#t2" x="-38.5" y="39" class="player-1" data-cpos="30" />
+                    <use href="#t3" x="-38.5" y="38" class="player-2" data-cpos="31" />
+                    <use href="#t4" x="38.5" y="38" class="player-4" data-cpos="17" />
+                    <use href="#t1" x="38.5" y="39" class="player-1" data-cpos="18" />
+
+                    <!-- 左侧通道 -->
+                    <use href="#hr" x="-80" y="0" class="player-4" data-cpos="37" />
+                    <use href="#hr" x="-80" y="-12" class="player-1" data-cpos="38" />
+                    <use href="#hr" x="-80" y="-24" class="player-2" data-cpos="39" />
+                    <use href="#hr" x="-80" y="12" class="player-3" data-cpos="36" />
+                    <use href="#hr" x="-80" y="24" class="player-2" data-cpos="35" />
+
+                    <!-- 左侧转角 -->
+                    <use href="#t2" x="-80" y="-38" class="player-3" data-cpos="40" />
+                    <use href="#t4" x="-80" y="38" class="player-1" data-cpos="34" />
+
+                    <!-- 左侧侧边通道 -->
+                    <use href="#vr" x="-65.5" y="38" class="player-4" data-cpos="33" />
+                    <use href="#vr" x="-53" y="38" class="player-3" data-cpos="32" />
+                    <use href="#vr" x="-65.5" y="-38" class="player-4" data-cpos="41" />
+                    <use href="#vr" x="-53" y="-38" class="player-1" data-cpos="42" />
+
+                    <!-- 右侧通道 -->
+                    <use href="#hr" x="80" y="0" class="player-2" data-cpos="11" />
+                    <use href="#hr" x="80" y="-12" class="player-1" data-cpos="10" />
+                    <use href="#hr" x="80" y="-24" class="player-4" data-cpos="9" />
+                    <use href="#hr" x="80" y="12" class="player-3" data-cpos="12" />
+                    <use href="#hr" x="80" y="24" class="player-4" data-cpos="13" />
+
+                    <!-- 右侧转角 -->
+                    <use href="#t1" x="80" y="-38" class="player-3" data-cpos="8" />
+                    <use href="#t3" x="80" y="38" class="player-1" data-cpos="14" />
+
+                    <!-- 右侧侧边通道 -->
+                    <use href="#vr" x="65.5" y="38" class="player-2" data-cpos="15" />
+                    <use href="#vr" x="53" y="38" class="player-3" data-cpos="16" />
+                    <use href="#vr" x="65.5" y="-38" class="player-2" data-cpos="7" />
+                    <use href="#vr" x="53" y="-38" class="player-1" data-cpos="6" />
+
+                    <!-- 中央终点通道 -->
+                    <use href="#vr2" x="66" y="0" class="player-2" data-cpos="51" />
+                    <use href="#vr2" x="54" y="0" class="player-2" data-cpos="52" />
+                    <use href="#vr2" x="42" y="0" class="player-2" data-cpos="53" />
+                    <use href="#vr2" x="30" y="0" class="player-2" data-cpos="54" />
+                    <use href="#vr2" x="18" y="0" class="player-2" data-cpos="55" />
+
+                    <use href="#vr2" x="-66" y="0" class="player-4" data-cpos="51" />
+                    <use href="#vr2" x="-54" y="0" class="player-4" data-cpos="52" />
+                    <use href="#vr2" x="-42" y="0" class="player-4" data-cpos="53" />
+                    <use href="#vr2" x="-30" y="0" class="player-4" data-cpos="54" />
+                    <use href="#vr2" x="-18" y="0" class="player-4" data-cpos="55" />
+
+                    <use href="#hr2" x="0" y="66" class="player-3" data-cpos="51" />
+                    <use href="#hr2" x="0" y="54" class="player-3" data-cpos="52" />
+                    <use href="#hr2" x="0" y="42" class="player-3" data-cpos="53" />
+                    <use href="#hr2" x="0" y="30" class="player-3" data-cpos="54" />
+                    <use href="#hr2" x="0" y="18" class="player-3" data-cpos="55" />
+
+                    <use href="#hr2" x="0" y="-66" class="player-1" data-cpos="51" />
+                    <use href="#hr2" x="0" y="-54" class="player-1" data-cpos="52" />
+                    <use href="#hr2" x="0" y="-42" class="player-1" data-cpos="53" />
+                    <use href="#hr2" x="0" y="-30" class="player-1" data-cpos="54" />
+                    <use href="#hr2" x="0" y="-18" class="player-1" data-cpos="55" />
+
+                    <!-- 终点三角形-->
+                    <use href="#end" x="0" y="-2" class="player-3" transform="translate(0,3)" data-cpos="56" />
+                    <use href="#end" x="0" y="-2" class="player-4" transform="rotate(90,0,0) translate(0,3)" data-cpos="56" />
+                    <use href="#end" x="0" y="-2" class="player-1" transform="rotate(180,0,0) translate(0,3)" data-cpos="56" />
+                    <use href="#end" x="0" y="-2" class="player-2" transform="rotate(270,0,0) translate(0,3)" data-cpos="56" />
+
+                    <!-- 四个角的起飞区域 -->
+                    <use href="#start" x="-68" y="72" class="player-3" />
+                    <use href="#start" x="-72" y="-68" class="player-4" />
+                    <use href="#start" x="68" y="-72" class="player-1" />
+                    <use href="#start" x="72" y="68" class="player-2" />
+                    <!-- 飞行轨道指示箭头 -->
+                    <use href="#arrow" x="-24" y="-47" class="player-3" />
+                    <use href="#arrow" x="12" y="-47" class="player-3" />
+
+                    <use href="#arrow" x="-24" y="-47" class="player-1" transform="rotate(180,0,0)" />
+                    <use href="#arrow" x="12" y="-47" class="player-1" transform="rotate(180,0,0)" />
+
+                    <use href="#arrow" x="-24" y="-47" class="player-4" transform="rotate(90,0,0)" />
+                    <use href="#arrow" x="12" y="-47" class="player-4" transform="rotate(90,0,0)" />
+
+                    <use href="#arrow" x="-24" y="-47" class="player-2" transform="rotate(270,0,0)" />
+                    <use href="#arrow" x="12" y="-47" class="player-2" transform="rotate(270,0,0)" />
+
+                    <!-- 飞机棋子-->
+                    <use href="#chess" x="-79.5" y="60.5" class="player-3"
+                        transform="rotate(0,0,0) rotate(0,-73.9,66.1)" />
+                    <use href="#chess" x="-67.8" y="60.5" class="player-3"
+                        transform="rotate(0,0,0) rotate(0,-62.2,66.1)" />
+                    <use href="#chess" x="-79.5" y="72.3" class="player-3"
+                        transform="rotate(0,0,0) rotate(0,-73.9,77.9)" />
+                    <use href="#chess" x="-67.8" y="72.3" class="player-3"
+                        transform="rotate(0,0,0) rotate(0,-62.2,77.9)" />
+
+                    <use href="#chess" x="-79.5" y="60.5" class="player-4"
+                        transform="rotate(90,0,0) rotate(-90,-73.9,66.1)" />
+                    <use href="#chess" x="-67.8" y="60.5" class="player-4"
+                        transform="rotate(90,0,0) rotate(-90,-62.2,66.1)" />
+                    <use href="#chess" x="-79.5" y="72.3" class="player-4"
+                        transform="rotate(90,0,0) rotate(-90,-73.9,77.9)" />
+                    <use href="#chess" x="-67.8" y="72.3" class="player-4"
+                        transform="rotate(90,0,0) rotate(-90,-62.2,77.9)" />
+
+                    <use href="#chess" x="-79.5" y="60.5" class="player-1"
+                        transform="rotate(180,0,0) rotate(-180,-73.9,66.1)" />
+                    <use href="#chess" x="-67.8" y="60.5" class="player-1"
+                        transform="rotate(180,0,0) rotate(-180,-62.2,66.1)" />
+                    <use href="#chess" x="-79.5" y="72.3" class="player-1"
+                        transform="rotate(180,0,0) rotate(-180,-73.9,77.9)" />
+                    <use href="#chess" x="-67.8" y="72.3" class="player-1"
+                        transform="rotate(180,0,0) rotate(-180,-62.2,77.9)" />
+
+                    <use href="#chess" x="-79.5" y="60.5" class="player-2"
+                        transform="rotate(270,0,0) rotate(-270,-73.9,66.1)" />
+                    <use href="#chess" x="-67.8" y="60.5" class="player-2"
+                        transform="rotate(270,0,0) rotate(-270,-62.2,66.1)" />
+                    <use href="#chess" x="-79.5" y="72.3" class="player-2"
+                        transform="rotate(270,0,0) rotate(-270,-73.9,77.9)" />
+                    <use href="#chess" x="-67.8" y="72.3" class="player-2"
+                        transform="rotate(270,0,0) rotate(-270,-62.2,77.9)" />
+
+                </svg>
+            </div>
+
+            <!-- 移动端下方玩家 -->
+            <div class="players-bottom">
+                <div class="player-info player-3-info">
+                    <div class="player-main">
+                        <div class="player-avatar player-3-avatar">
+                            <div class="player-emoji" id="player-3-emoji-mobile"></div>
+                        </div>
+                        <div class="player-name">Player 3</div>
+                    </div>
+                    <div class="defeat-counts defeat-counts-mobile">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-mobile-3-1">0</div>
+                        <div class="defeat-count player-2-defeat" id="defeat-count-mobile-3-2">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-mobile-3-4">0</div>
+                    </div>
+                </div>
+                <div class="player-info player-2-info">
+                    <div class="defeat-counts defeat-counts-mobile">
+                        <div class="defeat-count player-1-defeat" id="defeat-count-mobile-2-1">0</div>
+                        <div class="defeat-count player-3-defeat" id="defeat-count-mobile-2-3">0</div>
+                        <div class="defeat-count player-4-defeat" id="defeat-count-mobile-2-4">0</div>
+                    </div>
+                    <div class="player-main">
+                        <div class="player-avatar player-2-avatar">
+                            <div class="player-emoji" id="player-2-emoji-mobile"></div>
+                        </div>
+                        <div class="player-name">Player 2</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 游戏控制区域 -->
+            <div class="game-controls">
+                <!-- 左侧聊天图标 -->
+                <div class="game-controls-left">
+                    <div class="chat-btn" id="chatBtn">
+                        <svg class="chat-icon" id="chatBtn" t="1759842009068" viewBox="0 0 1024 1024" version="1.1"
+                            xmlns="http://www.w3.org/2000/svg" p-id="7092">
+                            <path
+                                d="M512 981.33H85.34c-15.85 0-30.38-8.77-37.77-22.81a42.624 42.624 0 0 1 2.6-44.02L135 791.08C75.25 710.5 42.67 612.6 42.67 512 42.67 253.21 253.21 42.67 512 42.67S981.34 253.21 981.34 512 770.8 981.33 512 981.33zM166.44 896H512c211.73 0 384-172.27 384-384S723.73 128 512 128 128 300.27 128 512c0 91.29 32.83 179.9 92.46 249.46 12.58 14.69 13.73 36 2.77 51.94L166.44 896z"
+                                fill="currentColor" p-id="7093"></path>
+                            <path d="M384 448m-64 0a64 64 0 1 0 128 0 64 64 0 1 0-128 0Z" fill="currentColor"
+                                p-id="7094">
+                            </path>
+                            <path d="M640 448m-64 0a64 64 0 1 0 128 0 64 64 0 1 0-128 0Z" fill="currentColor"
+                                p-id="7095">
+                            </path>
+                        </svg>
+                    </div>
+
+                </div>
+
+                <!-- 中间骰子和进度条区域 -->
+                <div class="game-controls-center">
+                    <!-- 加载提示 -->
+                    <div id="loadingIndicator" class="loading-indicator">
+                        <div class="loading-text">正在加载游戏...</div>
+                        <div class="loading-spinner"></div>
+                    </div>
+
+                    <!-- 游戏暂停提示 -->
+                    <div id="pauseIndicator" class="pause-indicator">
+                        <div class="pause-text">游戏暂停中</div>
+                    </div>
+
+                    <!-- 聊天输入区域 -->
+                    <div id="chatInputArea" class="chat-input-area">
+                        <div class="chat-input-container">
+                            <!-- Emoji按钮 -->
+                            <div class="emoji-btn" id="emojiBtn">
+                                <svg t="1760109540164" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                                    xmlns="http://www.w3.org/2000/svg" p-id="4939" width="30" height="30">
+                                    <path
+                                        d="M512 85.290667c235.690667 0 426.752 191.061333 426.752 426.752 0 235.648-191.061333 426.709333-426.752 426.709333-235.690667 0-426.752-191.061333-426.752-426.709333C85.248 276.352 276.309333 85.290667 512 85.290667z m0 64a362.752 362.752 0 1 0 0 725.461333A362.752 362.752 0 0 0 512 149.333333zM361.045333 630.784A191.616 191.616 0 0 0 512 704.085333a191.658667 191.658667 0 0 0 150.826667-73.130666 32 32 0 1 1 50.218666 39.68A255.616 255.616 0 0 1 512 768.085333a255.616 255.616 0 0 1-201.216-97.706666 32 32 0 0 1 50.261333-39.594667zM384 373.333333a53.333333 53.333333 0 1 1 0 106.624A53.333333 53.333333 0 0 1 384 373.333333z m256 0a53.333333 53.333333 0 1 1 0 106.624 53.333333 53.333333 0 0 1 0-106.624z"
+                                        p-id="4940" fill="currentColor"></path>
+                                </svg>
+                            </div>
+                            <!-- Emoji选择面板 -->
+                            <div id="emojiPanel" class="emoji-panel">
+                                <div class="emoji-panel-content" id="emojiPanelContent">
+                                    <!-- emoji列表会通过JS动态生成 -->
+                                </div>
+                            </div>
+                            <input type="text" id="chatInput" class="chat-input" placeholder="输入聊天内容..." maxlength="20"
+                                autocomplete="off">
+                            <div class="chat-send-btn" id="chatSendBtn">
+                                <svg t="1759845347986" class="icon" viewBox="0 0 1024 1024" version="1.1"
+                                    xmlns="http://www.w3.org/2000/svg" p-id="11201" width="30" height="30">
+                                    <path
+                                        d="M883.84 129.493333a43.733333 43.733333 0 0 1 51.84 58.24L673.066667 867.84a43.733333 43.733333 0 0 1-71.04 16l-148.053334-142.08-52.48 52.906667a44.16 44.16 0 0 1-75.52-31.36V618.666667L98.773333 401.066667a43.946667 43.946667 0 0 1 19.413334-74.24z m-92.373333 188.8L441.386667 608.213333l173.866666 166.826667z m-69.12-56.533333l-506.026667 130.56 161.493333 154.88z"
+                                        p-id="11202" fill="currentColor"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="diceDisplay" class="dice-icon">⚀</div>
+                    <!-- 思考时间进度条 -->
+                    <div id="thinkingProgressContainer" class="thinking-progress-container">
+                        <div id="thinkingProgressBar" class="thinking-progress-bar"></div>
+                    </div>
+                </div>
+
+                <!-- 右侧道具图标 -->
+                <div class="game-controls-right">
+                    <div class="skill-btn" id="skillBtn">
+                        <svg class="icon skill-icon" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M555.52 87.04C576 48.64 614.4 25.6 657.92 25.6C701.44 25.6 739.84 48.64 760.32 84.48C780.8 120.32 780.8 166.4 760.32 204.8L737.28 243.2H911.36C957.44 243.2 998.4 281.6 998.4 327.68V430.08C998.4 478.72 960 517.12 911.36 517.12H898.56V855.04C898.56 931.84 837.12 993.28 760.32 993.28H261.12C184.32 993.28 122.88 931.84 122.88 855.04V519.68H110.08C64 519.68 23.04 481.28 23.04 435.2V332.8C23.04 284.16 61.44 245.76 110.08 245.76H276.48L256 204.8C235.52 168.96 232.96 122.88 256 84.48C276.48 48.64 314.88 25.6 358.4 25.6C401.92 25.6 440.32 48.64 460.8 87.04L506.88 166.4L555.52 87.04ZM826.88 519.68H197.12V857.6C197.12 875.52 204.8 890.88 215.04 901.12C227.84 913.92 243.2 919.04 258.56 919.04H760.32C778.24 919.04 793.6 911.36 803.84 901.12C816.64 888.32 821.76 872.96 821.76 857.6V519.68H826.88ZM913.92 320H110.08C102.4 320 97.28 325.12 97.28 332.8V432.64C97.28 440.32 102.4 445.44 110.08 445.44H913.92C921.6 445.44 926.72 440.32 926.72 432.64V332.8C926.72 325.12 921.6 320 913.92 320ZM335.36 107.52C325.12 112.64 317.44 122.88 314.88 133.12C312.32 143.36 312.32 156.16 320 166.4L363.52 243.2H463.36L465.92 240.64L396.8 122.88C384 102.4 358.4 94.72 335.36 107.52ZM680.96 107.52C660.48 94.72 632.32 102.4 622.08 122.88L552.96 240.64L555.52 243.2H655.36L698.88 166.4C706.56 148.48 701.44 122.88 680.96 107.52Z"
+                                fill="currentColor" />
+                        </svg>
+                    </div>
+                    <!-- 道具选择面板 -->
+                    <div id="skillPanel" class="skill-panel">
+                        <div class="skill-panel-header">
+                            <h4>选择道具</h4>
+                            <div class="skill-energy-hint">击败玩家来获取积分</div>
+                            <div class="skill-energy-display">
+                                <span id="skillEnergyText">积分: 0/100</span>
+                            </div>
+                        </div>
+                        <div class="skill-panel-content" id="skillPanelContent">
+                            <div class="skill-item" data-skill="mysteryBox" data-cost="15">
+                                <div class="skill-icon-container">
+                                    <svg width="30" height="30" viewBox="0 0 30 30" fill="none"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M8.47118 5.89842C8.65337 5.72324 8.90001 5.62512 9.15694 5.62562H20.847C21.103 5.62562 21.3515 5.72316 21.5328 5.89842L24.2946 8.57269H5.70746L8.473 5.89842H8.47118ZM4.33782 10.4483H25.6661L23.7265 23.4402C23.726 23.6883 23.6239 23.9261 23.4425 24.1015C23.2611 24.277 23.0151 24.3757 22.7586 24.3762H7.24541C6.98852 24.3762 6.74213 24.2777 6.5603 24.1022C6.37848 23.9267 6.27609 23.6886 6.2756 23.4402L4.33782 10.4483ZM9.15694 3.7518C8.38523 3.7518 7.64526 4.04815 7.10147 4.57576L3.04658 8.49138C2.8442 8.6873 2.69109 8.92559 2.59908 9.18783C2.50706 9.45007 2.47862 9.72925 2.51593 10.0038L4.33593 23.4366C4.33593 24.9906 5.63837 26.25 7.24351 26.25H22.7567C24.3637 26.25 25.6643 24.9906 25.6643 23.4384L27.4843 10.0038C27.5214 9.72911 27.4926 9.44984 27.4003 9.18759C27.3079 8.92534 27.1545 8.68713 26.9517 8.49138L22.9006 4.57396C22.3555 4.04663 21.6161 3.75024 20.8451 3.75H9.15694V3.7518ZM17.7899 12.1306C17.7143 12.0518 17.6222 11.9895 17.5197 11.9478C17.4173 11.906 17.3069 11.8858 17.1957 11.8885H12.8101C12.6986 11.8856 12.5878 11.9057 12.4851 11.9474C12.3823 11.9892 12.2899 12.0516 12.214 12.1306C12.1373 12.2016 12.0766 12.2873 12.0357 12.3821C11.9949 12.477 11.9748 12.579 11.9767 12.6817V14.0748C11.9767 14.2917 12.0551 14.4742 12.214 14.6259C12.2922 14.701 12.3854 14.7599 12.4879 14.799C12.5903 14.8381 12.7 14.8567 12.8101 14.8536H13.6603C13.7675 14.8554 13.8739 14.8362 13.9731 14.797C14.0724 14.7579 14.1624 14.6997 14.2377 14.6259C14.317 14.5559 14.3804 14.4708 14.4241 14.376C14.4679 14.2812 14.4909 14.1786 14.4918 14.0748V13.7189H15.5121V15.3072L14.0845 16.6353C14.0049 16.7077 13.9425 16.7959 13.9015 16.8938C13.8606 16.9918 13.842 17.0971 13.8472 17.2027V18.0122C13.8472 18.2398 13.9256 18.4278 14.0845 18.5795C14.16 18.6535 14.2503 18.7118 14.3499 18.751C14.4495 18.7901 14.5563 18.8092 14.6638 18.8072H15.5121C15.6213 18.8096 15.7299 18.7908 15.8314 18.7519C15.9329 18.7129 16.0253 18.6546 16.103 18.5804C16.1808 18.5063 16.2423 18.4177 16.2839 18.3201C16.3256 18.2225 16.3465 18.1178 16.3455 18.0122V17.284L17.7899 15.9378C17.8664 15.867 17.927 15.7816 17.9678 15.6871C18.0087 15.5926 18.0289 15.4909 18.0273 15.3885V12.6799C18.0292 12.5772 18.0091 12.4752 17.9682 12.3803C17.9274 12.2855 17.8667 12.1998 17.7899 12.1288V12.1306ZM16.0727 19.9727C15.997 19.899 15.9066 19.8411 15.8071 19.8022C15.7075 19.7634 15.6008 19.7445 15.4934 19.7468H14.6619C14.5549 19.7448 14.4485 19.7638 14.3493 19.8026C14.25 19.8414 14.16 19.8993 14.0845 19.9727C14.0077 20.0437 13.947 20.1294 13.9062 20.2242C13.8653 20.3191 13.8452 20.4211 13.8472 20.5238V21.3333C13.8472 21.5502 13.9256 21.7345 14.0845 21.8844C14.1576 21.9626 14.247 22.0248 14.3469 22.0668C14.4468 22.1089 14.5548 22.1299 14.6638 22.1284H15.4953C15.6042 22.1299 15.7123 22.1089 15.8121 22.0668C15.912 22.0248 16.0015 21.9626 16.0746 21.8844C16.1556 21.8158 16.2202 21.731 16.2641 21.6358C16.308 21.5407 16.33 21.4375 16.3287 21.3333V20.5238C16.3298 20.4195 16.3075 20.3162 16.2633 20.2211C16.2191 20.1259 16.1541 20.0412 16.0727 19.9727Z"
+                                            fill="currentColor" />
+                                    </svg>
+                                </div>
+                                <div class="skill-info">
+                                    <div class="skill-name">盲盒</div>
+                                    <div class="skill-desc">积分&lt;40时可用</div>
+                                    <div class="skill-desc">获得最多40积分</div>
+                                    <div class="skill-cost">消耗: 15积分</div>
+                                </div>
+                            </div>
+                            <div class="skill-item" data-skill="teleport" data-cost="40">
+                                <div class="skill-icon-container">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24">
+                                        <g fill="none" stroke="currentColor" stroke-linecap="round"
+                                            stroke-linejoin="round" stroke-width="2" data-swindex="0">
+                                            <path d="M7.027 11.477a5 5 0 1 0 5.496-4.45a4.95 4.95 0 0 0-3.088.681">
+                                            </path>
+                                            <path d="M5.636 5.636a9 9 0 1 0 3.555-2.188"></path>
+                                            <path d="M17 5a1 1 0 1 0 2 0a1 1 0 1 0-2 0"></path>
+                                            <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0"></path>
+                                            <path d="M8 16a1 1 0 1 0 2 0a1 1 0 1 0-2 0"></path>
+                                        </g>
+                                    </svg>
+                                </div>
+                                <div class="skill-info">
+                                    <div class="skill-name">传送门</div>
+                                    <div class="skill-desc">传送棋子到随机位置</div>
+                                    <div class="skill-cost">消耗: 40积分</div>
+                                </div>
+                            </div>
+                            <div class="skill-item" data-skill="polyhedral-dice" data-cost="50">
+                                <div class="skill-icon-container">
+                                    <svg t="1760266203760" class="icon" viewBox="0 0 1084 1024" version="1.1"
+                                        xmlns="http://www.w3.org/2000/svg" p-id="6178" width="30" height="30">
+                                        <path
+                                            d="M798.4 992c-1.6 0-4.8 0-6.4-1.6L390.4 817.6c-6.4-3.2-9.6-8-9.6-14.4V225.6c0-6.4 4.8-12.8 9.6-14.4L817.6 46.4c8-3.2 16 0 19.2 8L1072 520c3.2 4.8 1.6 11.2 0 14.4L812.8 984c-3.2 4.8-8 8-14.4 8zM412.8 792l379.2 163.2 249.6-430.4L816 80l-403.2 156.8v555.2z"
+                                            p-id="6179" fill="currentColor"></path>
+                                        <path
+                                            d="M1059.2 542.4l-182.4-8c-3.2 0-4.8-1.6-8-1.6L388.8 240c-8-4.8-9.6-14.4-4.8-22.4 4.8-8 14.4-9.6 22.4-4.8l478.4 289.6 177.6 8c8 0 16 8 14.4 16-1.6 9.6-9.6 16-17.6 16z"
+                                            p-id="6180" fill="currentColor"></path>
+                                        <path
+                                            d="M275.2 987.2c-6.4 0-11.2-3.2-14.4-8L9.6 520c-3.2-6.4-1.6-16 4.8-20.8l360-276.8L249.6 64c-3.2-4.8-4.8-11.2-1.6-17.6 3.2-4.8 8-9.6 14.4-9.6l563.2 6.4c8 0 14.4 6.4 16 14.4L896 515.2c1.6 8-4.8 16-14.4 17.6-8 1.6-16-4.8-17.6-14.4L809.6 76.8l-515.2-6.4 115.2 145.6c3.2 3.2 3.2 8 3.2 11.2 0 4.8-3.2 8-6.4 11.2L43.2 516.8l246.4 448c4.8 8 1.6 17.6-6.4 20.8-1.6 1.6-4.8 1.6-8 1.6z"
+                                            p-id="6181" fill="currentColor"></path>
+                                        <path
+                                            d="M798.4 992l-523.2-4.8c-6.4 0-11.2-3.2-14.4-8-3.2-4.8-1.6-11.2 1.6-16L384 793.6l4.8-4.8 481.6-284.8c4.8-3.2 11.2-3.2 17.6 0 4.8 3.2 8 9.6 6.4 16l-80 457.6c-1.6 9.6-8 14.4-16 14.4z m-491.2-36.8l478.4 4.8 72-411.2-449.6 265.6-100.8 140.8z"
+                                            p-id="6182" fill="currentColor"></path>
+                                        <path
+                                            d="M396.8 819.2c-3.2 0-6.4-1.6-9.6-3.2L12.8 524.8c-6.4-4.8-8-12.8-4.8-19.2l240-459.2c4.8-8 14.4-11.2 20.8-6.4 8 4.8 11.2 14.4 6.4 20.8L43.2 507.2l363.2 283.2c6.4 4.8 8 16 3.2 22.4-3.2 3.2-8 6.4-12.8 6.4z"
+                                            p-id="6183" fill="currentColor"></path>
+                                    </svg>
+                                </div>
+                                <div class="skill-info">
+                                    <div class="skill-name">多面骰子</div>
+                                    <div class="skill-desc">投掷1-12的随机点数</div>
+                                    <div class="skill-cost">消耗: 50积分</div>
+                                </div>
+                            </div>
+                            <div class="skill-item" data-skill="remote-dice" data-cost="70">
+                                <div class="skill-icon-container">
+                                    <svg width="30" height="30" viewBox="0 0 30 30" fill="none"
+                                        xmlns="http://www.w3.org/2000/svg">
+                                        <path
+                                            d="M18.3204 11.7373H13.6562C12.286 11.7386 10.9723 12.2537 10.0034 13.1697C9.03452 14.0857 8.48961 15.3278 8.48828 16.6232V23.6354C8.48961 24.9308 9.03452 26.1728 10.0034 27.0888C10.9723 28.0048 12.286 28.52 13.6562 28.5212H18.3204C19.6906 28.52 21.0043 28.0048 21.9732 27.0888C22.942 26.1728 23.4869 24.9308 23.4883 23.6354V16.6232C23.4869 15.3278 22.942 14.0857 21.9732 13.1697C21.0043 12.2537 19.6906 11.7386 18.3204 11.7373ZM21.4735 23.6425C21.4708 24.4317 21.1375 25.1877 20.5466 25.7451C19.9556 26.3025 19.1551 26.6158 18.3204 26.6164H13.6562C12.8201 26.6158 12.0185 26.3015 11.4273 25.7426C10.8361 25.1837 10.5037 24.4258 10.5031 23.6354V16.6232C10.5037 15.8328 10.8361 15.0749 11.4273 14.516C12.0185 13.957 12.8201 13.6428 13.6562 13.6421H18.3204C19.1564 13.6428 19.9581 13.957 20.5492 14.516C21.1404 15.0749 21.4728 15.8328 21.4735 16.6232V23.6425ZM10.5711 7.34905C12.0705 6.11 13.9943 5.42715 15.9858 5.42715C17.9772 5.42715 19.9011 6.11 21.4005 7.34905C21.4979 7.43785 21.6132 7.50719 21.7396 7.55293C21.866 7.59866 22.0008 7.61985 22.1361 7.61524C22.2713 7.61062 22.4042 7.58029 22.5267 7.52606C22.6493 7.47183 22.7591 7.3948 22.8494 7.29959C22.9398 7.20437 23.009 7.09291 23.0528 6.97186C23.0966 6.85082 23.1142 6.72266 23.1045 6.59505C23.0948 6.46744 23.058 6.34299 22.9963 6.22913C22.9346 6.11526 22.8492 6.01432 22.7453 5.93233C20.8762 4.37836 18.4723 3.52124 15.9832 3.52124C13.4942 3.52124 11.0903 4.37836 9.22116 5.93233C9.02077 6.10093 8.89944 6.3379 8.88386 6.59108C8.86827 6.84426 8.95971 7.09293 9.13805 7.28238C9.31639 7.47182 9.56702 7.58653 9.83482 7.60127C10.1026 7.616 10.3656 7.52956 10.566 7.36095L10.5711 7.34905Z"
+                                            fill="currentColor" />
+                                        <path
+                                            d="M11.8413 9.37363C11.6411 9.53613 11.5193 9.76304 11.5021 10.0057C11.4849 10.2483 11.5737 10.4874 11.7494 10.6716C11.9251 10.8558 12.1737 10.9705 12.442 10.9911C12.7103 11.0117 12.9768 10.9366 13.1844 10.7818C13.9679 10.1858 14.9593 9.85902 15.9837 9.85902C17.0081 9.85902 17.9995 10.1858 18.783 10.7818C18.8849 10.8644 19.004 10.9279 19.1334 10.9685C19.2628 11.009 19.3998 11.0259 19.5365 11.018C19.6732 11.0101 19.8068 10.9776 19.9294 10.9225C20.052 10.8674 20.1612 10.7907 20.2506 10.697C20.34 10.6033 20.4078 10.4944 20.45 10.3767C20.4921 10.259 20.5079 10.1349 20.4963 10.0117C20.4847 9.88842 20.446 9.7685 20.3824 9.65894C20.3188 9.54938 20.2317 9.45238 20.1261 9.37363C18.9692 8.48682 17.5011 8 15.9837 8C14.4663 8 12.9982 8.48682 11.8413 9.37363ZM15.9837 16.1564C15.2891 16.1564 14.6101 16.3424 14.0325 16.6909C13.455 17.0395 13.0048 17.5348 12.739 18.1144C12.4732 18.694 12.4037 19.3317 12.5392 19.947C12.6747 20.5623 13.0092 21.1274 13.5003 21.571C13.9915 22.0146 14.6173 22.3167 15.2985 22.4391C15.9798 22.5614 16.6859 22.4986 17.3277 22.2586C17.9694 22.0185 18.5179 21.612 18.9038 21.0904C19.2897 20.5688 19.4957 19.9555 19.4957 19.3282C19.495 18.4872 19.1248 17.6808 18.4663 17.0861C17.8078 16.4914 16.9149 16.157 15.9837 16.1564ZM15.9837 20.8734C15.6453 20.8734 15.3145 20.7828 15.0331 20.613C14.7518 20.4432 14.5325 20.2019 14.403 19.9195C14.2735 19.6372 14.2396 19.3265 14.3056 19.0267C14.3716 18.727 14.5346 18.4517 14.7738 18.2356C15.0131 18.0194 15.318 17.8723 15.6499 17.8127C15.9818 17.753 16.3258 17.7836 16.6385 17.9006C16.9511 18.0175 17.2183 18.2156 17.4063 18.4697C17.5943 18.7238 17.6947 19.0226 17.6947 19.3282C17.696 19.532 17.6528 19.7341 17.5674 19.9227C17.4821 20.1114 17.3563 20.283 17.1973 20.4277C17.0384 20.5723 16.8493 20.6872 16.641 20.7657C16.4328 20.8442 16.2094 20.8848 15.9837 20.8851V20.8734Z"
+                                            fill="currentColor" />
+                                    </svg>
+                                </div>
+                                <div class="skill-info">
+                                    <div class="skill-name">遥控骰子</div>
+                                    <div class="skill-desc">选择指定的骰子点数</div>
+                                    <div class="skill-cost">消耗: 70积分</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 控制面板区域 -->
+        <div class="control-panel">
+            <div class="control-panel-inner">
+                <!-- 标题区域 -->
+                <div class="control-title">
+                    <div class="game-room-code-display">
+                        <span class="game-room-label">对局回放</span>
+                    </div>
+                </div>
+
+                <!-- 操控区域容器 -->
+                <div class="game-control-content">
+                    <!-- 游戏信息区域 -->
+                    <div class="game-panel-section">
+                        <div class="game-info-panel">
+                            <div class="info-header">
+                                <h3 id="infoPanelTitle">游戏信息</h3>
+                                <button class="panel-switch-btn" id="panelSwitchBtn" title="切换面板">
+                                    <span id="panelSwitchText">聊天</span>
+                                </button>
+                            </div>
+                            <div class="panel-body-container">
+                                <div class="game-info-content" id="gameInfoContent">
+                                </div>
+                                <div class="chat-info-content" id="chatInfoContent" style="display: none;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 完成进度区域 -->
+                    <div class="game-panel-section">
+                        <div class="progress-panel">
+                            <div class="progress-header-container">
+                                <h3>完成进度</h3>
+                            </div>
+                            <div class="panel-body-container">
+                                <div class="progress-content">
+                                    <div class="progress-item" data-player="1">
+                                        <div class="progress-avatar player-1"></div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill player-1"></div>
+                                        </div>
+                                    </div>
+                                    <div class="progress-item" data-player="2">
+                                        <div class="progress-avatar player-2"></div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill player-2"></div>
+                                        </div>
+                                    </div>
+                                    <div class="progress-item" data-player="3">
+                                        <div class="progress-avatar player-3"></div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill player-3"></div>
+                                        </div>
+                                    </div>
+                                    <div class="progress-item" data-player="4">
+                                        <div class="progress-avatar player-4"></div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill player-4"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="game-panel-section">
+                        <div class="game-room-code-display game-room-code-display-column" id="gameRoomCodeDisplayColumn">
+                            <span class="game-room-label">房间号</span>
+                            <span class="game-room-code" id="gameRoomCodeColumn">----</span>
+                        </div>
+                        <div class="control-buttons-grid grid-1">
+                            <button id="showRules" class="control-btn" type="button">游戏规则</button>
+                            <button id="toggleAudio" class="control-btn" type="button">关闭音效</button>
+                        </div>
+                        <button id="returnHome" class="control-btn" type="button">返回主页</button>
+                    </div>
+
+                    <div class="debug-section">
+                        <div class="debug-toggle-handle" onclick="toggleDebugPanel()" title="展开/收起调试面板">
+                            <span>D</span>
+                        </div>
+                        <div class="debug-content-wrapper">
+                            <div class="debug-dice-panel">
+                                <h4>调试骰子</h4>
+                                <div class="dice-selector">
+                                    <button class="dice-btn" data-value="1">⚀</button>
+                                    <button class="dice-btn" data-value="2">⚁</button>
+                                    <button class="dice-btn" data-value="3">⚂</button>
+                                    <button class="dice-btn" data-value="4">⚃</button>
+                                    <button class="dice-btn" data-value="5">⚄</button>
+                                    <button class="dice-btn" data-value="6">⚅</button>
+                                </div>
+                            </div>
+
+                            <div class="debug-move-panel">
+                                <h4>棋子移动调试</h4>
+                                <div class="debug-controls">
+                                    <div class="control-group">
+                                        <span class="debug-group-label">选择玩家:</span>
+                                        <div class="debug-radio-group debug-player-radio-group">
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-player" value="1" checked>
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-1-color); color: var(--player-1-color);">1</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-player" value="2">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-2-color); color: var(--player-2-color);">2</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-player" value="3">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-3-color); color: var(--player-3-color);">3</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-player" value="4">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-4-color); color: var(--player-4-color);">4</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="control-group">
+                                        <span class="debug-group-label">选择棋子:</span>
+                                        <div class="debug-radio-group debug-piece-radio-group">
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-chess" value="0" checked>
+                                                <span class="debug-radio-label">1</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-chess" value="1">
+                                                <span class="debug-radio-label">2</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-chess" value="2">
+                                                <span class="debug-radio-label">3</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-chess" value="3">
+                                                <span class="debug-radio-label">4</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="control-group debug-action-group">
+                                        <div class="debug-move-actions">
+                                            <button id="move-forward-btn" class="debug-move-btn forward">前进2格</button>
+                                            <button id="move-backward-btn" class="debug-move-btn backward">后退1格</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="debug-energy-panel">
+                                <h4>积分调试（道具模式）</h4>
+                                <div class="debug-controls">
+                                    <div class="control-group">
+                                        <span class="debug-group-label">选择玩家:</span>
+                                        <div class="debug-radio-group debug-player-radio-group">
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-energy-player" value="1" checked>
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-1-color); color: var(--player-1-color);">1</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-energy-player" value="2">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-2-color); color: var(--player-2-color);">2</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-energy-player" value="3">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-3-color); color: var(--player-3-color);">3</span>
+                                            </label>
+                                            <label class="debug-radio-option">
+                                                <input type="radio" name="debug-energy-player" value="4">
+                                                <span class="debug-radio-label"
+                                                    style="border-color: var(--player-4-color); color: var(--player-4-color);">4</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="control-group">
+                                        <div class="debug-energy-actions">
+                                            <button id="energy-30-btn" class="debug-energy-btn">设置30积分</button>
+                                            <button id="energy-100-btn" class="debug-energy-btn">设置100积分</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 结算模态框 -->
+    <div id="settlement-modal" class="modal-overlay">
+        <div class="modal-content settlement-modal-content">
+            <div class="modal-header">
+                <h2>游戏结算</h2>
+                <div class="settlement-info">
+                    <span class="settlement-mode" id="settlement-mode"></span>
+                    <span class="settlement-timestamp" id="settlement-timestamp"></span>
+                    <span class="settlement-duration" id="settlement-duration"></span>
+                </div>
+                <button class="modal-close" id="settlement-close" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="settlement-rankings" id="settlement-rankings">
+                    <!-- 排名列表将通过JavaScript动态生成 -->
+                </div>
+                <div class="settlement-data-analysis" id="settlement-data-analysis" style="display: none;">
+                    <!-- 数据分析内容将通过JavaScript动态生成 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-primary" id="data-analysis-btn">数据分析</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 游戏规则模态框 -->
+    <div id="rules-modal" class="modal-overlay">
+        <div class="modal-content rules-modal-content" data-titles-view>
+            <div class="modal-header">
+                <h2 data-rules-title>游戏规则</h2>
+                <button class="rules-view-toggle" data-rules-toggle type="button">称号一览</button>
+                <button class="modal-close" id="rules-close" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="game-rules-panel">
+                    <div class="rules-content" data-rules-body>
+                        <div class="rule-section">
+                            <h4>一、胜利条件与行进次序</h4>
+                            <div class="rule-content">
+                                <div class="mechanism-item win-item">
+                                    <div class="sub-content-item win-sub-item">
+                                        <p><strong>胜利条件：</strong>率先将自身所有棋子送入终点的玩家获胜。</p>
+                                    </div>
+                                    <div class="sub-content-item win-sub-item">
+                                        <p><strong>行进次序：</strong>开局按顺时针轮流投骰子，每回合1名玩家操作。</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rule-section">
+                            <h4>二、核心机制</h4>
+                            <div class="rule-content">
+                                <div class="mechanism-item launch-item">
+                                    <h5><span class="move-type-launch">起飞</span></h5>
+                                    <div class="sub-content-item launch-sub-item">
+                                        <p>初始棋子在基地，摇到偶数可让1颗棋子<span class="move-type-launch">[起飞]</span>至起飞点。
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item move-item">
+                                    <h5><span class="move-type-move">移动</span></h5>
+                                    <div class="sub-content-item move-sub-item">
+                                        <p>棋子<span class="move-type-launch">[起飞]</span>后当前摇到的点数就是棋子可以前进的格数。</p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item bonus-item">
+                                    <h5><span class="consecutive-bonus">连投奖励</span></h5>
+                                    <div class="sub-content-item bonus-sub-item">
+                                        <p>摇到点数<span class="dice-special">6</span>获额外1次投骰子机会。</p>
+                                    </div>
+                                    <div class="sub-content-item bonus-sub-item">
+                                        <p>单次回合连投 3 次<span class="dice-special">6</span>触发 <span class="consecutive-bonus">[连投惩罚]</span>：该玩家未到终点的棋子全部回基地，回合结束。</p>
+                                    </div>
+
+                                </div>
+
+                                <div class="mechanism-item jump-item">
+                                    <h5><span class="move-type-jump">跳子</span></h5>
+                                    <div class="sub-content-item jump-sub-item">
+                                        <p>棋子停在自身颜色格子时，向前<span class="move-type-jump">[跳子]</span>至下一个同色格子。
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item fly-item">
+                                    <h5><span class="move-type-fly">飞棋</span></h5>
+                                    <div class="sub-content-item fly-sub-item">
+                                        <p>玩家进入"自身颜色+箭头指示"格子后可以触发<span class="move-type-fly">[飞棋]</span>，沿箭头移动至对面。
+                                        </p>
+                                    </div>
+                                    <div class="sub-content-item fly-sub-item">
+                                        <p>若非<span class="move-type-jump">[跳子]</span>进入<span
+                                                class="move-type-fly">[飞棋]</span>格子：按箭头移动到前方首个同色格子，再额外<span
+                                                class="move-type-jump">[跳子]</span>至下一个同色格子。</p>
+                                    </div>
+                                    <div class="sub-content-item fly-sub-item">
+                                        <p>若从上个同色格子<span class="move-type-jump">[跳子]</span>进入<span
+                                                class="move-type-fly">[飞棋]</span>格子：按箭头移动到前方首个同色格子之后停下。
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item stack-item">
+                                    <h5><span class="stack-text">叠子</span></h5>
+                                    <div class="sub-content-item stack-sub-item">
+                                        <p>多颗同色棋子叠在一格上时形成<span class="stack-text">[叠子]</span>。</p>
+                                    </div>
+                                    <div class="sub-content-item stack-sub-item">
+                                        <p>若移动时点数大于到前方<span class="stack-text">[叠子]</span>距离：先移动到<span
+                                                class="stack-text">[叠子]</span>格，再回退多余点数的距离。</p>
+                                    </div>
+                                    <div class="sub-content-item stack-sub-item">
+                                        <p>若<span class="move-type-jump">[跳子]</span>路径有<span
+                                                class="stack-text">[叠子]</span>：无法<span
+                                                class="move-type-jump">[跳子]</span>，停在起跳点。</p>
+                                    </div>
+                                    <div class="sub-content-item stack-sub-item">
+                                        <p>若<span class="move-type-fly">[飞棋]</span>路径有<span
+                                                class="stack-text">[叠子]</span>：无法<span
+                                                class="move-type-fly">[飞棋]</span>，正常<span
+                                                class="move-type-jump">[跳子]</span>来绕路。</p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item beat-item">
+                                    <h5><span class="crash-text">撞机</span></h5>
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>1.常规<span class="crash-text">撞机</span></strong></p>
+                                        <p class="beat-detail">若棋子移动后停在有敌方单颗棋子的格子，则将其逐回基地。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>2.<span class="move-type-jump">跳子</span>中的<span
+                                                    class="crash-text">撞机</span></strong></p>
+                                        <p class="beat-detail">若<span
+                                                class="move-type-jump">[跳子]</span>跳前或跳后格子有敌方单颗棋子，则将其逐回基地。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>3.<span class="move-type-fly">飞棋</span>中的<span
+                                                    class="crash-text">撞机</span></strong></p>
+                                        <p class="beat-detail">• 若<span
+                                                class="move-type-fly">[飞棋]</span>飞前或飞后格子有敌方单颗棋子，则将其逐回基地。</p>
+                                        <p class="beat-detail">• 若<span
+                                                class="move-type-fly">[飞棋]</span>路径与所经过的终点通道交叉点有单颗棋子，则将其逐回后继续完成<span
+                                                class="move-type-fly">[飞棋]</span>。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>4.<span class="stack-text">叠子</span>相关<span
+                                                    class="crash-text">撞机</span></strong></p>
+                                        <p class="beat-detail">• 若棋子移动后停在其他玩家的<span
+                                                class="stack-text">[叠子]</span>上，则该棋子与该位置的<span
+                                                class="stack-text">[叠子]</span>均返回各自基地。</p>
+                                        <p class="beat-detail">• 若受<span
+                                                class="stack-text">[叠子]</span>阻拦回退后最终位置有敌方单颗棋子，则将其逐回基地。</p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item finish-item">
+                                    <h5><span class="finish-text">到达终点</span></h5>
+                                    <div class="sub-content-item finish-sub-item">
+                                        <p>棋子移动后刚好停在终点格子视为到达终点，否则将回退多余点数。</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rule-section">
+                            <h4>三、道具模式</h4>
+                            <div class="rule-content">
+                                <div class="mechanism-item energy-item">
+                                    <h5><span class="energy-value-text">积分</span></h5>
+                                    <div class="sub-content-item energy-sub-item">
+                                        <p>击败对手棋子可获得积分，单次得分 =（基础 <span class="energy-value-text">15</span> 分 + 对手棋子完成度加成）× 棋子数量系数，积分上限 <span class="energy-value-text">100</span>。</p>
+                                        <p>遥控骰子造成的击败不能获取积分。</p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item props-item">
+                                    <h5><span class="skill-name-text">道具</span></h5>
+                                    <div class="sub-content-item props-sub-item">
+                                        <p><strong>1.盲盒</strong></p>
+                                        <p class="beat-detail">消耗 <span class="energy-value-text">15</span> 积分，随机获得 <span class="energy-value-text">0~40</span> 积分。</p>
+                                        <p class="beat-detail">开盒后本回合立即结束；自身积分 ≥ 40 时不可使用。</p>
+                                    </div>
+
+                                    <div class="sub-content-item props-sub-item">
+                                        <p><strong>2.传送门</strong></p>
+                                        <p class="beat-detail">消耗 <span class="energy-value-text">40</span> 积分，将己方一颗不在基地、也未到终点的棋子传送到随机空位上。</p>
+                                        <p class="beat-detail">传送后本回合结束，不触发 <span class="move-type-jump">[跳子]</span> 或 <span class="move-type-fly">[飞棋]</span>。</p>
+                                    </div>
+
+                                    <div class="sub-content-item props-sub-item">
+                                        <p><strong>3.多面骰子</strong></p>
+                                        <p class="beat-detail">消耗 <span class="energy-value-text">50</span> 积分，投掷 <span class="dice-special">1~12</span> 随机点数。</p>
+                                        <p class="beat-detail">不参与 <span class="consecutive-bonus">[连投奖励]</span>，也不计入 <span class="consecutive-bonus">[连投惩罚]</span>。</p>
+                                    </div>
+
+                                    <div class="sub-content-item props-sub-item">
+                                        <p><strong>4.遥控骰子</strong></p>
+                                        <p class="beat-detail">消耗 <span class="energy-value-text">70</span> 积分，可指定 <span class="dice-special">1~6</span> 任意点数。</p>
+                                        <p class="beat-detail">与多面骰子相同，不参与 <span class="consecutive-bonus">[连投奖励]</span>，也不计入 <span class="consecutive-bonus">[连投惩罚]</span>。</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rule-section">
+                            <h4>四、欢乐模式</h4>
+                            <div class="rule-content">
+                                <div class="mechanism-item beat-item">
+                                    <h5><span class="collision-bonus">欢乐模式</span></h5>
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>1.终点无反弹</strong></p>
+                                        <p class="beat-detail">移动点数超过终点时不再回退，直接停在终点格。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>2.叠子不阻挡</strong></p>
+                                        <p class="beat-detail">路径上的 <span class="stack-text">[叠子]</span> 不产生阻挡。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>3.无连投惩罚</strong></p>
+                                        <p class="beat-detail">不会触发 <span class="consecutive-bonus">[连投惩罚]</span>，连投 3 次 <span class="dice-special">6</span> 后计数清零，照常获得连投。</p>
+                                    </div>
+
+                                    <div class="sub-content-item beat-sub-item">
+                                        <p><strong>4.交叉点不撞机</strong></p>
+                                        <p class="beat-detail"><span
+                                                class="move-type-fly">[飞棋]</span>经过终点通道交叉点时<span
+                                                class="crash-text">不触发[撞机]</span>且没有<span
+                                                class="collision-bonus">[碰撞奖励]</span>。</p>
+                                    </div>
+                                </div>
+
+                                <div class="mechanism-item collision-item">
+                                    <h5><span class="collision-bonus">碰撞奖励</span></h5>
+                                    <div class="sub-content-item collision-sub-item">
+                                        <p><strong>1.怎么触发</strong></p>
+                                        <p class="beat-detail">棋子停在有其他玩家棋子的格子上时，不触发 <span class="crash-text">[撞机]</span>，改为 <span class="collision-bonus">[碰撞奖励]</span>。</p>
+                                    </div>
+
+                                    <div class="sub-content-item collision-sub-item">
+                                        <p><strong>2.奖励步数</strong></p>
+                                        <p class="beat-detail">每颗敌方棋子奖励 <span class="collision-bonus">2</span> 步，至少 <span class="collision-bonus">2</span> 步（叠了 3 颗就是 6 步）。</p>
+                                    </div>
+
+                                    <div class="sub-content-item collision-sub-item">
+                                        <p><strong>3.可以连锁</strong></p>
+                                        <p class="beat-detail">奖励步数的落点若又踩到敌方棋子，继续给奖励；过程中的 <span class="move-type-jump">[跳子]</span>、<span class="move-type-fly">[飞棋]</span> 照常执行。</p>
+                                    </div>
+
+                                    <div class="sub-content-item collision-sub-item">
+                                        <p><strong>4.道具模式积分</strong></p>
+                                        <p class="beat-detail">道具模式下，<span class="collision-bonus">[碰撞奖励]</span>同时按每颗敌方棋子 <span class="energy-value-text">20</span> 分获得积分。</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="titles-gallery" data-titles-gallery style="display: none;"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- AI托管遮罩层 -->
+    <script type="module" src="./js/replayMain.js"></script>
+
+
+    <!-- 回放控制条：全宽贴底，可隐藏 -->
+    <div class="replay-bar-fixed" id="replayBar">
+        <div class="replay-bar-row">
+            <div class="replay-bar-side">
+            <div class="replay-bar-corner">
+            <button type="button" class="replay-btn replay-btn-icon" id="replayDownload" aria-label="下载数据" title="下载数据"><svg viewBox="95 130 855 800" width="16" height="15" fill="currentColor"><path d="M896 672c-17.066667 0-32 14.933333-32 32v128c0 6.4-4.266667 10.666667-10.666667 10.666667H170.666667c-6.4 0-10.666667-4.266667-10.666667-10.666667v-128c0-17.066667-14.933333-32-32-32s-32 14.933333-32 32v128c0 40.533333 34.133333 74.666667 74.666667 74.666667h682.666666c40.533333 0 74.666667-34.133333 74.666667-74.666667v-128c0-17.066667-14.933333-32-32-32z"/><path d="M488.533333 727.466667c6.4 6.4 14.933333 8.533333 23.466667 8.533333s17.066667-2.133333 23.466667-8.533333l213.333333-213.333334c12.8-12.8 12.8-32 0-44.8-12.8-12.8-32-12.8-44.8 0l-157.866667 157.866667V170.666667c0-17.066667-14.933333-32-32-32s-34.133333 14.933333-34.133333 32v456.533333L322.133333 469.333333c-12.8-12.8-32-12.8-44.8 0-12.8 12.8-12.8 32 0 44.8l211.2 213.333334z"/></svg></button>
+            <label class="replay-btn replay-btn-icon" id="replayImport" for="replayFileInput" aria-label="导入回放" title="导入回放"><svg viewBox="95 130 855 800" width="16" height="15" fill="currentColor"><path d="M896 629.333333c-17.066667 0-32 14.933333-32 32v170.666667c0 6.4-4.266667 10.666667-10.666667 10.666667H170.666667c-6.4 0-10.666667-4.266667-10.666667-10.666667v-170.666667c0-17.066667-14.933333-32-32-32s-32 14.933333-32 32v170.666667c0 40.533333 34.133333 74.666667 74.666667 74.666667h682.666666c40.533333 0 74.666667-34.133333 74.666667-74.666667v-170.666667c0-17.066667-14.933333-32-32-32z"/><path d="M322.133333 407.466667l157.866667-157.866667V704c0 17.066667 14.933333 32 32 32s32-14.933333 32-32V247.466667l157.866667 157.866666c6.4 6.4 14.933333 8.533333 23.466666 8.533334s17.066667-2.133333 23.466667-8.533334c12.8-12.8 12.8-32 0-44.8l-213.333333-213.333333c-12.8-12.8-32-12.8-44.8 0l-213.333334 213.333333c-12.8 12.8-12.8 32 0 44.8 10.666667 12.8 32 12.8 44.8 2.133334z"/></svg></label>
+            <input type="file" id="replayFileInput" accept=".json,.json.gz,.gz" hidden>
+            </div>
+            <button type="button" class="replay-btn replay-btn-icon" id="replayPrev" aria-label="上一手" title="上一手"><svg viewBox="80 160 865 716" width="17" height="14" fill="currentColor"><path d="M441.216 842.794667l-341.333333-298.666667a42.666667 42.666667 0 0 1 0-64.256l341.333333-298.666667C468.821333 157.098667 512 176.682667 512 213.333333v597.333334c0 36.693333-43.178667 56.234667-70.784 32.128z m426.666667 0l-341.333334-298.666667a42.666667 42.666667 0 0 1 0-64.256l341.333334-298.666667C895.488 157.098667 938.666667 176.682667 938.666667 213.333333v597.333334c0 36.693333-43.178667 56.234667-70.784 32.128zM426.666667 307.328L192.810667 512 426.666667 716.629333V307.370667z m426.666666 409.301333V307.370667L619.477333 512 853.333333 716.629333z"/></svg></button>
+            </div>
+            <button type="button" class="replay-btn replay-btn-icon" id="replayPlay" aria-label="播放" title="播放/暂停"><svg viewBox="190 80 715 860" width="15" height="15" fill="currentColor"><path d="M213.333333 896V128a42.666667 42.666667 0 0 1 65.706667-35.882667l597.333333 384a42.666667 42.666667 0 0 1 0 71.765334l-597.333333 384A42.666667 42.666667 0 0 1 213.333333 896z m85.333334-78.165333L774.4 512 298.666667 206.165333v611.669334z"/></svg></button>
+            <div class="replay-bar-side">
+            <button type="button" class="replay-btn replay-btn-icon" id="replayNext" aria-label="下一手" title="下一手"><svg viewBox="80 160 865 716" width="17" height="14" fill="currentColor"><path d="M85.333333 810.666667V213.333333c0-36.693333 43.178667-56.234667 70.784-32.128l341.333334 298.666667a42.666667 42.666667 0 0 1 0 64.256l-341.333334 298.666667C128.512 866.901333 85.333333 847.317333 85.333333 810.666667z m85.333334-94.037334L404.522667 512 170.666667 307.370667v409.258666zM512 810.666667V213.333333c0-36.693333 43.178667-56.234667 70.784-32.128l341.333333 298.666667a42.666667 42.666667 0 0 1 0 64.256l-341.333333 298.666667C555.178667 866.901333 512 847.317333 512 810.666667z m319.189333-298.666667L597.333333 307.370667v409.258666L831.189333 512z"/></svg></button>
+            <span class="replay-step" id="replayStep">0 / 0</span>
+            <button type="button" class="replay-btn replay-mark-toggle" id="replayMarkToggle" title="切换进度条标记（击败 / 称号 / 道具）">击败</button>
+            <button type="button" class="replay-btn replay-btn-icon" id="replayBarHide" aria-label="隐藏" title="隐藏"><svg viewBox="84 208 856 722" width="17" height="14" fill="currentColor"><path d="M849.152 665.429333c62.762667-69.674667 86.826667-138.538667 87.296-139.904a42.410667 42.410667 0 0 0 0-27.008C935.552 495.658667 837.674667 213.333333 512 213.333333c-37.802667 0-72.192 4.138667-104.064 10.837334l75.776 75.776c9.301333-0.554667 18.517333-1.28 28.288-1.28 228.309333 0 316.757333 164.096 338.176 213.333333a369.365333 369.365333 0 0 1-60.544 93.866667l59.52 59.562666zM512 810.666667c78.293333 0 143.146667-16.597333 196.906667-41.429334l156.928 156.928 60.330666-60.330666-768-768-60.330666 60.330666 141.610666 141.610667c-111.530667 83.285333-151.338667 196.906667-151.936 198.698667a42.410667 42.410667 0 0 0 0 27.008C88.448 528.341333 186.325333 810.666667 512 810.666667zM299.989333 360.32l96.938667 96.938667c-22.229333 47.488-14.378667 106.282667 24.533333 145.194666s97.706667 46.805333 145.194667 24.533334l76.842667 76.842666A394.325333 394.325333 0 0 1 512 725.333333c-228.309333 0-316.757333-164.096-338.176-213.333333a366.933333 366.933333 0 0 1 126.165333-151.68z"/></svg></button>
+            </div>
+        </div>
+        <div class="replay-track" id="replayTrack"></div>
+    </div>
+    <button type="button" class="replay-bar-handle" id="replayBarHandle" aria-label="展开回放控制栏"><svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M289.0752 632.5248a25.6 25.6 0 0 1 0-36.1984l204.8-204.8a25.6 25.6 0 0 1 36.1984 0l204.8 204.8a25.6 25.6 0 0 1-36.1984 36.1984L512 445.7984l-186.7264 186.7264a25.6 25.6 0 0 1-36.1984 0z" fill="currentColor"></path></svg></button>
+</body>
+
+</html>

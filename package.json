@@ -1,6 +1,6 @@
 {
   "name": "minimalist-aeroplane-chess",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "极简飞行棋",
   "scripts": {
     "dev:frontend": "cd frontend && npm run dev",

@@ -41,6 +41,7 @@ class Animation {
         const centerY = targetY + 5.6;
 
         // 直接设置位置，不使用动画
+        chess.element._moveToken = null;
         chess.element.setAttribute('x', targetX);
         chess.element.setAttribute('y', targetY);
         // 核心修正：恢复最原始的叠加旋转，不做任何“抵消” baseRotation 的操作
@@ -76,6 +77,7 @@ class Animation {
             const centerX = targetX + 5.6;
             const centerY = targetY + 5.6;
 
+            chess.element._moveToken = null;
             chess.element.classList.add('no-transition');
             chess.element.setAttribute('x', targetX);
             chess.element.setAttribute('y', targetY);
@@ -179,12 +181,16 @@ class Animation {
     animateDirectMovement(player, chessIndex, element, startX, startY, endX, endY, baseRotation, callback, isFinishAnimation = false) {
         const duration = 500; // 动画持续时间（毫秒）
         const startTime = performance.now();
-        
+        // 归属标记：直接落位或后发起的动画会把它顶掉，旧动画下一帧就自行收手
+        const token = {};
+        element._moveToken = token;
+
         // 预先获取初始位置的旋转角度
         const chess = this.gameState.playerChess[player][chessIndex];
         const positionRotation = this.utils.getChessRotationAtPosition(chess.position);
         
         const animate = (currentTime) => {
+            if (element._moveToken !== token) return;
             const elapsed = currentTime - startTime;
             const progress = Math.min(elapsed / duration, 1);
 
@@ -398,6 +404,7 @@ class Animation {
                 const centerY = trackPos.y + chessOffset + 5.6 + stackOffset.y;
 
                 if (!animate) {
+                    chess.element._moveToken = null;
                     chess.element.classList.add('no-transition');
                     chess.element.classList.remove('chess-transition');
                     

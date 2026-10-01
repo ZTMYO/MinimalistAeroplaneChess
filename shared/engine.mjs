@@ -14,6 +14,21 @@ export const RUNWAY_BASE = 100;
 export const CROSS_BASE = 900;
 export const HOME = 999;
 
+// 规则版本：回放档案里记一份，规则大改后据此判断旧动作流还能不能原样重放
+export const ENGINE_VERSION = 1;
+
+/** 可复现的随机数：同一颗种子给出同一串数，回放靠它复现骰子与随机落点 */
+export function makeRng(seed, resumeState = null) {
+  let value = (Number(resumeState ?? seed) >>> 0) || 1;
+  const rng = () => {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value / 4294967296;
+  };
+  // 续局要用：把内部状态存下来，下次从同一位置接着摇
+  rng.current = () => value;
+  return rng;
+}
+
 export const PLAYERS = [1, 2, 3, 4];
 export const PIECES_PER_PLAYER = 4;
 

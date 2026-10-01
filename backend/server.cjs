@@ -5,6 +5,7 @@ const http = require('http');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const {
   Player,
@@ -108,13 +109,44 @@ function getAuthoritySession(gameSessionId) {
   return gameSessionId ? authoritySessions.get(gameSessionId) || null : null;
 }
 
+// 刚打完的对局：会话销毁时把档案挪到这里留一阵，否则结算页点「查看回放」时档案已经没了
+const finishedReplays = new Map();
+const REPLAY_KEEP_AFTER_END_MS = 2 * 60 * 60 * 1000;
+const REPLAY_KEEP_MAX = 50;
+
+function retireAuthoritySession(gameSessionId) {
+  pruneFinishedReplays();
+  const session = authoritySessions.get(gameSessionId);
+  if (session && session.actions && session.actions.length) {
+    finishedReplays.set(gameSessionId, { archive: session.getReplay(), savedAt: Date.now() });
+    while (finishedReplays.size > REPLAY_KEEP_MAX) {
+      finishedReplays.delete(finishedReplays.keys().next().value);
+    }
+  }
+  authoritySessions.delete(gameSessionId);
+}
+
+function pruneFinishedReplays(now = Date.now()) {
+  for (const [gameSessionId, item] of finishedReplays) {
+    if (now - item.savedAt > REPLAY_KEEP_AFTER_END_MS) finishedReplays.delete(gameSessionId);
+  }
+}
+
+function getReplayArchive(gameSessionId) {
+  const live = authoritySessions.get(gameSessionId);
+  if (live) return { archive: live.getReplay(), finished: live.state.phase === 'ended' };
+  const kept = finishedReplays.get(gameSessionId);
+  if (kept) return { archive: kept.archive, finished: true };
+  return null;
+}
+
 function dropAuthoritySession(gameSessionId) {
   if (!gameSessionId) return;
   botDriver.dropSession(gameSessionId);
   const waiter = animationWaiters.get(gameSessionId);
   if (waiter) finishAnimationWait(gameSessionId, waiter);
   animationAckers.delete(gameSessionId);
-  authoritySessions.delete(gameSessionId);
+  retireAuthoritySession(gameSessionId);
 }
 
 // 把领域模型需要的外部能力注入进去
@@ -196,20 +228,28 @@ function hasGameProgress(snapshot) {
 }
 
 async function startAuthoritySession(gameSession) {
-  const colors = Array.from(gameSession.players.values()).map(p => p.color);
+  const colorList = Array.from(gameSession.players.values()).map(p => p.color);
+  const players = Array.from(gameSession.players.values()).map(p => ({
+    color: p.color,
+    nickname: p.nickname || `玩家${p.color}`,
+    isAI: Boolean(p.isAI)
+  }));
   const session = await authority.createAuthoritySession({
     gameSessionId: gameSession.gameSessionId,
-    colors,
+    colors: colorList,
     pieceCount: gameSession.pieceCount,
     happy: gameSession.happyMode,
     skillMode: gameSession.skillMode,
     // 初始积分：默认 0，测试或自定义开局可用环境变量给一笔启动资金
-    startEnergy: Number(process.env.START_ENERGY) || 0
+    startEnergy: Number(process.env.START_ENERGY) || 0,
+    // 回放用：这颗种子定死整局的随机，动作流跟着一起留档
+    seed: crypto.randomInt(0, 0xffffffff),
+    players
   });
   authoritySessions.set(gameSession.gameSessionId, session);
   mirrorSnapshot(gameSession, session.snapshot());
   gameSession.broadcast(attachTiming(session.snapshot(), gameSession.gameData));
-  console.log(`[权威棋面] 会话 ${gameSession.gameSessionId} 已接管，玩家颜色: ${colors.join(',')}`);
+  console.log(`[权威棋面] 会话 ${gameSession.gameSessionId} 已接管，玩家颜色: ${colorList.join(',')}，种子 ${session.seed}`);
   return session;
 }
 
@@ -480,7 +520,7 @@ function startTurnWatchdog() {
     for (const [gameSessionId, session] of authoritySessions) {
       const gameSession = roomManager.getGameSession(gameSessionId);
       if (!gameSession) {
-        authoritySessions.delete(gameSessionId);
+        retireAuthoritySession(gameSessionId);
         continue;
       }
       // 暂停是对局冻结状态，看门狗同样不许代走
@@ -3208,6 +3248,71 @@ app.get('/api/daily-stats', (req, res) => {
 app.get('/api/daily-history', (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 90);
   res.json({ days: dailyStats.history(days) });
+});
+
+/**
+ * 进行中的对局档案一览（回放用）
+ * GET /api/replays
+ */
+app.get('/api/replays', (req, res) => {
+  const replays = [];
+  for (const [gameSessionId, session] of authoritySessions) {
+    const config = session.replayConfig || {};
+    replays.push({
+      gameSessionId,
+      engineVersion: config.engineVersion,
+      colors: config.colors || [],
+      pieceCount: config.pieceCount,
+      happy: Boolean(config.happy),
+      skillMode: Boolean(config.skillMode),
+      players: config.players || [],
+      actionCount: session.actions ? session.actions.length : 0,
+      turn: session.state ? session.state.turn : 0,
+      finished: Boolean(session.state && session.state.phase === 'ended'),
+      winner: (session.state && session.state.winner) || null
+    });
+  }
+  for (const [gameSessionId, item] of finishedReplays) {
+    const archive = item.archive || {};
+    replays.push({
+      gameSessionId,
+      colors: archive.colors || [],
+      pieceCount: archive.pieceCount,
+      happy: Boolean(archive.happy),
+      skillMode: Boolean(archive.skillMode),
+      players: (archive.players || []).map((player) => ({ color: player[0], nickname: player[1], isAI: Boolean(player[2]) })),
+      actionCount: archive.actionCount || 0,
+      turn: archive.turn || 0,
+      finished: true,
+      winner: archive.winner || 0,
+      retired: true
+    });
+  }
+  res.json({ replays });
+});
+
+/**
+ * 取一份完整回放档案
+ * GET /api/replay/:gameSessionId            直接拿 JSON（给播放器用）
+ * GET /api/replay/:gameSessionId?download=1  作为文件下载（紧凑格式，无需解压）
+ */
+app.get('/api/replay/:gameSessionId', (req, res) => {
+  const found = getReplayArchive(req.params.gameSessionId);
+  if (!found) {
+    res.status(404).json({ error: '这局对局结束太久，档案已经回收（保留两小时）' });
+    return;
+  }
+
+  // 会话里存的本来就是紧凑元组，导出即原样序列化，不做二次加工
+  const payload = JSON.stringify(found.archive);
+  if (req.query.download === undefined) {
+    res.type('application/json').send(payload);
+    return;
+  }
+
+  res.set('Content-Type', 'application/json');
+  res.set('Content-Disposition', 'attachment; filename="replay-' + String(req.params.gameSessionId).slice(0, 12) + '.json"');
+  res.send(payload);
 });
 
 /**

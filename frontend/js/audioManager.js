@@ -1,4 +1,5 @@
 const AUDIO_ENABLED_STORAGE_KEY = 'flyingChess.audioEnabled';
+const GAME_OVER_SILENCE_MS = 6000;
 
 // 音效管理器
 class AudioManager {
@@ -11,6 +12,7 @@ class AudioManager {
         this.isMultiplayerMode = false;
         this.allPlayersAudioLoaded = false;
         this.preloadStarted = false;
+        this.lastGameOverAt = 0;
 
         // 音效文件路径配置
         this.soundPaths = {
@@ -203,7 +205,12 @@ class AudioManager {
     playFlySound() { this.playSound('fly'); }
     playBeatSound() { this.playSound('beat'); }
     playShakeSound() { this.playSound('shake'); }
-    playGameOverSound() { this.playSound('gameover'); }
+    playGameOverSound() {
+        const now = Date.now();
+        if (now - this.lastGameOverAt < GAME_OVER_SILENCE_MS) return;
+        this.lastGameOverAt = now;
+        this.playSound('gameover');
+    }
     playFinishSound() { this.playSound('finish'); }
     playSkillSound() { this.playSound('skill'); }
 

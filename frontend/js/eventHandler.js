@@ -564,8 +564,8 @@ class EventHandler {
             const isSpectator = !!multiplayerGameManager?.isSpectator;
             const isOnlineMode = !!multiplayerGameManager?.isOnlineMode;
 
-            // 观战模式下不需要确认弹窗，直接返回
-            if (!isSpectator && !confirm('确定要返回主页吗？当前游戏进度将丢失。')) {
+            // 只有联机对局要确认；观战与单机都有退路，不拦
+            if (isOnlineMode && !isSpectator && !confirm('确定要返回主页吗？')) {
                 return;
             }
 
@@ -589,6 +589,8 @@ class EventHandler {
                 }
             }
 
+            // 人机 / 本地多人：直接回主菜单，不要落回上次的配置面板
+            sessionStorage.removeItem('lastGameMode');
             window.location.replace('/');
         } catch (error) {
             console.error('返回主页时出错:', error);
