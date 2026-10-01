@@ -10,7 +10,7 @@
 }
 
 body {
-    background: var(--bg-dark-1);
+    background: #f6f2ed;
     color: var(--text-primary);
     min-height: 100vh;
     padding: 20px;
@@ -40,9 +40,7 @@ body {
     background-clip: padding-box;
 }
 
-.table-container::-webkit-scrollbar {
-    height: 2px;
-}
+
 
 .admin-container {
     max-width: 1400px;
@@ -59,6 +57,16 @@ body {
     margin-bottom: 20px;
     text-align: center;
     color: var(--text-primary);
+}
+
+/* 标题本身当返回主站的入口，不加按钮 */
+.admin-header h1 a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.admin-header h1 a:hover {
+    opacity: 0.75;
 }
 
 .status-bar {
@@ -107,7 +115,15 @@ body {
 }
 
 .daily-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     white-space: nowrap;
+}
+
+.daily-stat b {
+    color: var(--text-primary);
+    font-weight: 600;
 }
 
 .status-label {
@@ -240,18 +256,221 @@ body {
     border-bottom: 2px solid var(--border-light);
 }
 
-.table-container {
-    background: var(--bg-soft);
-    border: 2px solid var(--border-light);
-    border-radius: var(--radius-base);
-    overflow: hidden;
-    box-shadow: var(--modal-shadow);
-}
+
 
 /* 表格 */
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
+
+
+/* 历史走势：放在头部今日数据下面，小图居中 */
+.history-chart {
+    position: relative;
+    width: 380px;
+    max-width: 100%;
+    margin: 0 auto 18px;
+}
+
+/* 悬停折点时的小浮层：日期 + 四个数值 */
+.chart-tooltip {
+    position: absolute;
+    top: 20px;
+    transform: translateX(-50%);
+    display: none;
+    padding: 4px 8px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px var(--shadow-1);
+    font-size: 11px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.chart-tooltip b {
+    margin-right: 6px;
+}
+
+.chart-tooltip span {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    color: var(--text-gray);
+}
+
+.legend-dot {
+    display: inline-block;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.legend-1 { background: var(--player-1-color); }
+.legend-2 { background: var(--player-2-color); }
+.legend-3 { background: var(--player-3-color); }
+.legend-4 { background: var(--player-4-color); }
+
+
+/* 房间列表：卡片定宽 290px（底部玩家区 130×2 + 边距推出来的下限），不跟着容器拉伸 */
+.room-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 290px);
+    justify-content: space-between;
+    align-items: stretch;
+    gap: 12px;
+}
+
+.room-grid > .empty-message {
+    grid-column: 1 / -1;
+}
+
+/* 卡片：标题 / 会话 / 事实 / 玩家 四段；正文统一 12px，只有房间号放大 */
+.room-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 11px 13px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    box-shadow: 0 1px 3px var(--shadow-2);
+    font-size: 11px;
+}
+
+.room-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.room-card-tags {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-left: auto;
+}
+
+/* 房间号改成标题：放大、等宽、去掉原来那块色底 */
+.room-card .room-code {
+    padding: 0;
+    background: none;
+    border: none;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.room-card .status-badge {
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: inherit;
+}
+
+/* 会话与时长一行，用和事实区相同的两列模板，让「时长」跟下面的「在线」同列对齐 */
+.room-card-session {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px 10px;
+}
+
+/* 事实：两列对齐，值超长省略，卡片高度不随内容忽高忽低 */
+.room-card-facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px 10px;
+}
+
+/* 回合那一格横跨两列，昵称再长也不用挤成省略号 */
+.room-fact-wide {
+    grid-column: 1 / -1;
+}
+
+.room-fact {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+.room-fact-label {
+    flex: none;
+    color: var(--text-gray);
+}
+
+.room-fact-value {
+    min-width: 0;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.room-card .player-badge {
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: inherit;
+}
+
+/* 在线人数只留带颜色的数字，不要容器 */
+
+/* 卡片里的时长、昵称统一跟随卡片字号，别被全局的 15px 拉偏 */
+.room-card .duration,
+.room-card .player-name {
+    font-size: inherit;
+}
+
+/* 配置：棋子数 + 模式名（写法与游戏页标题一致），跟在顶部房间号右侧 */
+.room-config-item {
+    padding: 2px 8px;
+    background: var(--bg-faint);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    color: var(--text-primary);
+}
+
+/* 玩家：两列各预留 130px（8 字昵称 + 房主标足够），卡片再宽也不跟着拉长 */
+.room-card-players {
+    display: grid;
+    grid-template-columns: repeat(2, 130px);
+    justify-content: start;
+    gap: 4px;
+    margin-top: auto;
+    padding-top: 9px;
+    border-top: 1px dashed var(--border-soft);
+}
+
+.room-card .player-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    padding: 3px 7px;
+    background: var(--bg-faint);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: inherit;
+}
+
+.room-card .player-item .player-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.room-card .player-item .host-badge {
+    flex: none;
+    font-size: inherit;
 }
 
 /* 在线用户展示样式 */
@@ -319,41 +538,18 @@ body {
     align-self: center;
 }
 
-.data-table thead {
-    background: var(--bg-medium);
-}
 
-.data-table th {
-    padding: 15px 12px;
-    text-align: left;
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border-light);
-    white-space: nowrap;
-}
 
-.data-table td {
-    padding: 12px;
-    border-bottom: 1px solid var(--border-soft);
-    font-size: 14px;
-    color: var(--text-primary);
-    white-space: nowrap;
-}
+
+
+
 
 /* 允许玩家列表列水平排列，不换行 */
-.data-table td:last-child {
-    white-space: nowrap;
-    min-width: 200px;
-}
 
-.data-table tbody tr {
-    transition: background 0.2s;
-}
 
-.data-table tbody tr:hover {
-    background: var(--bg-faint);
-}
+
+
+
 
 .empty-message {
     text-align: center;
@@ -372,22 +568,15 @@ body {
     border: 1px solid var(--player-4-border);
 }
 
+/* 会话号：就是一段等宽小字，不加底色/边框/悬停效果 */
 .session-id {
-    display: inline-block;
-    background: var(--player-3-fill);
-    color: var(--text-primary);
-    padding: 10px;
-    border-radius: var(--radius-base);
-    font-weight: bold;
-    font-size: 15px;
-    border: 1px solid var(--player-3-border);
+    min-width: 0;
+    color: var(--text-gray);
     text-decoration: none;
-}
-
-a.session-id:hover {
-    background: var(--player-3-border);
-    transform: translateY(-1px);
-    box-shadow: var(--modal-shadow);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .player-id {
@@ -594,25 +783,17 @@ a.session-id:hover {
     font-weight: bold;
 }
 
-/* 在线状态 */
+/* 在线人数：只给数字上色，不套容器 */
 .online-status {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 12px;
     font-weight: bold;
 }
 
 .online-status.all-online {
-    background: rgba(76, 175, 80, 0.2);
     color: var(--green);
-    border: 1px solid var(--green);
 }
 
 .online-status.partial-online {
-    background: rgba(233, 207, 89, 0.2);
     color: var(--gold);
-    border: 1px solid var(--gold);
 }
 
 /* 游戏时长 */
@@ -632,13 +813,9 @@ a.session-id:hover {
         grid-template-columns: repeat(2, 1fr);
     }
 
-    .table-container {
-        overflow-x: auto;
-    }
+    
 
-    .data-table {
-        min-width: 800px;
-    }
+    
 }
 
 /* 平板端优化 */
@@ -773,30 +950,16 @@ a.session-id:hover {
         margin-bottom: 12px;
     }
 
-    .table-container {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
+    
 
-    .data-table {
-        min-width: 600px;
-        font-size: 12px;
-    }
+    
 
-    .data-table th {
-        padding: 10px 8px;
-        font-size: 12px;
-    }
+    
 
-    .data-table td {
-        padding: 10px 8px;
-        font-size: 12px;
-    }
+    
 
-    .room-code,
-    .session-id {
-        padding: 3px 8px;
-        font-size: 11px;
+    .room-code {
+        font-size: 15px;
     }
 
     .status-badge,

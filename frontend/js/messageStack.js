@@ -5,7 +5,7 @@
  */
 const MAX_VISIBLE = 5;
 const LIVE_MS = 3000;
-const LEAVE_MS = 320;
+const LEAVE_MS = 360;
 const GAP_PX = 6;
 
 const SCORE_ICON = `<svg t="1777811441484" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1702" style="height: 1.4em; width: 1.4em; vertical-align: -0.35em; fill: currentColor; margin-left: 0; display: inline-block;"><path d="M511.838 472.601c-173.757 0-358.398-56-358.398-159.679 0-103.684 184.641-159.762 358.398-159.762 173.761 0 358.402 56 358.402 159.68 0 103.679-184.64 159.761-358.402 159.761z m0-265.839c-188.718 0-304.636 61.839-304.636 106.078 0 44.242 115.918 106.16 304.636 106.16 188.722 0 304.64-61.84 304.64-106.16 0.001-44.321-115.917-106.078-304.64-106.078z m0 0" p-id="1703"></path><path d="M511.838 594.039c-172.636 0-358.398-40.56-358.398-129.68 0-14.801 12.078-26.801 26.879-26.801 14.801 0 26.883 12 26.883 26.801 0 22.723 103.679 76.082 304.636 76.082 200.96 0 304.64-53.358 304.64-76.082 0-14.801 12-26.801 26.883-26.801 14.797 0 26.879 12 26.879 26.801 0 89.12-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1704"></path><path d="M511.838 721.719c-172.636 0-358.398-40.559-358.398-129.68 0-14.801 12.078-26.801 26.879-26.801 14.801 0 26.883 12 26.883 26.801 0 22.723 103.679 76.082 304.636 76.082 200.96 0 304.64-53.359 304.64-76.082 0-14.801 12-26.801 26.883-26.801 14.797 0 26.879 12 26.879 26.801 0 89.121-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1705"></path><path d="M511.838 869.961c-172.636 0-358.398-40.563-358.398-129.68v-24.402c0-14.797 12.078-26.797 26.879-26.797 14.801 0 26.883 12 26.883 26.797v24.402c0 22.719 103.679 76.078 304.636 76.078 200.96 0 304.64-53.359 304.64-76.078v-24.402c0-14.797 12-26.797 26.883-26.797 14.797 0 26.879 12 26.879 26.797v24.402c0 89.116-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1706"></path></svg>`;
@@ -20,18 +20,19 @@ function container() {
     return stack;
 }
 
-/** 对齐到棋盘中间（窄屏时退回视口中间） */
+/** 对齐到棋盘中间（窄屏时退回视口中间）；宽度给死值，免得长消息被上一条的宽度卡住 */
 function place() {
     const box = container();
     const gameContainer = document.querySelector('.game-container');
+    const viewportWidth = window.innerWidth - 24;
     if (!gameContainer) {
         box.style.left = '50%';
-        box.style.maxWidth = '90vw';
+        box.style.width = `${Math.round(Math.max(220, viewportWidth))}px`;
         return;
     }
     const rect = gameContainer.getBoundingClientRect();
     box.style.left = `${rect.left + rect.width / 2}px`;
-    box.style.maxWidth = `${Math.round(rect.width * 0.9)}px`;
+    box.style.width = `${Math.round(Math.max(220, Math.min(viewportWidth, rect.width * 0.92)))}px`;
 }
 
 /** 退场：先把高度撑住，再收成 0，下面的消息顺势浮上来 */

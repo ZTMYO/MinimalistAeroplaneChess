@@ -15,6 +15,7 @@ const {
   ROOM_LIFECYCLE,
   configureRoomManager
 } = require('./roomManager.cjs');
+const { DailyStats } = require('./dailyStats.cjs');
 
 const app = express();
 const server = http.createServer(app);
@@ -93,54 +94,7 @@ function requireBroadcastTarget(playerId) {
 }
 
 // -------------------------- 每日统计 --------------------------
-class DailyStats {
-  constructor() {
-    this.reset();
-    // 每日0点自动重置
-    this._scheduleReset();
-  }
-
-  reset() {
-    this.date = new Date().toDateString();
-    this.gamesPlayed = 0;
-    this.gamesFinished = 0;
-    this.peakOnline = 0;
-    this.roomsCreated = 0;
-    this.uniquePlayers = new Set();
-  }
-
-  _scheduleReset() {
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    const msUntilMidnight = tomorrow - now;
-    setTimeout(() => {
-      this.reset();
-      this._scheduleReset();
-    }, msUntilMidnight);
-  }
-
-  recordGameStarted() { this.gamesPlayed++; }
-  recordGameFinished() { this.gamesFinished++; }
-  recordRoomCreated() { this.roomsCreated++; }
-  recordPlayerConnected(playerId) { this.uniquePlayers.add(playerId); }
-
-  recordConnectionCount(count) {
-    if (count > this.peakOnline) this.peakOnline = count;
-  }
-
-  toJSON() {
-    return {
-      gamesPlayed: this.gamesPlayed,
-      gamesFinished: this.gamesFinished,
-      peakOnline: this.peakOnline,
-      roomsCreated: this.roomsCreated,
-      uniquePlayers: this.uniquePlayers.size
-    };
-  }
-}
-
+// 实现与落盘都在 dailyStats.cjs：每天一份 JSON，重启接上、跨天归档
 const dailyStats = new DailyStats();
 
 // -------------------------- 服务端权威棋面 --------------------------
@@ -3248,6 +3202,15 @@ app.get('/api/daily-stats', (req, res) => {
 });
 
 /**
+ * 查询最近若干天的统计（默认 30 天，最多 90 天，最新在前）
+ * GET /api/daily-history?days=30
+ */
+app.get('/api/daily-history', (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 90);
+  res.json({ days: dailyStats.history(days) });
+});
+
+/**
  * 查询服务器统计信息
  * GET /api/stats
  */
@@ -3469,7 +3432,7 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`服务器运行在 http://localhost:${PORT}`);
   console.log(`WebSocket服务器运行在 ws://localhost:${PORT}`);
-  console.log(`\n管理面板: http://localhost:${PORT}/frontend/admin.html`);
+  console.log(`\n管理面板: http://localhost:${PORT}/admin.html`);
   console.log(`\n查询接口:`);
   console.log(`  - 房间列表: http://localhost:${PORT}/api/rooms`);
   console.log(`  - 游戏会话: http://localhost:${PORT}/api/sessions`);

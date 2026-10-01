@@ -26,6 +26,11 @@ class AdminPanel {
 
         // 启动自动刷新
         this.startAutoRefresh();
+
+        // 窗口尺寸变了按当前数据重画一次折线图
+        window.addEventListener('resize', () => {
+            if (this.historyRows) this.renderHistoryChart();
+        });
     }
 
     startAutoRefresh() {
@@ -35,12 +40,22 @@ class AdminPanel {
                 this.fetchAllData();
             }
         }, 3000); // 每3秒刷新
+
+        // 历史是读盘的数据，一分钟刷一次就够
+        this.fetchHistory().catch(() => {});
+        this.historyInterval = setInterval(() => {
+            if (this.autoRefreshEnabled) this.fetchHistory().catch(() => {});
+        }, 60000);
     }
 
     stopAutoRefresh() {
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
             this.refreshInterval = null;
+        }
+        if (this.historyInterval) {
+            clearInterval(this.historyInterval);
+            this.historyInterval = null;
         }
     }
 
@@ -153,27 +168,24 @@ class AdminPanel {
     }
 
     updateCombinedTable(rooms) {
-        const tbody = document.getElementById('combinedTableBody');
+        const grid = document.getElementById('combinedTableBody');
 
         if (!rooms || rooms.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-message">暂无活跃房间</td></tr>';
+            grid.innerHTML = '<p class="empty-message">暂无活跃房间</p>';
             return;
         }
 
-        tbody.innerHTML = rooms.map(room => {
+        grid.innerHTML = rooms.map(room => {
             const session = room.gameSession;
             const badgeClass = room.displayState || room.gameState;
             const stateText = this.getGameStateText(room);
 
-            // 1. 房间号列
-            const roomCodeInfo = `<span class="room-code">${room.code}</span>`;
 
             // 2. 会话ID列
             let sessionIdInfo = '-';
             if (session) {
                 const spectateUrl = `${window.location.origin}/spectate?room=${room.code}`;
-                sessionIdInfo = `<a href="${spectateUrl}" target="_blank" class="session-id spectate-link" 
-                                  style="font-size:11px; padding:2px 6px;" title="点击观战">${session.gameSessionId}</a>`;
+                sessionIdInfo = `<a href="${spectateUrl}" target="_blank" class="session-id spectate-link" title="点击观战">${session.gameSessionId}</a>`;
             }
 
             // 3. 玩家数列
@@ -187,14 +199,14 @@ class AdminPanel {
                 const onlineRealPlayers = realPlayers.filter(p => p.isConnected || p.isAITakeover).length;
                 const totalRealPlayers = realPlayers.length;
                 const onlineClass = totalRealPlayers === 0 ? 'empty-room' : (onlineRealPlayers === totalRealPlayers ? 'all-online' : 'partial-online');
-                onlineInfo = `<span class="online-status ${onlineClass}" style="padding:2px 6px; font-size:11px;">${onlineRealPlayers}/${totalRealPlayers}</span>`;
+                onlineInfo = `<span class="online-status ${onlineClass}">${onlineRealPlayers}/${totalRealPlayers}</span>`;
             } else {
                 // 无游戏会话：使用房间数据统计真人玩家
                 const realPlayers = room.players.filter(p => !p.isAI);
                 const onlineRealPlayers = realPlayers.filter(p => p.isConnected || p.isAITakeover).length;
                 const totalRealPlayers = realPlayers.length;
                 const onlineClass = totalRealPlayers === 0 ? 'empty-room' : (onlineRealPlayers === totalRealPlayers ? 'all-online' : 'partial-online');
-                onlineInfo = `<span class="online-status ${onlineClass}" style="padding:2px 6px; font-size:11px;">${onlineRealPlayers}/${totalRealPlayers}</span>`;
+                onlineInfo = `<span class="online-status ${onlineClass}">${onlineRealPlayers}/${totalRealPlayers}</span>`;
             }
 
             // 5. 当前回合列
@@ -206,30 +218,37 @@ class AdminPanel {
                 }
             }
 
-            // 6. 游戏时长列
+            // 6. 游戏时长
             let timeInfo = '-';
             if (session) {
-                timeInfo = `<div class="duration" style="font-size:13px; font-weight:bold;">
-                    ${this.formatDuration(session.createdAt)}</div>`;
+                timeInfo = `<span class="duration">${this.formatDuration(session.createdAt)}</span>`;
             }
 
-            // 7. 配置信息列
-            const configInfo = `<div style="font-size:12px; color:var(--text-primary);">
-                棋子${room.settings?.pieceCount || 4} 道具${room.settings?.skillMode ? '开' : '关'} 欢乐${room.settings?.happyMode ? '开' : '关'}
-            </div>`;
+            // 7. 配置信息：模式写法跟游戏页标题一致（标准模式 / 道具模式，欢乐模式加后缀）
+            let modeText = room.settings?.skillMode === true ? '道具模式' : '标准模式';
+            if (room.settings?.happyMode === true) modeText += '·欢乐';
+            const configInfo = [
+                `<span class="room-config-item">${room.settings?.pieceCount || 4}棋子</span>`,
+                `<span class="room-config-item">${modeText}</span>`
+            ].join('');
 
             return `
-                <tr>
-                    <td>${roomCodeInfo}</td>
-                    <td>${sessionIdInfo}</td>
-                    <td><span class="status-badge ${badgeClass}">${stateText}</span></td>
-                    <td>${playerInfo}</td>
-                    <td>${onlineInfo}</td>
-                    <td>${turnInfo}</td>
-                    <td>${timeInfo}</td>
-                    <td>${configInfo}</td>
-                    <td>${this.formatPlayersList(session ? session.players : room.players)}</td>
-                </tr>
+                <article class="room-card">
+                    <div class="room-card-head">
+                        <span class="room-code">${room.code}</span>
+                        <div class="room-card-tags">${configInfo}<span class="status-badge ${badgeClass}">${stateText}</span></div>
+                    </div>
+                    <div class="room-card-session">
+                        <div class="room-fact"><span class="room-fact-label">会话</span><span class="room-fact-value">${sessionIdInfo}</span></div>
+                        <div class="room-fact"><span class="room-fact-label">时长</span><span class="room-fact-value">${timeInfo}</span></div>
+                    </div>
+                    <div class="room-card-facts">
+                        <div class="room-fact"><span class="room-fact-label">玩家</span><span class="room-fact-value">${playerInfo}</span></div>
+                        <div class="room-fact"><span class="room-fact-label">在线</span><span class="room-fact-value">${onlineInfo}</span></div>
+                        <div class="room-fact room-fact-wide"><span class="room-fact-label">回合</span><span class="room-fact-value">${turnInfo}</span></div>
+                    </div>
+                    <div class="room-card-players">${this.formatPlayersList(session ? session.players : room.players)}</div>
+                </article>
             `;
         }).join('');
     }
@@ -312,10 +331,191 @@ class AdminPanel {
 
     updateDailyStats(daily) {
         if (!daily) return;
-        document.getElementById('statGames').textContent = `对局 ${daily.gamesPlayed || 0}`;
-        document.getElementById('statFinished').textContent = `完赛 ${daily.gamesFinished || 0}`;
-        document.getElementById('statPlayers').textContent = `玩家 ${daily.uniquePlayers || 0}`;
-        document.getElementById('statPeak').textContent = `峰值 ${daily.peakOnline || 0}`;
+        document.getElementById('statGamesValue').textContent = daily.gamesPlayed || 0;
+        document.getElementById('statFinishedValue').textContent = daily.gamesFinished || 0;
+        document.getElementById('statPlayersValue').textContent = daily.uniquePlayers || 0;
+        document.getElementById('statPeakValue').textContent = daily.peakOnline || 0;
+    }
+
+    async fetchHistory() {
+        const response = await fetch(`${this.apiBaseUrl}/api/daily-history?days=7`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        this.updateHistory(data.days || []);
+    }
+
+    updateHistory(rows) {
+        this.historyRows = rows;
+        this.hoverIndex = -1;
+        const chart = document.querySelector('.history-chart');
+        if (chart) chart.style.display = rows.length ? '' : 'none';
+        this.hideChartTooltip();
+        this.renderHistoryChart();
+        this.bindChartHover();
+    }
+
+    /* 四条折线（对局 / 完赛 / 玩家 / 峰值），配色沿用四位玩家的主题色 */
+    chartSeries() {
+        const cssVar = (name, fallback) => (getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback);
+        return [
+            { key: 'gamesPlayed', label: '对局', legend: 'legend-1', color: cssVar('--player-1-color', '#E74C3C') },
+            { key: 'gamesFinished', label: '完赛', legend: 'legend-2', color: cssVar('--player-2-color', '#3498DB') },
+            { key: 'uniquePlayers', label: '玩家', legend: 'legend-3', color: cssVar('--player-3-color', '#2EC871') },
+            { key: 'peakOnline', label: '峰值', legend: 'legend-4', color: cssVar('--player-4-color', '#F1C40F') }
+        ];
+    }
+
+    /* 最近 7 天的走势图（含今天）；hover 那天时圆点放大并弹出数值 */
+    renderHistoryChart() {
+        const canvas = document.getElementById('historyChart');
+        const rows = this.historyRows;
+        if (!canvas || !rows || !rows.length) return;
+
+        const cssVar = (name, fallback) => (getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback);
+        const series = this.chartSeries();
+        const data = rows.slice().reverse();
+
+        const container = canvas.parentElement;
+        const width = container.clientWidth || 380;
+        const height = 120;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.textBaseline = 'middle';
+        ctx.font = '11px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+
+        const padding = { top: 14, right: 12, bottom: 22, left: 34 };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+        const xStep = data.length > 1 ? chartWidth / (data.length - 1) : 0;
+
+        const maxValue = Math.max(1, ...data.flatMap((row) => series.map((item) => Number(row[item.key]) || 0)));
+        const step = this.niceStep(maxValue);
+        const top = Math.ceil(maxValue / step) * step;
+        const pointAt = (row, key, index) => ({
+            x: padding.left + xStep * index,
+            y: padding.top + chartHeight - ((Number(row[key]) || 0) / top) * chartHeight
+        });
+        this.chartLayout = { padding, chartWidth, chartHeight, xStep, data };
+
+        // 横向网格 + Y 轴刻度
+        ctx.strokeStyle = cssVar('--overlay-warm', 'rgba(200, 195, 185, 0.3)');
+        ctx.fillStyle = cssVar('--text-primary', '#2d241f');
+        ctx.textAlign = 'right';
+        ctx.lineWidth = 1;
+        for (let value = 0; value <= top; value += step) {
+            const y = padding.top + chartHeight - (value / top) * chartHeight;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(padding.left + chartWidth, y);
+            ctx.stroke();
+            ctx.fillText(String(value), padding.left - 6, y);
+        }
+
+        // X 轴日期
+        ctx.textAlign = 'center';
+        data.forEach((row, index) => {
+            ctx.fillText(String(row.date).slice(5), padding.left + xStep * index, height - 10);
+        });
+
+        // 折线 + 数据点（悬停那天的点放大一圈）
+        series.forEach((item) => {
+            const points = data.map((row, index) => pointAt(row, item.key, index));
+
+            ctx.strokeStyle = item.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            points.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+            ctx.stroke();
+
+            ctx.fillStyle = item.color;
+            points.forEach((point, index) => {
+                const hovered = index === this.hoverIndex;
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, hovered ? 4 : 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                if (hovered) {
+                    ctx.strokeStyle = cssVar('--bg-soft', '#fffdfa');
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+            });
+        });
+    }
+
+    bindChartHover() {
+        const canvas = document.getElementById('historyChart');
+        if (!canvas || canvas.dataset.hoverBound) return;
+        canvas.dataset.hoverBound = '1';
+
+        canvas.addEventListener('mousemove', (event) => {
+            const layout = this.chartLayout;
+            const rows = this.historyRows || [];
+            if (!layout || !rows.length) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const offsetX = event.clientX - rect.left;
+            const index = layout.xStep > 0
+                ? Math.round((offsetX - layout.padding.left) / layout.xStep)
+                : 0;
+            const clamped = Math.min(Math.max(index, 0), layout.data.length - 1);
+            if (clamped === this.hoverIndex) return;
+
+            this.hoverIndex = clamped;
+            this.renderHistoryChart();
+            this.showChartTooltip(clamped);
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            if (this.hoverIndex < 0) return;
+            this.hoverIndex = -1;
+            this.hideChartTooltip();
+            this.renderHistoryChart();
+        });
+    }
+
+    showChartTooltip(index) {
+        const row = this.chartLayout && this.chartLayout.data[index];
+        const tooltip = this.chartTooltip();
+        if (!row || !tooltip) return;
+
+        tooltip.innerHTML = `<b>${String(row.date).slice(5)}</b>`
+            + this.chartSeries().map((item) => `<span><i class="legend-dot ${item.legend}"></i>${item.label} ${Number(row[item.key]) || 0}</span>`).join('');
+
+        const container = tooltip.parentElement;
+        const pointX = this.chartLayout.padding.left + this.chartLayout.xStep * index;
+        tooltip.style.display = 'block';
+        const half = tooltip.offsetWidth / 2;
+        tooltip.style.left = `${Math.min(Math.max(pointX, half + 2), container.clientWidth - half - 2)}px`;
+    }
+
+    hideChartTooltip() {
+        const tooltip = document.querySelector('.chart-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
+    }
+
+    chartTooltip() {
+        let tooltip = document.querySelector('.chart-tooltip');
+        if (tooltip) return tooltip;
+        const chart = document.querySelector('.history-chart');
+        if (!chart) return null;
+        tooltip = document.createElement('div');
+        tooltip.className = 'chart-tooltip';
+        chart.appendChild(tooltip);
+        return tooltip;
+    }
+
+    niceStep(max) {
+        const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000];
+        return steps.find((step) => max / step <= 4) || Math.ceil(max / 4);
     }
 }
 

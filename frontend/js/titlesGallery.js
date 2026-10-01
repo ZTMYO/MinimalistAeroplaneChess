@@ -31,25 +31,14 @@ function modeTag(source) {
     return tags.map(tagHtml).join('');
 }
 
-// 描述末尾的括号补充（撞叠子不算）单拎出来当标签，正文只留条件本身
-function splitNote(text) {
-    const matched = String(text).match(/^([\s\S]*?)（([^（）]+)）\s*$/);
-    if (!matched) return { text, notes: [] };
-    return {
-        text: matched[1],
-        notes: matched[2].split(/[；;]/).map((note) => note.trim()).filter(Boolean),
-    };
-}
-
 function familyCard(family) {
     const chain = family.levels
         .map((level) => chipHtml(level.name, level.tier))
         .join('<span class="title-chain-arrow">→</span>');
     const notes = new Set();
     const lines = family.levels.map((level) => {
-        const split = splitNote(level.desc);
-        split.notes.forEach((note) => notes.add(note));
-        return `<li>${highlightDesc(split.text)}</li>`;
+        if (level.note) notes.add(level.note);
+        return `<li>${highlightDesc(level.desc)}</li>`;
     }).join('');
     const noteTags = [...notes].map(tagHtml).join('');
     return `<article class="title-card">
@@ -59,11 +48,10 @@ function familyCard(family) {
 }
 
 function soloCard(title, source = title) {
-    const split = splitNote(title.desc);
-    const noteTags = split.notes.map(tagHtml).join('');
+    const noteTags = title.note ? tagHtml(title.note) : '';
     return `<article class="title-card">
                 <div class="title-card-head">${chipHtml(title.name, title.tier)}${noteTags}${modeTag(source)}</div>
-                <p class="title-card-desc">${highlightDesc(split.text)}</p>
+                <p class="title-card-desc">${highlightDesc(title.desc)}</p>
             </article>`;
 }
 

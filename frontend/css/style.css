@@ -5289,6 +5289,11 @@ use[href="#checkmark"] {
     line-height: 1.2;
 }
 
+.player-nickname-me {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
 .player-ready-status {
     font-size: 11px;
     text-align: center;
@@ -6518,6 +6523,7 @@ use[href="#checkmark"] {
     display: flex;
     flex-direction: column;
     align-items: center;
+    width: 92vw;
     z-index: 10000;
     pointer-events: none;
 }
@@ -6533,7 +6539,7 @@ use[href="#checkmark"] {
     font-weight: 500;
     opacity: 0;
     transform: translateY(-8px);
-    transition: opacity 0.22s ease, transform 0.22s ease, height 0.28s ease, margin-bottom 0.28s ease;
+    transition: opacity 0.15s ease, transform 0.15s ease, height 0.18s ease 0.15s, margin-bottom 0.18s ease 0.15s;
     overflow: hidden;
     box-sizing: border-box;
     backdrop-filter: none;
@@ -7519,7 +7525,6 @@ use[href="#checkmark"] {
 
     /* 移动端游戏通知弹窗适配 */
     .game-notification {
-        max-width: 90%;
         font-size: 14px;
         padding: 6px 10px;
         width: max-content;

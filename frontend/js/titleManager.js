@@ -56,9 +56,9 @@ const FAMILIES = [
         value: (s, p) => s.maxBeatsInMove?.[p] || 0,
         happyDisabled: true,
         levels: [
-            { id: 'double_kill', name: '一箭双雕', desc: '单次移动击败 2 颗棋子（撞叠子不算）', min: 2, tier: 'epic' },
-            { id: 'triple_kill', name: '三连绝世', desc: '单次移动击败 3 颗棋子（撞叠子不算）', min: 3, tier: 'legendary' },
-            { id: 'quad_kill', name: '横扫千军', desc: '单次移动击败 4 颗棋子（撞叠子不算）', min: 4, tier: 'mythic' }
+            { id: 'double_kill', name: '一箭双雕', desc: '单次移动击败 2 颗棋子', note: '撞叠子不算', min: 2, tier: 'epic' },
+            { id: 'triple_kill', name: '三连绝世', desc: '单次移动击败 3 颗棋子', note: '撞叠子不算', min: 3, tier: 'legendary' },
+            { id: 'quad_kill', name: '横扫千军', desc: '单次移动击败 4 颗棋子', note: '撞叠子不算', min: 4, tier: 'mythic' }
         ]
     },
     {

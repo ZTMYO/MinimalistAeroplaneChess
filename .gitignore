@@ -31,3 +31,5 @@ frontend/assets/违规词库.txt
 
 # Local-only dev scripts
 /tools/title-stats.mjs
+# 运行时数据
+/backend/data/

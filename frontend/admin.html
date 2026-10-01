@@ -11,18 +11,22 @@
 <body>
     <div class="admin-container">
         <header class="admin-header">
-            <h1>极简飞行棋管理面板</h1>
+            <h1><a class="admin-home-link" href="index.html" title="返回主站">极简飞行棋管理面板</a></h1>
                     <!-- 今日统计 -->
         <div class="daily-stats" id="dailyStats">
             <span class="daily-stats-label">今日</span>
-            <span class="daily-stat" id="statGames">对局 0</span>
+            <span class="daily-stat" id="statGames"><i class="legend-dot legend-1"></i>对局 <b id="statGamesValue">0</b></span>
             <span class="daily-stat-divider">｜</span>
-            <span class="daily-stat" id="statFinished">完赛 0</span>
+            <span class="daily-stat" id="statFinished"><i class="legend-dot legend-2"></i>完赛 <b id="statFinishedValue">0</b></span>
             <span class="daily-stat-divider">｜</span>
-            <span class="daily-stat" id="statPlayers">玩家 0</span>
+            <span class="daily-stat" id="statPlayers"><i class="legend-dot legend-3"></i>玩家 <b id="statPlayersValue">0</b></span>
             <span class="daily-stat-divider">｜</span>
-            <span class="daily-stat" id="statPeak">峰值 0</span>
+            <span class="daily-stat" id="statPeak"><i class="legend-dot legend-4"></i>峰值 <b id="statPeakValue">0</b></span>
         </div>
+            <!-- 近 7 天走势：小图，居中 -->
+            <div class="history-chart">
+                <canvas id="historyChart"></canvas>
+            </div>
             <div class="status-bar">
                 <div class="status-item">
                     <span class="status-label">服务器状态</span>
@@ -94,27 +98,8 @@
         <!-- 房间与会话列表 -->
         <section class="data-section">
             <h2 class="section-title">房间列表</h2>
-            <div class="table-container">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>房间号</th>
-                            <th>会话ID</th>
-                            <th>状态</th>
-                            <th>玩家数</th>
-                            <th>在线</th>
-                            <th>当前回合</th>
-                            <th>游戏时长</th>
-                            <th>配置信息</th>
-                            <th>玩家列表</th>
-                        </tr>
-                    </thead>
-                    <tbody id="combinedTableBody">
-                        <tr>
-                            <td colspan="7" class="empty-message">暂无数据</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="room-grid" id="combinedTableBody">
+                <p class="empty-message">暂无数据</p>
             </div>
         </section>
 
