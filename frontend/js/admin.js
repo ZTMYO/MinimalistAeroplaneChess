@@ -421,9 +421,19 @@ class AdminPanel {
         }
 
         // X 轴日期
-        ctx.textAlign = 'center';
         data.forEach((row, index) => {
-            ctx.fillText(String(row.date).slice(5), padding.left + xStep * index, height - 10);
+            const label = String(row.date).slice(5);
+            const x = padding.left + xStep * index;
+            if (index === 0) {
+                ctx.textAlign = 'left';
+                ctx.fillText(label, padding.left, height - 10);
+            } else if (index === data.length - 1) {
+                ctx.textAlign = 'right';
+                ctx.fillText(label, padding.left + chartWidth, height - 10);
+            } else {
+                ctx.textAlign = 'center';
+                ctx.fillText(label, x, height - 10);
+            }
         });
 
         // 折线 + 数据点（悬停那天的点放大一圈）
