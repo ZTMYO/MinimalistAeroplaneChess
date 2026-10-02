@@ -1464,6 +1464,7 @@ body {
     left: 0;
     width: 280px;
     max-height: 200px;
+    color: var(--text-primary);
     background: var(--warm-white);
     border: 1.5px solid var(--border-light);
     border-radius: 8px;
@@ -6003,6 +6004,63 @@ use[href="#checkmark"] {
     position: static;
     padding: 12px 24px;
     font-size: 16px;
+}
+
+/* 文字跟「道具模式 / 欢乐模式」那排开关保持一套 */
+.initial-energy-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 500;
+    text-shadow: none;
+}
+
+.initial-energy-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.initial-energy-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 2px;
+    margin: 10px 0;
+    border-radius: 1px;
+    /* 已选段实色填充：--fill 由 JS 按档位更新 */
+    background: linear-gradient(to right, var(--text-primary) var(--fill, 0%), var(--bg-light-2) var(--fill, 0%));
+    cursor: pointer;
+}
+
+.initial-energy-slider::-webkit-slider-runnable-track {
+    height: 2px;
+    background: none;
+}
+
+.initial-energy-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -5px;
+    border: none;
+    border-radius: 50%;
+    background: var(--text-primary);
+}
+
+.initial-energy-slider::-moz-range-track {
+    height: 2px;
+    background: none;
+}
+
+.initial-energy-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: none;
+    border-radius: 50%;
+    background: var(--text-primary);
 }
 
 /* 对局回放：面板里只放一句说明和一个选文件的入口 */

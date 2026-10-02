@@ -418,6 +418,25 @@ class MultiplayerManager {
             });
         }
 
+        // 起手积分滑块事件（道具模式下的可选开局积分）
+        const initialEnergySlider = document.getElementById('onlineInitialEnergySlider');
+        if (initialEnergySlider) {
+            initialEnergySlider.addEventListener('input', (e) => {
+                const energy = [0, 15, 30, 50, 70, 100][Number(e.target.value)] || 0;
+                if (!this.isHost || !this.wsClient) return;
+
+                if (!this.currentRoom) this.currentRoom = { settings: {} };
+                if (!this.currentRoom.settings) this.currentRoom.settings = {};
+                this.currentRoom.settings.initialEnergy = energy;
+
+                this.wsClient.sendMessage('updateSettings', {
+                    settings: {
+                        initialEnergy: energy
+                    }
+                });
+            });
+        }
+
         // 欢乐模式复选框事件
         const happyModeCheckbox = document.getElementById('happyModeCheckbox');
         if (happyModeCheckbox) {
@@ -1150,6 +1169,15 @@ class MultiplayerManager {
         const pieceCount = settings.pieceCount;
         if (pieceCount !== undefined && typeof this.updatePieceCountDisplay === 'function') {
             this.updatePieceCountDisplay(pieceCount);
+        }
+
+        // 起手积分滑块：按房间设置回到对应档位；没勾道具模式时同步会把它收起来
+        const energySlider = document.getElementById('onlineInitialEnergySlider');
+        if (energySlider) {
+            const steps = [0, 15, 30, 50, 70, 100];
+            const index = steps.indexOf(Number(settings.initialEnergy) || 0);
+            energySlider.value = String(index >= 0 ? index : 0);
+            window.syncInitialEnergySliders?.();
         }
     }
 

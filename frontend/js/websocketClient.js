@@ -18,6 +18,7 @@ export class WebSocketClient {
         this.lastPongTime = Date.now(); // 上次收到pong的时间
         this.visibilityChangeHandler = null; // 页面可见性变化处理器
         this.isReconnecting = false; // 是否正在重连中
+        this.pendingMessages = []; // 断线期间攒下的消息，重连成功后补发
 
         // 服务器地址配置 - 根据当前环境动态设置
         // 如果是https，使用wss；如果是http，使用ws
@@ -120,9 +121,13 @@ export class WebSocketClient {
             };
 
             this.ws.send(JSON.stringify(message));
-        } else {
-            console.warn('WebSocket未连接，无法发送消息:', type, data);
+            return;
         }
+
+        // 断开时不要悄悄丢掉：攒起来，重连成功后立刻补发
+        this.pendingMessages.push({ type, data });
+        if (this.pendingMessages.length > 20) this.pendingMessages.shift();
+        console.warn('WebSocket未连接，消息已排队:', type, data);
     }
 
     /**
@@ -260,6 +265,11 @@ export class WebSocketClient {
         this.sendMessage('identify', {
             playerId: this.playerId
         });
+
+        // 断线期间攒下的消息在这里补发
+        const pending = this.pendingMessages;
+        this.pendingMessages = [];
+        pending.forEach((item) => this.sendMessage(item.type, item.data));
 
         // 连接成功后，立即发送已保存的昵称给服务器
         if (typeof playerIdManager !== 'undefined') {
@@ -449,6 +459,27 @@ export class WebSocketClient {
         };
 
         document.addEventListener('visibilitychange', this.visibilityChangeHandler);
+
+        // 从前进/后退缓存恢复：浏览器会把旧连接掐死，但 readyState 可能还写着 OPEN，
+        // 所以不查状态，直接当断线处理，交给原有重连链路重建
+        window.addEventListener('pageshow', (event) => {
+            if (!event.persisted) return;
+            console.log('页面从缓存恢复，按断线处理并重连');
+            this.isConnected = false;
+            this.stopHeartbeat();
+            try {
+                if (this.ws) this.ws.close();
+            } catch (error) {
+                // ignore
+            }
+            this.ws = null;
+            // 和"切回前台发现断线"走同一条链路
+            if (this.messageHandlers.has('connectionLost')) {
+                this.messageHandlers.get('connectionLost')({ reason: 'bfcache_restore' });
+            }
+            this.attemptReconnect();
+        });
+
         console.log('页面可见性监听已启动');
     }
 

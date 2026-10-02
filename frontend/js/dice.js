@@ -82,7 +82,7 @@ class Dice {
         // 联机模式：点数与棋面裁决都在服务端，本地只负责表现并提交意图
         if (manager) {
             if (diceDisplay) {
-                manager.startDiceFlashing(this.gameState.currentPlayer);
+                manager.startDiceFlashing();
                 manager.markLocalRollIssued();
             }
             audioManager.playRollingSound();
@@ -168,9 +168,8 @@ class Dice {
         this.gameState.canReroll = phase === 'selecting' && engineAdapter.state.dice === 6;
         this.gameState.isRolling = false;
 
-        this.gameState.recordDiceRollForTitle(roller, this.gameState.isRemoteDice === true, value);
+        this.gameState.recordDiceRollForTitle(roller, value, this.gameState.isRemoteDice === true);
         this.gameState.isRemoteDice = false;
-        enginePlayback.announceLiveTitles();
 
 
         if (phase === 'selecting') {

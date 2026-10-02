@@ -59,7 +59,7 @@ class Player {
 }
 
 class GameSession {
-  constructor(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false) {
+  constructor(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false, initialEnergy = 0) {
     this.gameSessionId = gameSessionId;
     // AI玩家不需要连接状态，只有真实玩家才设置为isConnected: true
     this.players = new Map(players.map(p => [p.id, { ...p, isConnected: p.isAI ? false : true, ws: null }]));
@@ -70,6 +70,8 @@ class GameSession {
     this.hostId = hostId;
     this.skillMode = skillMode;
     this.happyMode = happyMode;
+    // 道具模式的开局积分（房主在房间里选的 0/15/30/50/70/100）
+    this.initialEnergy = initialEnergy;
     this.audioLoadedPlayers = new Set();
     this.aiTakeoverPlayers = new Set();
     this.spectators = new Set();
@@ -181,7 +183,7 @@ class Room {
     this.gameState = 'waiting';
     this.gameSessionId = null;
     this.postGameHostId = null;
-    this.settings = { pieceCount: 4, aiPlayers: [], skillMode: false, happyMode: false };
+    this.settings = { pieceCount: 4, aiPlayers: [], skillMode: false, happyMode: false, initialEnergy: 0 };
     this.spectators = new Set();
     // 观战者没有 Player 对象，聊天需要显示昵称，进房时单独留档
     this.spectatorNames = new Map();
@@ -567,9 +569,9 @@ class RoomManager {
     return roomCode ? this.rooms.get(roomCode) : null;
   }
 
-  createGameSession(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false) {
+  createGameSession(gameSessionId, players, pieceCount = 4, roomCode = null, hostId = null, skillMode = false, happyMode = false, initialEnergy = 0) {
     console.log(`创建游戏会话: ${gameSessionId}, 玩家数: ${players.length}, 棋子数: ${pieceCount}, 欢乐模式: ${happyMode}`);
-    const gameSession = new GameSession(gameSessionId, players, pieceCount, roomCode, hostId, skillMode, happyMode);
+    const gameSession = new GameSession(gameSessionId, players, pieceCount, roomCode, hostId, skillMode, happyMode, initialEnergy);
     this.gameSessions.set(gameSessionId, gameSession);
     players.forEach(player => {
       if (!player.isAI) {

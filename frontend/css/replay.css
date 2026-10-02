@@ -30,6 +30,21 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* 窄屏：只把间距收一收，给「击败/称号」这种两个字的按钮让出空间，
+   按钮本身的尺寸一个都不动 */
+@media (max-width: 520px) {
+    .replay-bar-fixed {
+        padding: 8px 8px 0;
+    }
+
+    .replay-bar-fixed .replay-bar-row,
+    .replay-bar-fixed .replay-bar-side,
+    .replay-bar-fixed .replay-bar-corner,
+    .replay-bar-fixed .replay-bar-group {
+        gap: 4px;
+    }
+}
+
 .replay-bar-fixed {
     position: fixed;
     left: 0;
@@ -68,7 +83,8 @@ body.bar-collapsed .replay-bar-fixed {
     justify-content: space-between;
 }
 
-.replay-bar-fixed .replay-bar-corner {
+.replay-bar-fixed .replay-bar-corner,
+.replay-bar-fixed .replay-bar-group {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -190,6 +206,7 @@ body.bar-collapsed .replay-bar-handle {
     padding: 3px 8px;
     font-size: 11px;
     font-weight: 600;
+    white-space: nowrap;   /* 两个字的按钮不许折行 */
     color: #f26969;
 }
 

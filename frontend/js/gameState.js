@@ -853,6 +853,22 @@ class GameState {
         return this._skillModeEnabled;
     }
 
+    /**
+     * 本局的初始积分（道具模式里可选的起手积分：0/15/30/50/70/100）。
+     * 同样读开局配置并缓存，换模式会整页重载。
+     */
+    getInitialEnergy() {
+        if (this._initialEnergy === undefined) {
+            try {
+                const raw = sessionStorage.getItem('gameConfig');
+                this._initialEnergy = raw ? (Number(JSON.parse(raw).initialEnergy) || 0) : 0;
+            } catch (error) {
+                this._initialEnergy = 0;
+            }
+        }
+        return this._initialEnergy;
+    }
+
 
     // 重置游戏
     async resetGame() {

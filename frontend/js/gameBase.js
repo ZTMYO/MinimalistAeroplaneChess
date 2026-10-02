@@ -300,9 +300,11 @@ export class FlyingChessGameBase {
                     piecesPerPlayer: gameState.pieceCount,
                     happy: gameState.isHappyMode(),
                     skillMode: gameState.isSkillModeEnabled(),
+                    startEnergy: gameState.getInitialEnergy(),
                     currentPlayer: gameState.getCurrentPlayer()
                 });
                 gameState.engineDriven = true;
+                energyManager.syncFromState(engineAdapter.state ? engineAdapter.state.energy : {});
             }
 
             uiUpdater.updateUI();

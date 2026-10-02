@@ -309,19 +309,9 @@ async function replayTo(target) {
 
     engineAdapter.projectTo(gameState);
     view.game?.animation?.updateAllChessPositions?.(false);
-    syncEnergyDisplay();
+    energyManager.syncFromState(engineAdapter.state ? engineAdapter.state.energy : {});
     uiUpdater.updateUI();
     updateBar();
-}
-
-/* 积分条跟着棋面走：按引擎当前积分重设一遍，跳转后不会沿用别处的数值 */
-function syncEnergyDisplay() {
-    const energy = engineAdapter.state?.energy || {};
-    for (const color of view.archive?.colors || []) {
-        const value = energy[color] || 0;
-        energyManager.setEnergy(color, value, true);
-        energyDisplay.updateEnergyBar(color, value);
-    }
 }
 
 /* 跳到第 N 手 */
@@ -567,7 +557,9 @@ class ReplayGame extends FlyingChessGameBase {
             }
 
             if (target.closest('#returnHome')) {
-                // 回放没有对局进度可丢，直接回首页（和观战一样不问确认）
+                // 回放没有对局进度可丢，直接回首页（和观战一样不问确认）。
+                // 顺手清掉模式记忆，不然首页会落回上次那个模式的配置面板
+                sessionStorage.removeItem('lastGameMode');
                 window.location.replace('index.html');
                 return;
             }

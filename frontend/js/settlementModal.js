@@ -602,7 +602,27 @@ class SettlementModal {
         if (!html) return;
         const holder = document.createElement('div');
         holder.innerHTML = html;
-        footer.insertBefore(holder.firstElementChild, footer.querySelector('#data-analysis-btn'));
+        const link = holder.firstElementChild;
+        // 去回放页看这局：联机的就把房间让出来（会话里仍保留这局的记录）
+        link.addEventListener('click', () => this.leaveSettledRoom());
+        footer.insertBefore(link, footer.querySelector('#data-analysis-btn'));
+    }
+
+    /**
+     * 结算后去回放页：用「硬离开」让出房间，别人不必等自己，
+     * 但服务端仍把这一局的玩家记录留在会话里，晚开结算/数据分析的人也看得到完整数据。
+     */
+    leaveSettledRoom() {
+        const manager = window.multiplayerGameManager;
+        if (!manager?.isOnlineMode || manager.isSpectator) return;
+        try {
+            manager.sendMessage('leave_room', { reason: 'return_home' });
+        } catch (error) { }
+        try {
+            // 对局连接是裸的，先禁掉重连再关，避免又自动拉起一条
+            manager.disableReconnect = true;
+            manager.wsClient?.close();
+        } catch (error) { }
     }
 
     /**

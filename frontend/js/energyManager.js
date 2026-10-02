@@ -224,6 +224,15 @@ class EnergyManager {
         }
     }
 
+    /** 按引擎当前积分重设积分条：起手初始积分、回放跳转都靠它对齐 */
+    syncFromState(energy = {}) {
+        for (let player = 1; player <= 4; player += 1) {
+            if (energy[player] === undefined) continue;
+            this.setEnergy(player, energy[player], true);
+            this.energyDisplay?.updateEnergyBar?.(player, energy[player]);
+        }
+    }
+
     /**
      * 更新道具可用性（调用skillManager）
      */

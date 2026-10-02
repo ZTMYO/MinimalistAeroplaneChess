@@ -12,6 +12,8 @@ import { activePlayerManager } from './activePlayerManager.js';
 import { playerIdManager } from './playerIdManager.js';
 import { engineAdapter } from './engineAdapter.js';
 import { enginePlayback } from './enginePlayback.js';
+import { createState, apply, makeRng } from '../../shared/engine.mjs';
+import { decodeArchive } from '../../shared/replayCodec.mjs';
 import { SnapshotGate } from './snapshotGate.js';
 import { isAiDriven, isTakeoverPlayer } from './aiPlayers.js';
 import { energyManager } from './energyManager.js';
@@ -786,6 +788,41 @@ class MultiplayerGameManager {
     }
 
     /**
+     * 观战历史补偿：称号统计是本地按事件累加出来的，中途进来看不到之前拿的称号。
+     * 服务端的档案里只有「种子 + 逐手动作」，取回来本地重算事件，静默喂给回放层补上。
+     */
+    async rebuildSpectateTitles(sessionId) {
+        if (!sessionId) return;
+        try {
+            const response = await fetch(`/api/replay/${encodeURIComponent(sessionId)}`);
+            if (!response.ok) return;
+            const archive = decodeArchive(await response.json());
+            if (!Array.isArray(archive.actions) || !archive.actions.length) return;
+
+            const rng = makeRng(archive.seed);
+            let state = createState({
+                players: archive.colors,
+                piecesPerPlayer: archive.pieceCount || 4,
+                happy: Boolean(archive.happy),
+                skillMode: Boolean(archive.skillMode),
+                startEnergy: Number(archive.startEnergy) || 0
+            });
+            for (let index = 0; index < archive.actions.length; index += 1) {
+                try {
+                    const out = apply(state, archive.actions[index].p, archive.actions[index].a, rng);
+                    state = out.state;
+                    await enginePlayback.replay(out.events);
+                } catch (error) {
+                    console.warn('[观战] 历史补跑在第 ' + (index + 1) + ' 手停住:', error.message);
+                    break;
+                }
+            }
+        } catch (error) {
+            console.warn('[观战] 历史补跑失败:', error.message);
+        }
+    }
+
+    /**
      * 处理接收到的消息
      */
     handleMessage(data) {
@@ -878,6 +915,8 @@ class MultiplayerGameManager {
             if (data.gameData) {
                 this.gameSessionId = data.gameSessionId || (data.room && data.room.gameSessionId);
                 this.restoreAuxState(data.gameData);
+                // 中途进来观战：称号统计只在本地按事件累加，得把这一局补跑一遍才有
+                this.rebuildSpectateTitles(this.gameSessionId);
                 
                 // 确保触发全员就绪逻辑，让观战可以解除等待遮罩
                 if (window.audioManager) {
@@ -2267,11 +2306,13 @@ class MultiplayerGameManager {
         // 在删除玩家数据之前，先获取玩家编号（用于后续处理）
         const playerNumber = this.getPlayerNumberByPlayerId(data.playerId);
 
-        // 如果游戏尚未开始或已经结束，才将其从激活玩家列表移除
+        // 只有还没开打时才真正摘人（大厅里让出座位）；
+        // 对局进行中与已经结束都保留：前者要交给 AI 托管，
+        // 后者结算与数据分析得按整局名单出表，离场的人不能被抹掉
         const gamePhase = this.gameInstance?.gameState?.getGamePhase();
-        const isGameActive = gamePhase && gamePhase !== 'finished' && gamePhase !== 'waiting';
-        
-        if (!isGameActive) {
+        const notStarted = !gamePhase || gamePhase === 'waiting';
+
+        if (notStarted) {
             try {
                 if (playerNumber) {
                     const activePlayers = activePlayerManager.getActivePlayers();
@@ -2283,18 +2324,10 @@ class MultiplayerGameManager {
             } catch (e) {
                 // ignore
             }
-        } else {
-            console.log(`游戏进行中，玩家${data.playerId}离线后交由AI托管，不跳过其回合`);
-        }
-
-        // 如果游戏已经正式开始且尚未结束，玩家退出时会由服务器转为AI接管，所以不要删除玩家数据
-        const currentGamePhase = this.gameInstance?.gameState?.getGamePhase();
-        if (currentGamePhase && currentGamePhase !== 'finished') {
-            console.log(`游戏进行中，保留离线玩家 ${data.playerId} 的数据以供AI接管`);
-        } else {
-            // 删除玩家数据
             if (this.players) this.players.delete(data.playerId);
             if (this.aiTakeoverPlayers) this.aiTakeoverPlayers.delete(data.playerId);
+        } else {
+            console.log(`对局已开始（${gamePhase}），保留离线玩家 ${data.playerId} 的数据`);
         }
     }
 

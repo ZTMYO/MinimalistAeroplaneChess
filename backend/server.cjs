@@ -240,8 +240,8 @@ async function startAuthoritySession(gameSession) {
     pieceCount: gameSession.pieceCount,
     happy: gameSession.happyMode,
     skillMode: gameSession.skillMode,
-    // 初始积分：默认 0，测试或自定义开局可用环境变量给一笔启动资金
-    startEnergy: Number(process.env.START_ENERGY) || 0,
+    // 初始积分：房主在房间里选的值优先，没选过才退回环境变量给的启动资金
+    startEnergy: Number(gameSession.initialEnergy || process.env.START_ENERGY) || 0,
     // 回放用：这颗种子定死整局的随机，动作流跟着一起留档
     seed: crypto.randomInt(0, 0xffffffff),
     players
@@ -2205,7 +2205,8 @@ function handleStartGame(ws, playerId) {
     room.code,
     hostPlayer ? hostPlayer.id : null,
     room.settings.skillMode,
-    room.settings.happyMode
+    room.settings.happyMode,
+    room.settings.initialEnergy
   );
 
   // 继承房间内的观战者

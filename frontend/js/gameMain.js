@@ -142,6 +142,7 @@ class FlyingChessGame extends FlyingChessGameBase {
                         piecesPerPlayer: gameState.pieceCount,
                         happy: gameState.isHappyMode(),
                         skillMode: gameState.isSkillModeEnabled(),
+                        startEnergy: gameState.getInitialEnergy(),
                         currentPlayer: gameState.currentPlayer
                     });
                 }
@@ -212,6 +213,8 @@ class FlyingChessGame extends FlyingChessGameBase {
             this.skillManager.init();
             if (this.energyManager.isSkillModeEnabled()) {
                 this.energyDisplay.init();
+                // 引擎里的积分才是准的：起手初始积分、续局恢复都从它对齐
+                this.energyManager.syncFromState(engineAdapter.state ? engineAdapter.state.energy : {});
             }
 
             // 14. 初始化最后应用视角旋转（在UI全部创建完成后）

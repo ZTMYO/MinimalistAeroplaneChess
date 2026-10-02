@@ -139,6 +139,9 @@ class GameTipsCarousel {
 }
 
 // 玩家设置管理
+// 道具模式的起手积分档位（滑块是 0..5 六档，落到这几个值上）
+const INITIAL_ENERGY_STEPS = [0, 15, 30, 50, 70, 100];
+
 class PlayerSetup {
     persistMode() {
         if (this.currentMode === 'ai') return 'ai_battle';
@@ -245,11 +248,16 @@ class PlayerSetup {
         const saved = loadLocalGame(mode);
         if (!saved || !saved.state) return false;
 
+        // 模式不用再说一遍（点哪个入口进来的就是哪个），这里只说玩法
+        const state = saved.state;
+        const modeText = state.skillMode && state.happy ? '道具模式·欢乐'
+            : (state.skillMode ? '道具模式' : (state.happy ? '欢乐模式' : '经典模式'));
+
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay show resume-modal ' + (mode === 'ai_battle' ? 'mode-ai' : 'mode-local');
         overlay.innerHTML = '<div class="modal-content">'
             + '<h3>发现未完成的对局</h3>'
-            + '<p>第 ' + (saved.state.turn || 0) + ' 回合 · ' + (mode === 'ai_battle' ? '人机对战' : '本地多人') + '</p>'
+            + '<p>第 ' + (state.turn || 0) + ' 回合 · ' + modeText + '</p>'
             + '<div class="resume-modal-actions">'
             + '<button type="button" class="resume-btn" data-resume="no">新开一局</button>'
             + '<button type="button" class="resume-btn resume-btn-primary" data-resume="yes">继续上局</button>'
@@ -344,6 +352,60 @@ class PlayerSetup {
     init() {
         this.setupModeSelection();
         this.setupLocalMultiplayerConfig();
+        this.setupInitialEnergySliders();
+    }
+
+    /* 起手积分滑块：勾了道具模式才露出来，档位是 0/15/30/50/70/100 */
+    setupInitialEnergySliders() {
+        const pairs = [
+            ['aiInitialEnergy', 'aiInitialEnergySlider', 'aiInitialEnergyValue', 'aiSkillModeCheckbox'],
+            ['localInitialEnergy', 'localInitialEnergySlider', 'localInitialEnergyValue', 'localSkillModeCheckbox'],
+            ['onlineInitialEnergy', 'onlineInitialEnergySlider', 'onlineInitialEnergyValue', 'skillModeCheckbox']
+        ];
+
+        const syncers = [];
+        pairs.forEach(([boxId, sliderId, valueId, checkboxId]) => {
+            const box = document.getElementById(boxId);
+            const slider = document.getElementById(sliderId);
+            const valueEl = document.getElementById(valueId);
+            const checkbox = document.getElementById(checkboxId);
+            if (!box || !slider) return;
+
+            const sync = () => {
+                box.style.display = checkbox && checkbox.checked ? 'block' : 'none';
+                const index = Number(slider.value);
+                if (valueEl) valueEl.textContent = String(INITIAL_ENERGY_STEPS[index] || 0);
+                // 圆点左侧那段的填充位置
+                slider.style.setProperty('--fill', `${(index / (INITIAL_ENERGY_STEPS.length - 1)) * 100}%`);
+            };
+            slider.addEventListener('input', sync);
+            checkbox?.addEventListener('change', sync);
+            sync();
+            syncers.push(sync);
+        });
+
+        // 房间设置回填时（建房 / 加入 / 重进）也要把滑块拉回原样，事件触发不到这里
+        window.syncInitialEnergySliders = () => syncers.forEach((sync) => sync());
+    }
+
+    /* 读当前选中的起手积分（没开道具模式就是 0） */
+    readInitialEnergy(sliderId, checkboxId) {
+        const slider = document.getElementById(sliderId);
+        const checkbox = document.getElementById(checkboxId);
+        if (!slider || !checkbox || !checkbox.checked) return 0;
+        return INITIAL_ENERGY_STEPS[Number(slider.value)] || 0;
+    }
+
+    /* 从上次的配置里恢复起手积分：档位、是否露出、显示数值一起对齐 */
+    restoreInitialEnergy(sliderId, checkboxId, energy) {
+        const slider = document.getElementById(sliderId);
+        const checkbox = document.getElementById(checkboxId);
+        if (slider) {
+            const index = INITIAL_ENERGY_STEPS.indexOf(Number(energy) || 0);
+            slider.value = String(index >= 0 ? index : 0);
+            slider.dispatchEvent(new Event('input'));
+        }
+        checkbox?.dispatchEvent(new Event('change'));
     }
 
     // 设置AI玩家配置
@@ -1853,7 +1915,8 @@ class PlayerSetup {
             bots: Array.from(this.activeBots),
             botDifficulties: Object.fromEntries(this.botDifficulties),
             skillMode: skillMode,
-            happyMode: happyMode
+            happyMode: happyMode,
+            initialEnergy: this.readInitialEnergy('aiInitialEnergySlider', 'aiSkillModeCheckbox')
         };
 
         console.log('游戏配置:', gameConfig);
@@ -1870,7 +1933,8 @@ class PlayerSetup {
             botDifficulties: Object.fromEntries(this.botDifficulties),
             username: username,
             skillMode: skillMode,
-            happyMode: happyMode
+            happyMode: happyMode,
+            initialEnergy: gameConfig.initialEnergy
         };
         sessionStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
 
@@ -1907,6 +1971,7 @@ class PlayerSetup {
             pieceCount: this.localMultiplayerConfig.pieceCount,
             skillMode: skillMode,
             happyMode: happyMode,
+            initialEnergy: this.readInitialEnergy('localInitialEnergySlider', 'localSkillModeCheckbox'),
             players: this.localMultiplayerConfig.players.map(player => ({
                 id: player.id,
                 name: player.name.trim(),
@@ -1958,7 +2023,8 @@ class PlayerSetup {
                 return result;
             })(),
             skillMode: skillMode,
-            happyMode: happyMode
+            happyMode: happyMode,
+            initialEnergy: localGameConfig.initialEnergy
         };
         sessionStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
 
@@ -2064,6 +2130,7 @@ class PlayerSetup {
                         skillModeCheckbox.checked = config.skillMode;
                         console.log('恢复道具模式状态:', config.skillMode);
                     }
+                    this.restoreInitialEnergy('aiInitialEnergySlider', 'aiSkillModeCheckbox', config.initialEnergy);
                 }
                 // 恢复欢乐模式勾选状态
                 if (config.happyMode !== undefined) {
@@ -2144,6 +2211,8 @@ class PlayerSetup {
                         console.log('恢复本地多人道具模式状态:', config.skillMode);
                     }
                 }
+                this.restoreInitialEnergy('localInitialEnergySlider', 'localSkillModeCheckbox', config.initialEnergy);
+
                 // 恢复欢乐模式勾选状态
                 if (config.happyMode !== undefined) {
                     const happyModeCheckbox = document.getElementById('localHappyModeCheckbox');

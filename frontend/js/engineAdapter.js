@@ -77,8 +77,8 @@ class EngineAdapter {
     }
 
     /** 开新局：完全由引擎重建初始状态 */
-    reset({ players = PLAYERS, piecesPerPlayer = 4, happy = false, skillMode = false, currentPlayer = null } = {}) {
-        this.state = createState({ players, piecesPerPlayer, happy, skillMode });
+    reset({ players = PLAYERS, piecesPerPlayer = 4, happy = false, skillMode = false, startEnergy = 0, currentPlayer = null } = {}) {
+        this.state = createState({ players, piecesPerPlayer, happy, skillMode, startEnergy });
         this.defeatCounts = emptyDefeatMatrix(players);
         // 单机也要能回放：一局一颗种子，动作按序留档（和联机的服务端档案同一套口径）
         this.seed = Math.floor(Math.random() * 0xffffffff);
@@ -332,7 +332,7 @@ class EngineAdapter {
             pieceCount: this.state.players[this.state.order[0]].chesses.length,
             happy: this.state.happy ? 1 : 0,
             skillMode: this.state.skillMode ? 1 : 0,
-            startEnergy: 0,
+            startEnergy: gameState.getInitialEnergy ? gameState.getInitialEnergy() : 0,
             players: (players || []).map((p) => [p.color, p.nickname, p.isAI ? 1 : 0, p.emoji || '']),
             actionCount: this.actions.length,
             actions: this.actions,
