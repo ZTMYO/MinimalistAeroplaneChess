@@ -22,12 +22,19 @@ async function loadBannedWords() {
     loadPromise = (async () => {
         try {
             const dictUrl = new URL('../assets/违规词库.txt', import.meta.url);
-            const response = await fetch(dictUrl);
+            // Restrict to same-origin and disallow redirects so the dictionary
+            // can't be transparently swapped for attacker-controlled content.
+            const response = await fetch(dictUrl, {
+                mode: 'same-origin',
+                redirect: 'error',
+                cache: 'no-store',
+            });
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
 
             const raw = await response.text();
+            const MAX_WORDS = 5000;
             const words = Array.from(
                 new Set(
                     raw
@@ -35,7 +42,9 @@ async function loadBannedWords() {
                         .map((line) => line.trim())
                         .filter(Boolean)
                 )
-            ).sort((a, b) => b.length - a.length);
+            )
+                .slice(0, MAX_WORDS)
+                .sort((a, b) => b.length - a.length);
 
             bannedWordRegexes = words.map((word) => new RegExp(escapeRegex(word), 'gi'));
         } catch (error) {
