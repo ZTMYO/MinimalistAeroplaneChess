@@ -797,6 +797,15 @@ class MultiplayerGameManager {
             const response = await fetch(`/api/replay/${encodeURIComponent(sessionId)}`);
             if (!response.ok) return;
             const archive = decodeArchive(await response.json());
+            if (Array.isArray(archive.players)) {
+                archive.players.forEach((player) => {
+                    if (player && typeof player.nickname === 'string') {
+                        player.nickname = player.nickname.replace(/[&<>"']/g, (ch) => ({
+                            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                        })[ch]);
+                    }
+                });
+            }
             if (!Array.isArray(archive.actions) || !archive.actions.length) return;
 
             const rng = makeRng(archive.seed);
