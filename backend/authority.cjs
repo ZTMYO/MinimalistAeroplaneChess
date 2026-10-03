@@ -96,7 +96,9 @@ class AuthoritySession {
         this.progressHistory = [];
         // 已广播过的事件流按批累积：刷新/重连的客户端据此重建右侧战报，
         // 前端不再依赖转发消息留档，从根上消除同一条战报被记两次
+        // 按批存而不是拍平：重建要一批一批喂，拍平后跨批的「单次移动 / 一次击败」会串成整局
         this.eventLog = [];
+        this.eventLogCount = 0;
         // 最近一次成功意图的时间戳，看门狗据此判断某位玩家是否已停止推进
         this.lastIntentAt = Date.now();
 
@@ -142,9 +144,10 @@ class AuthoritySession {
     /* 事件流留档，超限时从旧到新截断 */
     recordEvents(events) {
         if (!Array.isArray(events) || events.length === 0) return;
-        this.eventLog.push(...events);
-        if (this.eventLog.length > EVENT_LOG_MAX) {
-            this.eventLog = this.eventLog.slice(-EVENT_LOG_MAX);
+        this.eventLog.push(events.slice());
+        this.eventLogCount += events.length;
+        while (this.eventLogCount > EVENT_LOG_MAX && this.eventLog.length > 1) {
+            this.eventLogCount -= this.eventLog.shift().length;
         }
     }
 

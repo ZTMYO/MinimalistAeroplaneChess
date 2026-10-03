@@ -1,4 +1,5 @@
 import { energyManager } from './energyManager.js';
+import { showMessage, dismissMessage } from './messageStack.js';
 import { gameState } from './gameState.js';
 import { ITEM_COSTS } from '../../shared/engine.mjs';
 import { DICE_SYMBOLS } from './utils.js';
@@ -7,6 +8,9 @@ import { engineAdapter } from './engineAdapter.js';
 /** 道具价目只有引擎那一份；界面上的价签也由它写，免得 HTML 里的数字悄悄过期 */
 const priceOf = (skillId) => ITEM_COSTS[skillId] || 0;
 import { enginePlayback } from './enginePlayback.js';
+
+// 「等你操作」那类提示的 key：激活时挂上，操作完成（选子 / 取消）时才收
+const TELEPORT_PROMPT_KEY = 'item-teleport-prompt';
 
 class SkillManager {
     constructor() {
@@ -313,6 +317,8 @@ class SkillManager {
 
     /** 取消已激活的道具：预扣的积分退回来（联机由服务端退，单机落到本地引擎） */
     cancelItem() {
+        // 撤销激活：那条「等你操作」的提示不用再挂着
+        dismissMessage(TELEPORT_PROMPT_KEY);
         // 撤掉遥控骰子：骰面收回默认状态
         gameState.isRemoteDice = false;
         document.getElementById('diceDisplay')?.classList.remove('remote-dice');
@@ -507,7 +513,8 @@ class SkillManager {
 
         // 仅当当前玩家不是由AI控制时，才显示提示文字
         if (!window.botController || !window.botController.isCurrentPlayerBot()) {
-            this.showNotification('传送门已激活！选择棋子进行传送');
+            // 常驻到选完棋子：3 秒就消失的话，没留神的玩家会不知道接下来要干什么
+            this.showNotification('传送门已激活！选择棋子进行传送', { key: TELEPORT_PROMPT_KEY, sticky: true });
         }
 
         // 触发 bot 操作
@@ -937,6 +944,8 @@ class SkillManager {
 
     /** 只收传送门图标，不动骰子与其他道具界面 */
     hideTeleportIcon() {
+        // 传送门的 UI 一收（传完了 / 换回合了 / 快照说没了），那条常驻提示跟着收
+        dismissMessage(TELEPORT_PROMPT_KEY);
         const teleportIcon = document.getElementById('teleportIcon');
         if (!teleportIcon) return;
         teleportIcon.style.display = 'none';
@@ -1192,88 +1201,12 @@ class SkillManager {
     }
 
     /**
-     * 显示通知消息
-     * @param {string} message - 消息内容
+     * 显示通知消息（渲染规则统一在 messageStack 里）
+     * @param {string} message - 消息内容，可以是 HTML
+     * @param {{key?: string}} options - key：同一件事的后续消息会改写原来那条
      */
-    showNotification(message) {
-        // 如果有已存在的通知，先移除它
-        if (this.currentNotification) {
-            if (this.currentNotification.parentNode) {
-                this.currentNotification.parentNode.removeChild(this.currentNotification);
-            }
-            if (this.notificationTimeout) {
-                clearTimeout(this.notificationTimeout);
-            }
-            this.currentNotification = null;
-            this.notificationTimeout = null;
-        }
-
-        // 积分图标 SVG
-        const scoreIcon = `<svg t="1777811441484" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="1702" style="height: 1.4em; width: 1.4em; vertical-align: -0.35em; fill: currentColor; margin-left: 0; display: inline-block;"><path d="M511.838 472.601c-173.757 0-358.398-56-358.398-159.679 0-103.684 184.641-159.762 358.398-159.762 173.761 0 358.402 56 358.402 159.68 0 103.679-184.64 159.761-358.402 159.761z m0-265.839c-188.718 0-304.636 61.839-304.636 106.078 0 44.242 115.918 106.16 304.636 106.16 188.722 0 304.64-61.84 304.64-106.16 0.001-44.321-115.917-106.078-304.64-106.078z m0 0" p-id="1703"></path><path d="M511.838 594.039c-172.636 0-358.398-40.56-358.398-129.68 0-14.801 12.078-26.801 26.879-26.801 14.801 0 26.883 12 26.883 26.801 0 22.723 103.679 76.082 304.636 76.082 200.96 0 304.64-53.358 304.64-76.082 0-14.801 12-26.801 26.883-26.801 14.797 0 26.879 12 26.879 26.801 0 89.12-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1704"></path><path d="M511.838 721.719c-172.636 0-358.398-40.559-358.398-129.68 0-14.801 12.078-26.801 26.879-26.801 14.801 0 26.883 12 26.883 26.801 0 22.723 103.679 76.082 304.636 76.082 200.96 0 304.64-53.359 304.64-76.082 0-14.801 12-26.801 26.883-26.801 14.797 0 26.879 12 26.879 26.801 0 89.121-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1705"></path><path d="M511.838 869.961c-172.636 0-358.398-40.563-358.398-129.68v-24.402c0-14.797 12.078-26.797 26.879-26.797 14.801 0 26.883 12 26.883 26.797v24.402c0 22.719 103.679 76.078 304.636 76.078 200.96 0 304.64-53.359 304.64-76.078v-24.402c0-14.797 12-26.797 26.883-26.797 14.797 0 26.879 12 26.879 26.797v24.402c0 89.116-185.761 129.68-358.402 129.68z m0 0" fill="currentColor" p-id="1706"></path></svg>`;
-
-        // 创建通知元素
-        const notification = document.createElement('div');
-        notification.className = 'game-notification';
-        notification.innerHTML = message.replace(/积分/g, scoreIcon);
-
-        const gameContainer = document.querySelector('.game-container');
-        const targetContainer = document.body;
-
-        // 预处理：计算最优宽度以实现平衡换行，避免出现一行很长一行很短的情况
-        // 将通知移出视口，避免影响页面布局
-        notification.style.position = 'absolute';
-        notification.style.top = '-9999px';
-        notification.style.left = '-9999px';
-        notification.style.visibility = 'hidden';
-        notification.style.whiteSpace = 'nowrap';
-        notification.style.width = 'max-content';
-        notification.style.pointerEvents = 'none';
-        targetContainer.appendChild(notification);
-
-        // 测量实际单行宽度
-        const fullWidth = notification.offsetWidth;
-        // 获取容器的最大允许宽度 (参考CSS中的max-width: 80% 或 90%)
-        const containerWidth = gameContainer ? gameContainer.clientWidth : window.innerWidth;
-        const isMobile = window.innerWidth <= 480;
-        const maxWidth = containerWidth * (isMobile ? 0.9 : 0.8);
-
-        if (fullWidth > maxWidth) {
-            const lines = Math.ceil(fullWidth / maxWidth);
-            let balancedWidth = Math.ceil(fullWidth / (lines > 1 ? 2 : lines)) + 30; 
-            balancedWidth = Math.min(balancedWidth, maxWidth);
-            
-            notification.style.width = balancedWidth + 'px';
-        } else {
-            notification.style.width = 'max-content';
-        }
-
-        // 使用 fixed 定位，以游戏棋盘中心为锚点居中，不修改 main-layout 的 transform
-        notification.style.position = 'fixed';
-        notification.style.top = '20px';
-        if (gameContainer) {
-            const rect = gameContainer.getBoundingClientRect();
-            const boardCenterX = rect.left + rect.width / 2;
-            notification.style.left = `${boardCenterX}px`;
-        } else {
-            notification.style.left = '50%';
-        }
-        notification.style.transform = 'translateX(-50%)';
-        notification.style.whiteSpace = 'normal';
-        notification.style.visibility = 'visible';
-        notification.style.pointerEvents = 'none';
-
-        this.currentNotification = notification;
-
-        // 3秒后移除 (与CSS动画时间一致)
-        this.notificationTimeout = setTimeout(() => {
-            if (notification.parentNode) {
-                notification.parentNode.removeChild(notification);
-            }
-            if (this.currentNotification === notification) {
-                this.currentNotification = null;
-                this.notificationTimeout = null;
-            }
-        }, 3000);
+    showNotification(message, options) {
+        showMessage(message, options);
     }
 
     /**

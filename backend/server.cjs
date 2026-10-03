@@ -1271,7 +1271,7 @@ function handleMessage(ws, playerId, message) {
         break;
       case 'start_game':
       case 'startGame':
-        handleStartGame(ws, playerId);
+        handleStartGame(ws, playerId, message);
         break;
       case 'add_ai_player':
         handleAddAIPlayer(ws, playerId, message);
@@ -1420,7 +1420,7 @@ function handleJoinRoom(ws, playerId, message) {
   const roomCode = message.roomCode;
   const room = roomManager.getRoom(roomCode);
   if (!room) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间不存在或已被销毁' }));
+    ws.send(JSON.stringify({ type: 'error', message: '房间不存在或已被销毁', code: 'roomGone' }));
     return;
   }
 
@@ -1495,11 +1495,18 @@ function handleJoinRoom(ws, playerId, message) {
     console.log(`玩家 ${playerId} 重新加入房间 ${roomCode}，广播 playerReconnected`);
     return;
   }
+  // 对局已经开打：不在这一局里的人（比如超时被移除后又回来的）就别进房间了，
+  // 这时房间里只剩个空壳，进来什么也做不了。客户端收到这个 code 会清掉本地房间并回首页
+  if (room.gameState === 'playing' && room.gameSessionId) {
+    ws.send(JSON.stringify({ type: 'error', message: '该房间的对局已开始', code: 'gameStarted' }));
+    return;
+  }
+
   // 房间满员：计算已占用席位 = 真实玩家 + AI 玩家
   const aiCount = room.settings?.aiPlayers ? room.settings.aiPlayers.length : 0;
   const totalPlayerCount = room.players.size + aiCount;
   if (totalPlayerCount >= 4) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
+    ws.send(JSON.stringify({ type: 'error', message: '房间已满', code: 'roomFull' }));
     return;
   }
 
@@ -2135,11 +2142,17 @@ function handleToggleReady(ws, playerId, message) {
   }
 }
 
-function handleStartGame(ws, playerId) {
+function handleStartGame(ws, playerId, message) {
   const room = roomManager.getPlayerRoom(playerId);
   if (!room) throw new Error('玩家不在任何房间中');
   if (room.gameState === 'playing') throw new Error('游戏已经开始');
   if (room.players.size < 2) throw new Error('至少需要2名玩家才能开始游戏');
+
+  // 房主眼前的面板设置随开局一起送来：中途那几条 updateSettings 万一丢了，
+  // 开局用的还是这套配置（道具模式、欢乐模式、起手积分）
+  if (message && message.settings && room.host && room.host.id === playerId) {
+    room.updateSettings(message.settings);
+  }
 
   // 开始新一局时，清除结算返回房主锁定
   room.postGameHostId = null;
@@ -2409,7 +2422,7 @@ function handleRejoinRoom(ws, playerId, message) {
 
   const room = roomManager.getRoom(roomCode);
   if (!room) {
-    ws.send(JSON.stringify({ type: 'error', message: '房间不存在' }));
+    ws.send(JSON.stringify({ type: 'error', message: '房间不存在', code: 'roomGone' }));
     return;
   }
 
@@ -2427,7 +2440,8 @@ function handleRejoinRoom(ws, playerId, message) {
       room.players.set(playerId, player);
       roomManager.playerRooms.set(playerId, roomCode);
     } else {
-      ws.send(JSON.stringify({ type: 'error', message: '您不在该房间中' }));
+      // 超时被移出了：客户端收到这个 code 会清掉本地房间上下文并回首页
+      ws.send(JSON.stringify({ type: 'error', message: '您不在该房间中', code: 'notInRoom' }));
       return;
     }
   }

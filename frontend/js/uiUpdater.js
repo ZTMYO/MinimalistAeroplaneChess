@@ -1,5 +1,6 @@
 ﻿import { gameState } from './gameState.js';
 import { progressDisplay } from './progressDisplay.js';
+import { defeatCountDisplay } from './defeatCountDisplay.js';
 import { DICE_SYMBOLS } from './utils.js';
 import { engineAdapter } from './engineAdapter.js';
 
@@ -11,6 +12,20 @@ class UIUpdater {
         this._barElapsedMs = 0;
         this._barRunSince = null;
         this._barFrozenPct = 0;
+        // 已经演出来、但权威快照还没落地的那一手点数：这段时间里骰面按它画
+        this._diceResultPin = null;
+    }
+
+    /**
+     * 钉住这一手的点数：骰面结果已经演出，而 gameState 要等快照落地才更新，
+     * 中间任何一次重绘都会按旧状态画成默认灰骰（表现就是闪完先冒个灰 1）。
+     */
+    pinDiceResult(value, owner = null) {
+        this._diceResultPin = value > 0 ? { value, owner } : null;
+    }
+
+    releaseDiceResult() {
+        this._diceResultPin = null;
     }
 
     // 更新UI界面
@@ -32,6 +47,7 @@ class UIUpdater {
 
         this.updatePlayerAvatarGlow();
         this.updateThinkingProgressBar();
+        this.updateDefeatCounts();
 
         // 叠子样式按当前棋面重算：叠子被拆开后，留在原地的那颗要恢复普通外观与位置
         const animation = window.gameInstance && window.gameInstance.animation;
@@ -41,6 +57,13 @@ class UIUpdater {
 
         // 更新进度显示
         this.updateProgressDisplay();
+    }
+
+    // 头像边的击败次数按 gameState 对齐：联机的权威计数随快照落地，这里每次重绘跟上
+    updateDefeatCounts() {
+        if (gameState.defeatCounts) {
+            defeatCountDisplay.updateAllDefeatCounts(gameState.defeatCounts);
+        }
     }
 
     /**
@@ -111,6 +134,13 @@ class UIUpdater {
         // 三次 6 惩罚演出期间：骰子保持那一刻的「6 + 警告红」，由事件回放挂好，这里不参与
         if (gameState.getThreeSixesPenaltyActive?.() && forceDiceValue === null) {
             return;
+        }
+
+        // 上面几条「别打断演出」的守卫都过了，这才轮到钉住的那一手结果：
+        // 它有自己的掷骰者，也绕过「旧点数」判定
+        if (forceDiceValue === null && this._diceResultPin) {
+            forceDiceValue = this._diceResultPin.value;
+            diceOwner = this._diceResultPin.owner;
         }
 
       const { diceValue: stateDiceValue, currentPlayer, gamePhase, isRolling } = gameState;

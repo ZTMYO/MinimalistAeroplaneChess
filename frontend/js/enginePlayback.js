@@ -552,7 +552,8 @@ async function handleEvent(event, lastDiceValue = 0, lastDiceItem = null) {
     switch (event.type) {
         case 'dice':
             // 实时路径的掷骰战报由快照投影负责，这里只在静默回放时补上，保证两侧战报一致
-            if (silentReplay) gameInfo.addDiceRoll(event.player, event.value, true);
+            // 道具骰的点数并进道具那一条，不再单独出一行
+            if (silentReplay && !event.item) gameInfo.addDiceRoll(event.player, event.value, true);
             // 事件里带道具 id 说明是道具骰子，战报与统计据此生成
             if (event.item) recordItemResult(event.item, event.player, { diceValue: event.value });
             gameState.recordRollStreak(event.player, event.value, Boolean(event.item));
@@ -729,12 +730,13 @@ async function replay(events) {
             }
             await handleEvent(event, lastDiceValue, lastDiceItem);
         }
+        // 称号结算放在静默窗口里：补出来的称号要进战报，但不该当成刚拿到的弹一遍
+        flushMoveDistances();
+        announceLiveTitles();
     } finally {
         silentReplay = false;
         gameInfo.setSilentMode?.(false);
     }
-    flushMoveDistances();
-    announceLiveTitles();
 }
 
 export const enginePlayback = { play, replay, playDiceShake, playRollAnimation, announceLiveTitles, setAnnounceSilent, recordItemUsage };

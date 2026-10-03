@@ -59,6 +59,19 @@ class DefeatCountDisplay {
     }
 
 
+    // 按一份完整矩阵刷新所有显示（联机快照里带的击败计数就长这样）
+    updateAllDefeatCounts(defeatCounts) {
+        for (let player = 1; player <= 4; player++) {
+            for (let opponent = 1; opponent <= 4; opponent++) {
+                if (player === opponent) continue;
+                const count = defeatCounts[player] ? defeatCounts[player][opponent] : undefined;
+                if (count !== undefined) {
+                    this.updateDefeatCount(player, opponent, count);
+                }
+            }
+        }
+    }
+
     // 重置所有击败次数显示
     resetAllDefeatCounts() {
         for (let player = 1; player <= 4; player++) {

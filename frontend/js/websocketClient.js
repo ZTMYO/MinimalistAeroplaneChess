@@ -465,22 +465,30 @@ export class WebSocketClient {
         window.addEventListener('pageshow', (event) => {
             if (!event.persisted) return;
             console.log('页面从缓存恢复，按断线处理并重连');
-            this.isConnected = false;
-            this.stopHeartbeat();
-            try {
-                if (this.ws) this.ws.close();
-            } catch (error) {
-                // ignore
-            }
-            this.ws = null;
-            // 和"切回前台发现断线"走同一条链路
-            if (this.messageHandlers.has('connectionLost')) {
-                this.messageHandlers.get('connectionLost')({ reason: 'bfcache_restore' });
-            }
-            this.attemptReconnect();
+            this.treatAsDisconnected('bfcache_restore');
         });
 
         console.log('页面可见性监听已启动');
+    }
+
+    /**
+     * 把当前连接当断线处理并重连。
+     * 后台挂起的 socket 常是「假活着」（readyState 仍写着 OPEN），所以调用方不用先查状态。
+     */
+    treatAsDisconnected(reason = 'connection_lost') {
+        this.isConnected = false;
+        this.stopHeartbeat();
+        try {
+            if (this.ws) this.ws.close();
+        } catch (error) {
+            // ignore
+        }
+        this.ws = null;
+        // 和「切回前台发现断线」走同一条链路
+        if (this.messageHandlers.has('connectionLost')) {
+            this.messageHandlers.get('connectionLost')({ reason });
+        }
+        this.attemptReconnect();
     }
 
     /**

@@ -166,6 +166,8 @@ class PlayerSetup {
         if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
         this.showConfigPanel();
         this.showAIConfig();
+        // 上次这局用的颜色/表情/棋子数顺着带回来（不进面板时不恢复，免得绕过主菜单）
+        this.restoreAIConfig();
     }
 
     enterReplayConfig() {
@@ -242,6 +244,8 @@ class PlayerSetup {
         if (playerConfigWrapper) playerConfigWrapper.style.display = 'block';
         this.showConfigPanel();
         this.hideAIConfig();
+        // 上次这局的人与棋子设置顺着带回来
+        this.restoreLocalConfig();
     }
 
     askResumeFirst(mode, enterPanel) {
@@ -2032,44 +2036,6 @@ class PlayerSetup {
         window.location.href = '/game';
     }
 
-    // 恢复游戏模式状态
-    restoreGameModeState() {
-        const lastGameMode = sessionStorage.getItem('lastGameMode');
-        if (lastGameMode) {
-            console.log('恢复上次的游戏模式:', lastGameMode);
-
-            if (lastGameMode === 'ai') {
-                // 模拟点击人机对战按钮
-                this.currentMode = 'ai';
-                const configTitle = document.getElementById('configTitle');
-                configTitle.textContent = '人机对战设置';
-                this.showConfigPanel();
-                this.showAIConfig();
-
-                // 恢复AI配置详细信息
-                this.restoreAIConfig();
-                sessionStorage.removeItem('lastGameMode');
-                return true;
-            } else if (lastGameMode === 'local') {
-                // 模拟点击本地多人按钮
-                this.currentMode = 'local';
-                const configTitle = document.getElementById('configTitle');
-                configTitle.textContent = '本地多人设置';
-                this.showConfigPanel();
-                this.hideAIConfig();
-
-                // 恢复本地多人配置详细信息
-                this.restoreLocalConfig();
-                sessionStorage.removeItem('lastGameMode');
-                return true;
-            }
-
-            // 清除保存的状态，避免下次访问时自动恢复
-            sessionStorage.removeItem('lastGameMode');
-        }
-        return false;
-    }
-
     // 恢复AI配置详细信息
     restoreAIConfig() {
         const lastAIConfig = sessionStorage.getItem('lastAIConfig');
@@ -2249,11 +2215,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const roomCode = urlParams.get('room');
     const reason = urlParams.get('reason');
 
-    // 处理被踢出的通知
-    if (reason === 'kicked') {
+    // 处理被踢出 / 房间已失效的通知
+    const reasonText = {
+        kicked: '你已被房主踢出房间',
+        gameStarted: '该房间的对局已开始',
+        roomGone: '房间已不存在',
+        notInRoom: '你已不在该房间中',
+        roomFull: '房间已满员'
+    }[reason];
+    if (reasonText) {
         const errorEl = document.createElement('div');
         errorEl.className = 'room-error-message';
-        errorEl.textContent = '你已被房主踢出房间';
+        errorEl.textContent = reasonText;
         document.body.appendChild(errorEl);
         
         // 3秒后自动移除通知
@@ -2292,9 +2265,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    if (!playerSetup.restoreGameModeState()) {
-        playerSetup.showModeSelection();
-    }
+    // 首页一律落在主菜单：以前会按上次的模式自动翻进配置面板，
+    // 对局中途从浏览器后退回来就会落到面板上，点一下开始游戏就把存档冲了
+    playerSetup.showModeSelection();
+    // 后退返回时页面是从 BFCache 整页还原的，上面这段初始化不会重跑，
+    // 还原出来的还是离开前的配置面板，所以这里再压一次
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) playerSetup.showModeSelection();
+    });
 
     // 监听左侧控制面板高度变化，同步到右侧游戏规则面板
     const leftPanel = document.querySelector('.index-content > .control-panel:first-child');

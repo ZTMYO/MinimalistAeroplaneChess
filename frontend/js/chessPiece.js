@@ -171,6 +171,9 @@ class ChessPiece {
      * 引擎驱动的传送门：只报要传的棋子，落点由引擎摇，再回放事件流
      */
     async handleEngineTeleport(player, chessIndex) {
+        // 真正传送了：传送门模式与那条「等你选子」的提示一并收掉
+        // （AI 托管替玩家传送时不会走点击这条路，所以这里也得收一次）
+        this.exitTeleportMode();
         this.gameState.setChessMoving(true);
         try {
             const { events } = engineAdapter.teleport(chessIndex);
@@ -243,10 +246,14 @@ class ChessPiece {
 
         // 联机模式：只提交选子意图，移动与吃子由服务端裁决
         if (this.gameState.isOnlineMultiplayer && window.gameInstance && window.gameInstance.multiplayerGameManager) {
+            const manager = window.gameInstance.multiplayerGameManager;
             this.gameState.selectedChess = null;
             this.clearClickDebounce();
             this.gameState.setChessMoving(true);
-            window.gameInstance.multiplayerGameManager.sendIntent({ type: 'move', chessIndex });
+            manager.sendIntent({ type: 'move', chessIndex });
+            // 等服务端快照回来才走子，网络一慢就是明显的停顿。走子这一步在引擎里完全
+            // 确定性（只有传送 / 掷骰 / 盲盒吃随机数），本地先按同一份引擎演一遍
+            await this.playMovePreview(chessIndex, manager);
             return;
         }
 
@@ -255,6 +262,22 @@ class ChessPiece {
             await this.handleEngineMove(player, chessIndex);
         } else {
             this.clearClickDebounce();
+        }
+    }
+
+    /** 联机：本地抢先演这一手走子；快照回来时按事件原样比对，对上了就不再重演 */
+    async playMovePreview(chessIndex, manager) {
+        if (!engineAdapter.ready || typeof manager.markLocalMoveIssued !== 'function') return;
+        try {
+            const previewed = engineAdapter.previewAndAdopt({ type: 'move', chessIndex });
+            if (!previewed) return;
+            const playback = enginePlayback.play(previewed.events);
+            manager.markLocalMoveIssued(previewed.events, playback);
+            await playback;
+            engineAdapter.projectTo(this.gameState);
+            this.uiUpdater.updateUI();
+        } catch (error) {
+            console.warn('[联机] 本地预演走子失败，等权威快照:', error.message);
         }
     }
 

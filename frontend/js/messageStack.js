@@ -49,24 +49,29 @@ function leave(element) {
     }, LEAVE_MS);
 }
 
-function mount(html, key) {
+function mount(html, key, sticky) {
     const element = document.createElement('div');
     element.className = 'game-notification';
     element.innerHTML = String(html).replace(/积分/g, SCORE_ICON);
     element.style.marginBottom = `${GAP_PX}px`;
     if (key) element.dataset.key = key;
+    // 等你操作的提示（sticky）不自动退场，人多时也不挤它，由 dismissMessage 收
+    if (sticky) {
+        element.dataset.sticky = 'true';
+    } else {
+        element.leaveTimer = setTimeout(() => leave(element), LIVE_MS);
+    }
     container().appendChild(element);
     requestAnimationFrame(() => element.classList.add('visible'));
-    element.leaveTimer = setTimeout(() => leave(element), LIVE_MS);
 }
 
 /**
  * 弹一条提示（HTML 或纯文本都行）
  * @param {string} html
- * @param {{key?: string}} options - key：同一件事的后续消息（例如道具使用 → 道具结果）
- *   会直接改写原来那条，而不是再叠一层
+ * @param {{key?: string, sticky?: boolean}} options - key：同一件事的后续消息（例如道具使用 → 道具结果）
+ *   会直接改写原来那条，而不是再叠一层；sticky：不自动消失，等操作完成再 dismissMessage
  */
-export function showMessage(html, { key = null } = {}) {
+export function showMessage(html, { key = null, sticky = false } = {}) {
     place();
     const box = container();
 
@@ -82,14 +87,25 @@ export function showMessage(html, { key = null } = {}) {
                 live.style.marginBottom = `${GAP_PX}px`;
             }
             live.innerHTML = String(html).replace(/积分/g, SCORE_ICON);
-            live.leaveTimer = setTimeout(() => leave(live), LIVE_MS);
+            if (!sticky) live.leaveTimer = setTimeout(() => leave(live), LIVE_MS);
             return;
         }
     }
 
     const visible = [...box.children].filter((el) => !el.classList.contains('leaving'));
-    if (visible.length >= MAX_VISIBLE) leave(visible[0]);
-    mount(html, key);
+    if (visible.length >= MAX_VISIBLE) {
+        leave(visible.find((el) => el.dataset.sticky !== 'true') || visible[0]);
+    }
+    mount(html, key, sticky);
+}
+
+/** 手动收起一条提示（按 key）：等你操作那类提示做完事再收，别让它自己超时消失 */
+export function dismissMessage(key) {
+    if (!key || !stack || !stack.isConnected) return;
+    const live = [...stack.children].find((el) => el.dataset.key === key);
+    if (!live) return;
+    clearTimeout(live.leaveTimer);
+    leave(live);
 }
 
 window.addEventListener('resize', () => {

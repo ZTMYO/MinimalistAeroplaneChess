@@ -5,6 +5,7 @@
 import { gameState } from './gameState.js';
 import { engineAdapter } from './engineAdapter.js';
 import { chooseAction } from '../../shared/bot.mjs';
+import { ITEM_THINK_MS } from '../../shared/timing.mjs';
 
 const THINK_MIN_MS = 200;
 const THINK_MAX_MS = 300;
@@ -82,6 +83,8 @@ class BotController {
                 }
                 return;
             case 'item':
+                // 用道具也要有那一下停顿，不然回合刚换手道具就蹦出来了
+                await new Promise((resolve) => setTimeout(resolve, ITEM_THINK_MS));
                 skillManager?.useSkill?.(action.item, player);
                 if (action.item === 'mysteryBox') {
                     await new Promise((resolve) => setTimeout(resolve, BOX_MS));

@@ -62,6 +62,8 @@ class MultiplayerGameManager {
 
         this._pendingUIRefresh = null; // 骰子闪烁期间被推迟的 UI 刷新
         this._localRollIssued = false; // 本机是否已自行发起并播放了本次投掷动画
+        this._localMoveEvents = null; // 本机抢先演过的那一手走子的事件（等快照回来比对）
+        this._localMovePlayback = null; // 那一手的动画还在演时，快照落地要等它收尾
 
         this._snapshotGate = new SnapshotGate(); // 快照水位：去重旧帧、换会话归零
         this._snapshotRetryCount = 0; // 快照应用连续失败次数
@@ -82,6 +84,15 @@ class MultiplayerGameManager {
      */
     markLocalRollIssued() {
         this._localRollIssued = true;
+    }
+
+    /**
+     * 标记本机已抢先用本地引擎演过一手走子（联机，见 chessPiece.playMovePreview）。
+     * 快照回来时按事件逐字比对：对上了就只落权威位置，不再重演一遍。
+     */
+    markLocalMoveIssued(events, playback = null) {
+        this._localMoveEvents = Array.isArray(events) ? events : null;
+        this._localMovePlayback = playback || null;
     }
 
     stopDiceFlashing() {
@@ -251,6 +262,8 @@ class MultiplayerGameManager {
         this.players.clear();
         this.aiTakeoverPlayers.clear();
         this._localRollIssued = false;
+        this._localMoveEvents = null;
+        this._localMovePlayback = null;
         // 新一局重新开始计数 seq，水位必须清零，否则新会话快照会被旧水位挡掉
         this._snapshotGate.reset();
         this._snapshotRetryCount = 0;
@@ -807,6 +820,7 @@ class MultiplayerGameManager {
                 skillMode: Boolean(archive.skillMode),
                 startEnergy: Number(archive.startEnergy) || 0
             });
+            // 补跑的是历史：称号只补进战报，别当成刚拿到的弹一遍（静默窗口里结算）
             for (let index = 0; index < archive.actions.length; index += 1) {
                 try {
                     const out = apply(state, archive.actions[index].p, archive.actions[index].a, rng);
@@ -1233,12 +1247,23 @@ class MultiplayerGameManager {
 
         // 先按事件流播放动画，再落到权威终态，避免棋子瞬移
         const events = Array.isArray(data.events) ? data.events : [];
+        // 本机刚抢先用本地引擎演过、并且和服务端这一批逐字一致：动画、战报、统计都记过了，
+        // 这里只落权威位置，重演会让棋子先倒退再走一遍
+        const localMoveEvents = this._localMoveEvents;
+        const isOwnPreview = Boolean(localMoveEvents && events.length
+            && JSON.stringify(localMoveEvents) === JSON.stringify(events));
+        // 预演过却对不上（本地状态落后、服务端另判）：按权威棋面整体重摆，免得棋子停在错的位置
+        const stalePreview = Boolean(localMoveEvents) && !isOwnPreview;
+        const ownPreviewPlayback = isOwnPreview ? this._localMovePlayback : null;
+        this._localMoveEvents = null;
+        this._localMovePlayback = null;
         // 本批事件里最后一次掷骰，供骰子上色与抖动使用
         const rolledDice = [...events].reverse().find((event) => event.type === 'dice');
         // 实时路径的掷骰战报在这里记；静默回放自己会记一份，两边都记就会多出一条「摇到了 N 点」
-        if (!skipAnimation) {
+        // 道具骰的点数并进道具那一条，不再单独出一行
+        if (!skipAnimation && !isOwnPreview) {
             for (const event of events) {
-                if (event.type === 'dice') {
+                if (event.type === 'dice' && !event.item) {
                     (this.gameInstance && this.gameInstance.gameInfo || window.gameInfo || gameInfo)
                         ?.addDiceRoll?.(event.player, event.value, true);
                 }
@@ -1255,6 +1280,7 @@ class MultiplayerGameManager {
         if (rolledDice && rolledDice.value > 0 && skipAnimation) {
             // 追赶中的过渡帧：直接把骰面定格在点数上，不播闪烁与抖动
             this._localRollIssued = false;
+            uiUpdater?.pinDiceResult?.(rolledDice.value, rolledDice.player);
             uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
         } else if (rolledDice && rolledDice.value > 0 && isPolyhedralRoll) {
             this._localRollIssued = false;
@@ -1281,6 +1307,9 @@ class MultiplayerGameManager {
                 gs.isRemoteDice = true;
                 diceDisplay?.classList.add('remote-dice');
             }
+            // 这一手演完到快照落地之间，骰面钉在这个点数上：中间任何一次 UI 重绘
+            // 都会按还没更新的 gameState 画成默认灰骰，看着像先闪出个灰 1 再变结果
+            uiUpdater?.pinDiceResult?.(rolledDice.value, rolledDice.player);
             uiUpdater?.updateDiceDisplay?.(rolledDice.value, rolledDice.player);
         }
 
@@ -1291,7 +1320,10 @@ class MultiplayerGameManager {
             if (events.length) {
                 uiUpdater?.holdThinkingProgressBar?.();
             }
-            if (skipAnimation) {
+            if (isOwnPreview) {
+                // 本机那一手还在演：等它演完再收尾，别让后面的 UI 收尾打断这段动画
+                if (ownPreviewPlayback) await ownPreviewPlayback.catch(() => {});
+            } else if (skipAnimation) {
                 // 追赶中的过渡帧：只把事件翻成战报，棋面与积分都交给下面的快照投影
                 await enginePlayback.replay(events);
             } else {
@@ -1301,10 +1333,18 @@ class MultiplayerGameManager {
 
         engineAdapter.applySnapshot(data);
         engineAdapter.projectTo(gs);
+        // 权威状态已落地：骰面重新由它推导（该换家就换家、该清就清）
+        uiUpdater?.releaseDiceResult?.();
 
         // 道具的进行中状态不在棋面里，统一按快照渲染（该亮的亮、该收的收）
         this._renderItemState(gs, data);
         // 积分同样以快照为准：本地的加减只负责演出，账本永远跟着权威值走
+        // 快照说这是道具局就以它为准，本地那套配置缺了也不该让整局积分停在 0
+        if (data.skillMode && !energyManager.isSkillModeEnabled()) {
+            energyManager.enableSkillMode();
+            this.gameInstance?.energyDisplay?.init?.();
+            this.gameInstance?.skillManager?.init?.();
+        }
         energyManager.applySnapshot(data.energy);
 
         // 完成度历史由服务端权威记录，客户端直接采用，避免各端各算一遍再互相同步
@@ -1341,7 +1381,7 @@ class MultiplayerGameManager {
         // 没有事件流说明这是一次「纯恢复」快照（首次进入 / 刷新重连），
         // 棋子 DOM 还停在初始位置，必须按恢复出的坐标重新落位，否则棋盘看起来被重置了；
         // 追赶中跳过了动画的过渡帧同理，直接落到快照坐标上
-        if (events.length === 0 || skipAnimation) {
+        if (events.length === 0 || skipAnimation || stalePreview) {
             this._renderAllChess(gs);
         }
 
@@ -2515,7 +2555,10 @@ class MultiplayerGameManager {
 
         try {
             if (events.length) {
-                await enginePlayback.replay(events);
+                for (const batch of events) {
+                    const list = Array.isArray(batch) ? batch : [batch];
+                    if (list.length) await enginePlayback.replay(list);
+                }
             }
             if (chatList.length) {
                 chatList.forEach(item => {

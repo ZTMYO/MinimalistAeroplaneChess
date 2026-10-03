@@ -11,6 +11,9 @@ import { aiTakeoverManager } from './aiTakeoverManager.js';
 import { playerNameManager } from './playerNameManager.js';
 import { lightningManager } from './lightningManager.js';
 import { engineAdapter } from './engineAdapter.js';
+import { enginePlayback } from './enginePlayback.js';
+import { createState, apply, makeRng } from '../../shared/engine.mjs';
+import { decodeReplayAction } from '../../shared/replayCodec.mjs';
 import { loadLocalGame } from './replayShare.js';
 import { FlyingChessGameBase, createGameRuntime } from './gameBase.js';
 import './titlesHoverCard.js';
@@ -225,10 +228,63 @@ class FlyingChessGame extends FlyingChessGameBase {
                 uiUpdater.rotateBoard(0);
             }
 
+            // 续局：战报是前端累积的，重开页面就丢了——按动作流静默重跑一遍补回来
+            if (resumePending) {
+                const logContainer = document.getElementById('gameInfoContent');
+                this.restorePlaybackLog(logContainer ? logContainer.lastElementChild : null);
+            }
+
             console.log('飞行棋游戏初始化完成');
         } catch (error) {
             console.error('游戏初始化失败:', error);
         }
+    }
+
+    /**
+     * 续局补战报：前端只留了动作流，按种子静默重跑一遍喂给回放层，把历史战报补回来。
+     * 称号/骰子统计在续局时已从存档恢复，重跑期间先记账、跑完还原，避免重复累加。
+     */
+    async restorePlaybackLog(startLine = null) {
+        const actions = engineAdapter.actions || [];
+        const state = engineAdapter.state;
+        if (!state || !actions.length) return;
+
+        const keepTitleStats = structuredClone(gameState.titleStats);
+        const keepDiceStats = structuredClone(gameState.diceStatistics);
+        const keepAnnounced = gameState.announcedTitles ? new Map(gameState.announcedTitles) : null;
+
+        const colors = [...state.order];
+        const rng = makeRng(engineAdapter.seed);
+        let sim = createState({
+            players: colors,
+            piecesPerPlayer: state.players[colors[0]].chesses.length,
+            happy: state.happy,
+            skillMode: state.skillMode
+        });
+
+        enginePlayback.setAnnounceSilent?.(true);
+        try {
+            for (let index = 0; index < actions.length; index += 1) {
+                const item = actions[index];
+                try {
+                    const out = apply(sim, item[0], decodeReplayAction(item.slice(1)), rng);
+                    sim = out.state;
+                    await enginePlayback.replay(out.events);
+                } catch (error) {
+                    console.warn('[续局] 战报重放在第 ' + (index + 1) + ' 手停住:', error.message);
+                    break;
+                }
+            }
+        } finally {
+            enginePlayback.setAnnounceSilent?.(false);
+        }
+
+        gameState.titleStats = keepTitleStats;
+        gameState.diceStatistics = keepDiceStats;
+        if (keepAnnounced) gameState.announcedTitles = keepAnnounced;
+
+        // 补出来的历史排在前，「等待操作」那条挪到最后
+        if (startLine && startLine.parentNode) startLine.parentNode.appendChild(startLine);
     }
 
     /**

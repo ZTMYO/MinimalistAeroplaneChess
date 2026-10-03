@@ -13,7 +13,11 @@ const START_GRACE_MS = 1500;
 
 /** 刚产生的这一段演出大约要多久（与客户端行动条同一份时长表） */
 let paceOf = () => 0;
-timingPromise.then(({ eventsDuration }) => { paceOf = eventsDuration; }).catch(() => {});
+let itemThinkMs = 0;
+timingPromise.then(({ eventsDuration, ITEM_THINK_MS }) => {
+    paceOf = eventsDuration;
+    itemThinkMs = ITEM_THINK_MS;
+}).catch(() => {});
 
 class BotDriver {
     /**
@@ -81,11 +85,13 @@ class BotDriver {
         }
 
         let applied;
+        let action = null;
         try {
             const difficulty = typeof this.deps.difficultyOf === 'function'
                 ? this.deps.difficultyOf(gameSession, color)
                 : undefined;
-            applied = this.deps.applyAction(gameSession, color, chooseAction(session.state, color, { difficulty })) || {};
+            action = chooseAction(session.state, color, { difficulty });
+            applied = this.deps.applyAction(gameSession, color, action) || {};
         } catch (error) {
             // 出不了手就停下，交给回合看门狗兜底，别在这儿死循环
             console.error(`[AI] 玩家${color} 出手被拒：${error.message}`);
@@ -101,8 +107,11 @@ class BotDriver {
             : false;
         const pace = acked ? 0 : paceOf(events);
         // 「思考」只看下一手是什么：要选子就停一下（看着像在挑棋子），要掷骰就不停——
-        // 换手即掷、连投 6 奖励也立刻再掷
-        const think = session.state.phase === 'selecting' ? paceOf(events) : this.thinkDelay();
+        // 换手即掷、连投 6 奖励也立刻再掷。用道具同样要停一拍：掷骰有闪烁顶着，
+        // 道具没演出，不停就会像凭空蹦出来
+        const isItemAction = Boolean(action && action.type === 'item');
+        const think = session.state.phase === 'selecting' ? paceOf(events)
+            : (isItemAction ? itemThinkMs : this.thinkDelay());
         this.schedule(gameSession, pace + think);
     }
 

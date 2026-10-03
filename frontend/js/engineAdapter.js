@@ -196,6 +196,19 @@ class EngineAdapter {
         return this._apply({ type: 'move', chessIndex });
     }
 
+    /**
+     * 联机本地抢先演一手：按本地权威状态推演出这一手并直接接管，
+     * 不记动作流也不落档——随后到达的权威快照会整体覆盖它。
+     */
+    previewAndAdopt(action) {
+        if (!this.ready) return null;
+        const result = preview(this.state, this.state.currentPlayer, action);
+        if (!result.ok) return null;
+        this.state = result.state;
+        countBeats(this.defeatCounts, result.events);
+        return result;
+    }
+
     /** 买下道具：扣积分并记下激活态（选点/选子由后续动作消费） */
     activateItem(item) {
         return this._apply({ type: 'item', item });

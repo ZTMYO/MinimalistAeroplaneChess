@@ -13,6 +13,13 @@ class EnergyDisplay {
         // 为每个玩家创建积分条
         for (let player = 1; player <= 4; player++) {
             this.createEnergyBar(player);
+            // 快照可能先于积分条落地：建好条就把当前值补上，别停在初始的 0
+            const energy = window.energyManager && window.energyManager.getEnergy
+                ? window.energyManager.getEnergy(player)
+                : undefined;
+            if (Number.isFinite(energy)) {
+                this.updateEnergyBar(player, energy);
+            }
         }
     }
 

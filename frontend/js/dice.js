@@ -63,7 +63,7 @@ class Dice {
         if (isPresetRoll) {
             const value = this.presetDiceValue;
             this.presetDiceValue = null;
-            // 遥控骰子必须走道具骰：不参与连投奖励与三次 6 计数，战报也记成「使用了道具」
+            // 遥控骰子必须走道具骰：不参与连投奖励与三次 6 计数，点数也并进道具那一条战报
             this.gameState.diceValue = value;
             this.gameState.isRemoteDice = true;
             diceDisplay?.classList.add('remote-dice');

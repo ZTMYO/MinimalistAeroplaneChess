@@ -5,6 +5,7 @@
 export const STEP_MS = 190;      // 逐格走子
 export const DICE_FLASH_MS = 500; // 骰子闪烁定格
 export const SKIP_SHAKE_MS = 900; // 无子可动：定格 + 抖动
+export const ITEM_THINK_MS = 700; // 用道具前那一下停顿
 
 const EVENT_MS = {
     dice: DICE_FLASH_MS,
@@ -17,6 +18,7 @@ const EVENT_MS = {
     collision_bonus: 200,
     teleport: 400,
     reset: 500,
+    item_activate: ITEM_THINK_MS,
     mystery_box: 2100, // 开盒演出：1s 图标 + 1s 数值
 };
 

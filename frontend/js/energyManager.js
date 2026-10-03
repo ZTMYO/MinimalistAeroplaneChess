@@ -56,6 +56,12 @@ class EnergyManager {
         return this.skillModeEnabled;
     }
 
+    // 快照里带 skillMode：权威来源说了算，本地配置缺失时靠它把积分系统打开
+    enableSkillMode() {
+        this.skillModeEnabled = true;
+        this._updateHintText();
+    }
+
     /**
      * 设置积分显示模块引用
      */

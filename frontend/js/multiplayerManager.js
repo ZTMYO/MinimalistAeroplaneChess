@@ -1,6 +1,9 @@
 import { reconnectManager } from './reconnectManager.js';
 import { nicknameGenerator } from './nicknameGenerator.js';
 
+// 本地乐观改动（AI 名单）最多压这么久：服务端一直没回声就别再挡着权威名单
+const AI_OP_TTL_MS = 4000;
+
 class MultiplayerManager {
     constructor() {
         this.wsClient = null;
@@ -11,6 +14,7 @@ class MultiplayerManager {
         this.players = new Map(); // playerId -> playerData
         this.aiPlayers = new Map(); // AI玩家数据
         this.aiDifficulties = new Map(); // AI难度设置
+        this._pendingAIOps = []; // 还没被服务端回声确认的 AI 名单改动（点太快也不回弹）
         this.playerReadyStatus = new Map(); // playerId -> isReady 准备状态
         this.currentEmojiIndex = 0;
         this.emojis = null;
@@ -273,6 +277,18 @@ class MultiplayerManager {
     }
 
     bindEvents() {
+        // 切回前台：房间状态可能早就过期了（掉线超时被移出，但页面还停在旧面板上）。
+        // 后台挂起的 socket 常常还是「假活着」，所以一律按断线重走一遍：重连后会自动
+        // rejoinRoom，人还在就刷新面板；被移出 / 局已开由错误分支把他送回首页
+        this.visibilityHandler = () => {
+            if (document.visibilityState !== 'visible') return;
+            const roomCode = this.roomCode || (this.currentRoom && this.currentRoom.code);
+            // 只在「确实已在一间房间里」时核对：建房/加入的加载阶段房间号可能还是空的或上一间的残留
+            if (!roomCode || !this.currentRoom || this.isLeavingRoom || this.isDestroyed) return;
+            this.wsClient?.treatAsDisconnected?.('visibility_resume');
+        };
+        document.addEventListener('visibilitychange', this.visibilityHandler);
+
         // 恢复保存的昵称到输入框
         this.restoreSavedNickname();
 
@@ -874,27 +890,26 @@ class MultiplayerManager {
                     this.requestReconnectInfo();
 
                     // 移动端杀后台/切回前台场景：页面不会刷新，但WebSocket会重新建立。
-                    // 这里相当于“无刷新刷新”：恢复roomCode并主动发rejoinRoom同步最新房间状态。
+                    // 这里相当于“无刷新刷新”：恢复roomCode并主动同步最新房间状态。
                     try {
                         const urlParams = new URLSearchParams(window.location.search);
                         const urlRoom = (urlParams.get('room') || '').toUpperCase().trim();
                         const storedRoom = (sessionStorage.getItem('aeroplaneChess_roomCode') || '').toUpperCase().trim();
                         const reconnectRoom = (reconnectManager && reconnectManager.roomCode ? String(reconnectManager.roomCode) : '').toUpperCase().trim();
 
+                        // 只有「确实在一间已确认的房间里」才自动同步。建房/加入的加载阶段
+                        // 房间面板也是开着的，但那时候的候选房间号可能来自上一间的残留，
+                        // 拿它去 join 只会拿到「房间不存在」，人被误判成房间没了
                         const candidateRoom = urlRoom || reconnectRoom || storedRoom;
-                        if (candidateRoom && candidateRoom.length === 4) {
-                            // 如果当前在房间界面/或本地认为自己仍在房间，优先自动同步
-                            const shouldAutoSync = this.isRoomConfigActive() || !!this.roomCode;
+                        if (candidateRoom && candidateRoom.length === 4 && this.currentRoom) {
                             if (!this.roomCode) {
                                 this.roomCode = candidateRoom;
                             }
-                            if (shouldAutoSync) {
-                                setTimeout(() => {
-                                    if (!this.isDestroyed && !this.isLeavingRoom) {
-                                        this.syncRoomStateAfterReconnect();
-                                    }
-                                }, 50);
-                            }
+                            setTimeout(() => {
+                                if (!this.isDestroyed && !this.isLeavingRoom) {
+                                    this.syncRoomStateAfterReconnect();
+                                }
+                            }, 50);
                         }
                     } catch (e) {
                         // ignore
@@ -1140,10 +1155,12 @@ class MultiplayerManager {
             return;
         }
 
-        console.log('发送 rejoinRoom 请求同步状态...');
+        console.log('发送 join_room 请求同步状态...');
 
-        // 发送重新加入房间请求
-        this.wsClient.sendMessage('rejoinRoom', {
+        // 这里用 join_room 而不是 rejoinRoom：切回前台晚了一步、已经被超时移出的人，
+        // join_room 还能把他放回座位（房间没开打、还有空位）；rejoinRoom 只会回「您不在该房间中」。
+        // 开打了 / 房间没了 / 满员这三种服务端会带 code 拒绝，客户端收到后送他回首页
+        this.wsClient.sendMessage('join_room', {
             roomCode: this.roomCode
         });
     }
@@ -1190,15 +1207,16 @@ class MultiplayerManager {
                 this.updateReconnectButtonVisibility(canReconnect, roomCode);
 
                 // 自动重连：移动端切回前台/杀后台恢复时，用户往往不会主动刷新或点击“重连”
-                // 如果URL明确指向某个房间，且服务端确认可重连，则自动发送rejoinRoom同步状态
+                // 如果URL明确指向某个房间，或服务端给的房间就是本地这一间，则自动同步状态
                 try {
                     const urlParams = new URLSearchParams(window.location.search);
                     const urlRoom = (urlParams.get('room') || '').toUpperCase().trim();
                     const normalizedRoomCode = (roomCode || '').toUpperCase().trim();
 
+                    // 只认同「就是本地这一间」的房间号：光看面板开着会把建房/加入加载阶段的
+                    // 上一间残留房间号也算进来，拿它去 join 只会得到「房间不存在」
                     const isRoomContext = !!(
                         (normalizedRoomCode && urlRoom && normalizedRoomCode === urlRoom) ||
-                        this.isRoomConfigActive() ||
                         (this.roomCode && normalizedRoomCode && this.roomCode === normalizedRoomCode)
                     );
 
@@ -1780,6 +1798,14 @@ class MultiplayerManager {
 
             case 'error':
                 console.error('服务器错误:', data.message);
+                // 房间没了 / 局已开打 / 已被移出 / 满员：本地那套房间上下文已经过期（超时被移除、后台切回来等），
+                // 面板里留着也是空壳，清掉并回首页；从房间列表手动输码加入的照旧走内联报错
+                const staleRoomCodes = ['gameStarted', 'roomGone', 'notInRoom', 'roomFull'];
+                if (staleRoomCodes.includes(data.code)
+                    && (this.currentRoom || this.isRoomConfigActive?.())) {
+                    this.returnHomeForStaleRoom(data.code);
+                    break;
+                }
                 if (data.message && data.message.includes && (data.message.includes('房间') || data.message.includes('游戏正在进行中'))) {
                     this.showJoinRoomError(data.message);
                     this.clearRoomCodeInputs();
@@ -1892,7 +1918,7 @@ class MultiplayerManager {
 
                     // 更新AI玩家显示
                     if (this.isHost && data.room.settings && data.room.settings.aiPlayers) {
-                        this.updateAIPlayersDisplay(data.room.settings.aiPlayers);
+                        this.applyServerAIPlayers(data.room.settings.aiPlayers);
                     }
 
                     this.updatePlayerDisplay();
@@ -1927,7 +1953,7 @@ class MultiplayerManager {
 
                     // 更新AI玩家显示
                     if (this.isHost && data.room.settings && data.room.settings.aiPlayers) {
-                        this.updateAIPlayersDisplay(data.room.settings.aiPlayers);
+                        this.applyServerAIPlayers(data.room.settings.aiPlayers);
                     }
 
                     this.updatePlayerDisplay();
@@ -1980,7 +2006,7 @@ class MultiplayerManager {
                     this.updatePieceCountDisplay(data.pieceCount);
                 }
                 if (data.aiPlayers !== undefined) {
-                    this.updateAIPlayersDisplay(data.aiPlayers);
+                    this.applyServerAIPlayers(data.aiPlayers);
                 }
 
                 // 更新房间信息显示（包括游戏配置）
@@ -1998,12 +2024,8 @@ class MultiplayerManager {
 
             case 'aiPlayerAdded':
                 console.log('AI玩家添加成功:', data.aiPlayer);
-                // 更新本地房间数据
-                if (this.currentRoom && this.currentRoom.settings) {
-                    this.currentRoom.settings.aiPlayers = data.room.settings.aiPlayers;
-                }
                 if (data.room && data.room.settings && data.room.settings.aiPlayers) {
-                    this.updateAIPlayersDisplay(data.room.settings.aiPlayers);
+                    this.applyServerAIPlayers(data.room.settings.aiPlayers);
                 }
                 // 更新房间信息显示（包含人数统计）
                 this.updateRoomInfo();
@@ -2011,12 +2033,8 @@ class MultiplayerManager {
 
             case 'aiPlayerRemoved':
                 console.log('AI玩家移除成功:', data.colorIndex);
-                // 更新本地房间数据
-                if (this.currentRoom && this.currentRoom.settings) {
-                    this.currentRoom.settings.aiPlayers = data.room.settings.aiPlayers;
-                }
                 if (data.room && data.room.settings && data.room.settings.aiPlayers) {
-                    this.updateAIPlayersDisplay(data.room.settings.aiPlayers);
+                    this.applyServerAIPlayers(data.room.settings.aiPlayers);
                 }
                 // 更新房间信息显示（包含人数统计）
                 this.updateRoomInfo();
@@ -2024,12 +2042,8 @@ class MultiplayerManager {
 
             case 'aiDifficultyUpdated':
                 console.log('AI玩家难度更新成功:', data.colorIndex, data.difficulty);
-                // 更新本地房间数据
-                if (this.currentRoom && this.currentRoom.settings) {
-                    this.currentRoom.settings.aiPlayers = data.room.settings.aiPlayers;
-                }
                 if (data.room && data.room.settings && data.room.settings.aiPlayers) {
-                    this.updateAIPlayersDisplay(data.room.settings.aiPlayers);
+                    this.applyServerAIPlayers(data.room.settings.aiPlayers);
                 }
                 // 更新房间信息显示（包含人数统计）
                 this.updateRoomInfo();
@@ -2706,6 +2720,22 @@ class MultiplayerManager {
     }
 
     // 显示房间选择界面
+    /** 房间没了 / 局已开打：本地房间上下文已经过期，清掉并回首页（首页会说明原因） */
+    returnHomeForStaleRoom(reason = 'roomGone') {
+        this._roomLeftConfirmed = true; // 别让这次跳转再触发一轮重连提示
+        this.stopPublicRoomsAutoRefresh?.();
+        this.currentRoom = null;
+        this.roomCode = null;
+        this.players.clear();
+        this.aiPlayers.clear();
+        this._pendingAIOps = [];
+        try {
+            window.location.replace(`/?reason=${encodeURIComponent(reason)}`);
+        } catch (error) {
+            window.location.href = '/';
+        }
+    }
+
     showRoomSelection() {
         this.ensureOnlineMultiplayerPanelVisible();
         document.getElementById('roomConfig').style.display = 'none';
@@ -3728,12 +3758,89 @@ class MultiplayerManager {
     // 添加AI玩家
     addAIPlayer(color) {
         if (!this.isHost || !this.wsClient) return;
+
+        // 先本地落位再上报：等服务端广播回来才画，点一下要愣一个来回。
+        // 昵称按服务端同一套规则重排（简单 Bot-N、困难 AI-N，各自按颜色升序），广播回来不会跳字
+        if (!this.currentRoom) this.currentRoom = { settings: {} };
+        if (!this.currentRoom.settings) this.currentRoom.settings = {};
+        if (!Array.isArray(this.currentRoom.settings.aiPlayers)) this.currentRoom.settings.aiPlayers = [];
+        const aiPlayers = this.currentRoom.settings.aiPlayers;
+        if (!aiPlayers.some(ai => ai.color === color)) {
+            this._recordAIOp({ type: 'add', color, difficulty: 'easy' });
+            aiPlayers.push({ color, difficulty: 'easy', nickname: '' });
+            this.renumberAIPlayers(aiPlayers);
+            this.updateAIPlayersDisplay(aiPlayers);
+        }
+
         this.wsClient.addAIPlayer(color, 'easy');
+    }
+
+    /** 给 AI 重排昵称：与服务端 add/remove/难度切换时的同一套规则 */
+    renumberAIPlayers(aiPlayers = []) {
+        [['easy', 'Bot'], ['hard', 'AI']].forEach(([difficulty, prefix]) => {
+            aiPlayers
+                .filter(ai => (ai.difficulty || 'easy') === difficulty)
+                .sort((a, b) => a.color - b.color)
+                .forEach((ai, index) => {
+                    ai.nickname = `${prefix}-${index + 1}`;
+                });
+        });
+    }
+
+    /** 记一条本地乐观改动（同一目标只留最新一条），等回声里体现了它就不再压着名单 */
+    _recordAIOp(op) {
+        this._pendingAIOps = this._pendingAIOps.filter(
+            (item) => !(item.type === op.type && item.color === op.color)
+        );
+        this._pendingAIOps.push({ ...op, at: Date.now() });
+    }
+
+    /**
+     * 服务端下发的 AI 名单落到本地：本地还没被回声确认的改动压在它上面再渲染。
+     * 点得快时，先那一下的回声会晚于后一下的点击到达，不压一下就会把新改动顶回旧值。
+     */
+    applyServerAIPlayers(serverAIPlayers = []) {
+        const list = (serverAIPlayers || []).map((ai) => ({ ...ai }));
+        const now = Date.now();
+        this._pendingAIOps = this._pendingAIOps.filter((op) => {
+            if (now - op.at > AI_OP_TTL_MS) return false;
+            const current = list.find((ai) => ai.color === op.color);
+            if (op.type === 'add') return !current;
+            if (op.type === 'remove') return Boolean(current);
+            return !current || current.difficulty !== op.difficulty;
+        });
+        for (const op of this._pendingAIOps) {
+            const index = list.findIndex((ai) => ai.color === op.color);
+            if (op.type === 'add' && index < 0) {
+                list.push({ color: op.color, difficulty: op.difficulty || 'easy', nickname: '' });
+            } else if (op.type === 'remove' && index >= 0) {
+                list.splice(index, 1);
+            } else if (op.type === 'difficulty' && index >= 0) {
+                list[index].difficulty = op.difficulty;
+            }
+        }
+        this.renumberAIPlayers(list);
+
+        if (this.currentRoom) {
+            if (!this.currentRoom.settings) this.currentRoom.settings = {};
+            this.currentRoom.settings.aiPlayers = list;
+        }
+        this.updateAIPlayersDisplay(list);
     }
 
     // 移除AI玩家
     removeAIPlayer(color) {
         if (!this.isHost || !this.wsClient) return;
+
+        const aiPlayers = (this.currentRoom && this.currentRoom.settings && this.currentRoom.settings.aiPlayers) || [];
+        if (aiPlayers.some(ai => ai.color === color)) {
+            this._recordAIOp({ type: 'remove', color });
+            const rest = aiPlayers.filter(ai => ai.color !== color);
+            this.renumberAIPlayers(rest);
+            this.currentRoom.settings.aiPlayers = rest;
+            this.updateAIPlayersDisplay(rest);
+        }
+
         this.wsClient.removeAIPlayer(color);
     }
 
@@ -3760,37 +3867,9 @@ class MultiplayerManager {
         if (this.currentRoom && this.currentRoom.settings && this.currentRoom.settings.aiPlayers) {
             const aiPlayer = this.currentRoom.settings.aiPlayers.find(ai => ai.color === color);
             if (aiPlayer) {
-                // 更新难度
+                this._recordAIOp({ type: 'difficulty', color, difficulty: nextDifficulty });
                 aiPlayer.difficulty = nextDifficulty;
-
-                // 立即重新计算所有AI玩家的昵称（确保编号连续）
-                // 按难度分类所有AI玩家
-                const easyBots = [];
-                const hardBots = [];
-
-                this.currentRoom.settings.aiPlayers.forEach(ai => {
-                    if (ai.difficulty === 'hard') {
-                        hardBots.push(ai.color);
-                    } else {
-                        easyBots.push(ai.color);
-                    }
-                });
-
-                // 按颜色排序
-                easyBots.sort((a, b) => a - b);
-                hardBots.sort((a, b) => a - b);
-
-                // 重新计算所有AI玩家的昵称
-                this.currentRoom.settings.aiPlayers.forEach(ai => {
-                    if (ai.difficulty === 'hard') {
-                        const indexInHard = hardBots.indexOf(ai.color) + 1;
-                        ai.nickname = `AI-${indexInHard}`;
-                    } else {
-                        const indexInEasy = easyBots.indexOf(ai.color) + 1;
-                        ai.nickname = `Bot-${indexInEasy}`;
-                    }
-                });
-
+                this.renumberAIPlayers(this.currentRoom.settings.aiPlayers);
 
                 // 立即重新渲染 AI 玩家显示
                 this.updateAIPlayersDisplay(this.currentRoom.settings.aiPlayers);
@@ -3892,12 +3971,17 @@ class MultiplayerManager {
         // 检查是否所有玩家都准备好了
         const allPlayersReady = this.checkAllPlayersReady();
 
-        // 计算在线真实玩家数
-        const onlineRealPlayerCount = Array.from(this.players.values())
-            .filter(p => !p.isAI && (p.isConnected !== false)).length;
+        // 和服务端同一条线：座位数（真人 + AI）够 2 就能开。
+        // 只数「在线真人」会把房主 + AI 的局也挡住，而服务端本来就允许（它只看房间人数）。
+        // 离线真人另算：他们挡在 checkAllPlayersReady 那一条上，等超时移除或房主踢掉
+        const seatedPlayers = this.players.size + this._aiSeatCount();
+        startBtn.disabled = seatedPlayers < 2 || !allPlayersReady;
+    }
 
-        // 至少需要2个在线真实玩家，且所有玩家都准备好
-        startBtn.disabled = onlineRealPlayerCount < 2 || !allPlayersReady;
+    /** 房间设置里的 AI 座位数 */
+    _aiSeatCount() {
+        const aiPlayers = this.currentRoom && this.currentRoom.settings && this.currentRoom.settings.aiPlayers;
+        return Array.isArray(aiPlayers) ? aiPlayers.length : 0;
     }
 
     // 检查是否所有玩家都准备好了
@@ -3929,12 +4013,10 @@ class MultiplayerManager {
     startGame() {
         if (!this.isHost || !this.wsClient) return;
 
-        // 计算在线真实玩家数
-        const onlineRealPlayerCount = Array.from(this.players.values())
-            .filter(p => !p.isAI && (p.isConnected !== false)).length;
-
-        if (onlineRealPlayerCount < 2) {
-            this.showError('至少需要2个在线玩家才能开始游戏');
+        // 计算座位数（真人 + AI），与服务端 createGameSession 的口径一致
+        const seatedPlayers = this.players.size + this._aiSeatCount();
+        if (seatedPlayers < 2) {
+            this.showError('至少需要2名玩家才能开始游戏');
             return;
         }
 
@@ -3948,8 +4030,18 @@ class MultiplayerManager {
         const startBtn = document.getElementById('multiplayerStartGame');
         if (startBtn) startBtn.disabled = true;
 
+        // 面板上的设置随开局一起交给服务端：中途那几条 updateSettings 万一没送到，
+        // 开局用的也是房主眼前这套配置（道具模式、欢乐模式、起手积分）
+        const settings = {};
+        const skillBox = document.getElementById('skillModeCheckbox');
+        if (skillBox) settings.skillMode = skillBox.checked;
+        const happyBox = document.getElementById('happyModeCheckbox');
+        if (happyBox) settings.happyMode = happyBox.checked;
+        const energySlider = document.getElementById('onlineInitialEnergySlider');
+        if (energySlider) settings.initialEnergy = [0, 15, 30, 50, 70, 100][Number(energySlider.value) || 0] || 0;
+
         // 使用sendMessage方法而不是直接调用send
-        this.wsClient.sendMessage('startGame');
+        this.wsClient.sendMessage('startGame', { settings });
     }
 
     // 开始多人游戏
@@ -4273,6 +4365,7 @@ class MultiplayerManager {
         this.pieceCount = 4;
         this.aiPlayers.clear();
         this.aiDifficulties.clear();
+        this._pendingAIOps = [];
 
         // 清理sessionStorage中的联机相关数据
         sessionStorage.removeItem('multiplayerRoomCode');
@@ -4470,6 +4563,11 @@ class MultiplayerManager {
         if (this.eventHandler) {
             document.removeEventListener('click', this.eventHandler);
             this.eventHandler = null;
+        }
+
+        if (this.visibilityHandler) {
+            document.removeEventListener('visibilitychange', this.visibilityHandler);
+            this.visibilityHandler = null;
         }
 
         // 清理准备按钮事件监听器

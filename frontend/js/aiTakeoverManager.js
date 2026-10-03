@@ -319,9 +319,10 @@ class AITakeoverManager {
      */
     toggleOnlineMultiplayerTakeover() {
         if (this.isActive) {
-            this.disableTakeover();
-            // 通知其他玩家AI托管已关闭
+            // 先把原始昵称同步回去再去掉托管：disableTakeover 里 restoreOriginalNames 会把
+            // originalNames 清空，顺序反了就再也拿不回原名，服务端那边一直挂着【Bot】
             this.syncAITakeoverState(false);
+            this.disableTakeover();
         } else {
             // 开启托管时的联机同步由 enableTakeover 内部处理，避免重复发送
             this.enableTakeover();
