@@ -11,7 +11,8 @@ export default defineConfig({
         game: 'game.html',
         admin: 'admin.html',
         spectate: 'spectate.html',
-        replay: 'replay.html'
+        replay: 'replay.html',
+        stats: 'stats.html'
       }
     }
   },
@@ -43,11 +44,17 @@ export default defineConfig({
         else if (url === '/spectate') {
           req.url = '/spectate.html';
         }
+        else if (url === '/stats') {
+          req.url = '/stats.html';
+        }
         else if (url.startsWith('/game?')) {
           req.url = url.replace('/game?', '/game.html?');
         }
         else if (url.startsWith('/admin?')) {
           req.url = url.replace('/admin?', '/admin.html?');
+        }
+        else if (url.startsWith('/stats?')) {
+          req.url = url.replace('/stats?', '/stats.html?');
         }
         else if (url.startsWith('/spectate?')) {
           req.url = url.replace('/spectate?', '/spectate.html?');

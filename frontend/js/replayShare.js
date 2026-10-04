@@ -87,46 +87,61 @@ export function replayFileName(archive) {
     return `[极简飞行棋]${summary.mode}${summary.players}人${summary.pieces}子${summary.kind}-${replayTag()}.json`;
 }
 
-export function listRecentReplays() {
+/** 人机 / 联机各存各的最近 RECENT_MAX 场；本地多人不留档 */
+const RECENT_MODES = ['ai', 'online'];
+
+const recentKeyOf = (mode) => RECENT_KEY + '.' + mode;
+
+function readRecentList(mode) {
     try {
-        const list = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-        if (!Array.isArray(list)) return [];
+        const list = JSON.parse(localStorage.getItem(recentKeyOf(mode)) || '[]');
         // 没有动作的档案回放不了（联机局曾误存过这种），不摆出来
-        return list.filter((item) => (item.archive?.actionCount || item.archive?.actions?.length || 0) > 0);
+        return Array.isArray(list) ? list.filter((item) => (item.archive?.actionCount || item.archive?.actions?.length || 0) > 0) : [];
     } catch (error) {
         return [];
     }
 }
 
-function writeRecentReplays(list) {
+function writeRecentReplays(list, mode) {
     try {
-        localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX)));
+        localStorage.setItem(recentKeyOf(mode), JSON.stringify(list.slice(0, RECENT_MAX)));
     } catch (error) { }
 }
 
 /* 同一局重复结算时不重复入库：内容里挑几个不会变的字段做键 */
 function recentId(archive) {
-    return `${archive.seed}-${archive.actionCount || (archive.actions || []).length}-${(archive.colors || []).join('')}`;
+    return `${archive.seed}-${archive.actionCount}-${(archive.colors || []).join('')}`;
 }
 
-/** 记一场对局：同局只留一份、最新的排最前、只保最近 5 场 */
+/** 这一场的模式（ai / online / local），按档案里记的模式归位 */
+function recentModeOf(archive) {
+    return replaySummary(archive).modeKey;
+}
+
+/** 记一场对局：同局只留一份、最新的排最前、只保最近 5 场；本地多人不入档 */
 export function addRecentReplay(archive) {
     if (!archive || !Array.isArray(archive.colors)) return null;
+    const mode = recentModeOf(archive);
+    if (!RECENT_MODES.includes(mode)) return null;
     const id = recentId(archive);
-    const list = listRecentReplays().filter((item) => item.id !== id);
+    const list = readRecentList(mode).filter((item) => item.id !== id);
     list.unshift({ id, at: Date.now(), archive: encodeArchive(archive) });
-    writeRecentReplays(list);
+    writeRecentReplays(list, mode);
     return id;
 }
 
-export function removeRecentReplay(id) {
-    writeRecentReplays(listRecentReplays().filter((item) => item.id !== id));
+/** 某一模式的最近对局列表 */
+export function listRecentReplays(mode) {
+    return RECENT_MODES.includes(mode) ? readRecentList(mode) : [];
 }
 
-/** 取某一场的档案（紧凑形式），没有就返回 null */
-export function readRecentReplay(id) {
-    const item = listRecentReplays().find((entry) => entry.id === id);
-    return item ? item.archive : null;
+/** 取某一场的档案（紧凑形式）：不传模式就在两个模式里找（回放页只拿得到 id） */
+export function readRecentReplay(id, mode = null) {
+    for (const target of (mode ? [mode] : RECENT_MODES)) {
+        const item = readRecentList(target).find((entry) => entry.id === id);
+        if (item) return item.archive;
+    }
+    return null;
 }
 
 /* ------------------------- 单机续局：本地存档 ------------------------- */

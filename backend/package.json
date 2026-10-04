@@ -1,6 +1,6 @@
 {
   "name": "minimalistAeroplaneChess-backend",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "极简飞行棋后端服务器",
   "main": "server.cjs",
   "scripts": {

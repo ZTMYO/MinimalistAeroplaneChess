@@ -26,9 +26,6 @@ body {
     }
 }
 
-
-
-
 @keyframes dicePenaltyTremble {
 
     0%,
@@ -2226,8 +2223,6 @@ use[href="#checkmark"] {
     text-shadow: none;
 }
 
-
-
 /* 特殊骰子点数（6点）、连投奖励文字*/
 .dice-special,
 .consecutive-bonus {
@@ -2448,7 +2443,6 @@ use[href="#checkmark"] {
 .online-multiplayer-config,
 .local-multiplayer-config,
 .ai-battle-config,
-.replay-config,
 .room-selection,
 .room-config {
     display: none;
@@ -2483,11 +2477,6 @@ use[href="#checkmark"] {
 .online-multiplayer-config,
 .local-multiplayer-config,
 .ai-battle-config,
-.replay-config {
-    width: 100%;
-    will-change: opacity;
-}
-
 .online-multiplayer-config {
     position: relative;
 }
@@ -2535,22 +2524,17 @@ use[href="#checkmark"] {
     background-color: var(--player-3-color);
 }
 
-/* 天蓝色 */
 #menuAiBtn {
     background-color: var(--player-4-color);
 }
 
-/* 浅红色 */
 #menuLocalBtn {
     background-color: var(--player-1-color);
 }
 
-/* 薄荷绿 */
-#menuRulesBtn {
+#menuStatsBtn {
     background-color: var(--player-2-color);
 }
-
-/* 浅橘色 */
 
 .menu-card-btn:hover {
     transform: translateY(-2px);
@@ -4851,7 +4835,7 @@ use[href="#checkmark"] {
     opacity: 0.8;
 }
 
-.footer-replay-link {
+.footer-link {
     padding: 0;
     border: none;
     background: none;
@@ -4861,7 +4845,7 @@ use[href="#checkmark"] {
     cursor: pointer;
 }
 
-.footer-replay-link:hover {
+.footer-link:hover {
     opacity: 0.65;
 }
 
@@ -4934,8 +4918,7 @@ use[href="#checkmark"] {
 
 .local-multiplayer-config,
 .online-multiplayer-config,
-.ai-battle-config,
-.replay-config {
+.ai-battle-config {
     animation: panelFlipIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
     backface-visibility: hidden;
     transform-style: preserve-3d;
@@ -6064,81 +6047,8 @@ use[href="#checkmark"] {
 }
 
 /* 对局回放：面板里只放一句说明和一个选文件的入口 */
-.replay-config-body {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    padding: 24px 16px;
-    text-align: center;
-}
-
-.replay-config-hint {
-    margin: 0;
-    font-size: 14px;
-    color: var(--ui-default-color);
-}
-
-.replay-config-choose {
-    position: static;
-    padding: 12px 24px;
-    font-size: 16px;
-}
 
 /* 固定高度的列表区：条数变化、删掉一条都不会让面板跟着长缩，多了自己滚 */
-.recent-replay-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    width: 100%;
-    max-width: 460px;
-    height: 292px;
-    padding: 8px;
-    overflow-y: auto;
-}
-
-.recent-replay-list::-webkit-scrollbar {
-    width: 4px;
-}
-
-.recent-replay-list::-webkit-scrollbar-track {
-    background: var(--shadow-1);
-    border-radius: 3px;
-}
-
-.recent-replay-list::-webkit-scrollbar-thumb {
-    background: var(--border-soft);
-    border-radius: 3px;
-}
-
-.recent-replay-list::-webkit-scrollbar-thumb:hover {
-    background: var(--border-medium);
-}
-
-.recent-replay-empty {
-    margin: auto;
-    font-size: 13px;
-    color: var(--ui-default-color);
-}
-
-.recent-replay-row {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 10px;
-    border: 1px solid var(--border-soft);
-    border-radius: 10px;
-    background: var(--bg-medium);
-}
-.recent-replay-row:hover {
-    border-color: var(--bot-accent);
-}
-.recent-replay-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-}
 
 .recent-replay-tag {
     padding: 1px 6px;
@@ -6165,24 +6075,6 @@ use[href="#checkmark"] {
 }
 
 /* 整行是打开回放的入口，左右两个图标各管一件事 */
-.recent-replay-open {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-    flex-direction: column;
-    gap: 2px;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-}
-
-.recent-replay-meta {
-    font-size: 11px;
-    color: var(--ui-default-color);
-}
 
 .recent-replay-icon {
     display: inline-flex;

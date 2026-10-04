@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统计数据</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script>try{document.documentElement.dataset.theme=localStorage.getItem("flyingChess.theme")==="dark"?"dark":"light";}catch(e){}</script>
+
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/stats.css">
+</head>
+
+<body class="stats-body">
+    <div class="stats-page">
+        <header class="stats-top">
+            <a class="back-btn stats-back" href="/" aria-label="返回首页">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+            </a>
+            <div class="stats-top-text">
+                <div class="stats-title-line">
+                    <h1>统计数据</h1>
+                    <div class="stats-mode-toggle" id="statsModeToggle">
+                        <button type="button" class="stats-mode-btn" data-mode="online">联机</button>
+                        <button type="button" class="stats-mode-btn" data-mode="ai">人机</button>
+                    </div>
+                </div>
+                <p class="stats-player"><span id="statsPlayerName">未命名玩家</span><em>数据存储在本地，换设备或清数据会重置</em></p>
+            </div>
+        </header>
+
+        <section class="stats-card">
+            <h2 class="stats-card-title">总览</h2>
+            <div class="stats-tiles" id="statsTotals"></div>
+            <h3 class="stats-sub-title">今日</h3>
+            <div class="stats-tiles" id="statsToday"></div>
+        </section>
+
+        <section class="stats-card">
+            <h2 class="stats-card-title">历史战绩 <em id="statsGamesSummary"></em>
+                <label class="stats-import-btn" for="statsReplayPicker">导入回放文件</label>
+                <input type="file" id="statsReplayPicker" accept=".json,.json.gz,.gz" hidden>
+            </h2>
+            <div class="stats-games" id="statsGames"></div>
+        </section>
+
+        <section class="stats-card">
+            <h2 class="stats-card-title">称号 <em id="statsTitleSummary"></em></h2>
+            <div class="stats-titles" id="statsTitles"></div>
+        </section>
+    </div>
+
+    <!-- 单局详情：直接复用结算模态框的翻转卡片（含称号轮播），这里只提供框体与容器 -->
+    <div class="modal-overlay" id="statsDetailModal">
+        <div class="modal-content stats-detail">
+            <button type="button" class="stats-detail-close" id="statsDetailClose" aria-label="关闭">×</button>
+            <h3 class="stats-detail-title" id="statsDetailTitle">对局详情</h3>
+            <p class="stats-detail-meta" id="statsDetailMeta"></p>
+            <div class="settlement-rankings" id="statsDetailPlayers"></div>
+            <div id="statsDetailAnalysis" hidden></div>
+            <div id="player-1-emoji" hidden></div>
+            <div id="player-2-emoji" hidden></div>
+            <div id="player-3-emoji" hidden></div>
+            <div id="player-4-emoji" hidden></div>
+        </div>
+    </div>
+
+    <script type="module" src="js/statsMain.js"></script>
+</body>
+
+</html>

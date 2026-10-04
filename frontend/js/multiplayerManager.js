@@ -1202,8 +1202,8 @@ class MultiplayerManager {
         switch (data.type) {
 
             case 'reconnectInfo': {
-                const canReconnect = !!(data.canReconnect ?? data.data?.canReconnect);
-                const roomCode = data.roomCode ?? data.data?.roomCode;
+                const canReconnect = Boolean(data.canReconnect);
+                const roomCode = data.roomCode;
                 this.updateReconnectButtonVisibility(canReconnect, roomCode);
 
                 // 自动重连：移动端切回前台/杀后台恢复时，用户往往不会主动刷新或点击“重连”
@@ -1265,8 +1265,7 @@ class MultiplayerManager {
             }
 
             case 'roomsList': {
-                const rooms = data.rooms || data.data?.rooms || [];
-                this.publicRooms = Array.isArray(rooms) ? rooms : [];
+                this.publicRooms = Array.isArray(data.rooms) ? data.rooms : [];
                 this.renderPublicRoomList();
                 break;
             }
@@ -3185,7 +3184,7 @@ class MultiplayerManager {
 
             if (player) {
                 // 只要准备了或者是AI，就添加selected类（显示为玩家填充色和白色表情）
-                const isReady = player.isReady || this.playerReadyStatus.get(player.id) || player.isHost || player.isAI;
+                const isReady = this.playerReadyStatus.get(player.id) || player.isHost || player.isAI;
                 if (isReady) {
                     option.classList.add('selected');
                     circle.classList.add('selected');
@@ -3971,17 +3970,9 @@ class MultiplayerManager {
         // 检查是否所有玩家都准备好了
         const allPlayersReady = this.checkAllPlayersReady();
 
-        // 和服务端同一条线：座位数（真人 + AI）够 2 就能开。
-        // 只数「在线真人」会把房主 + AI 的局也挡住，而服务端本来就允许（它只看房间人数）。
-        // 离线真人另算：他们挡在 checkAllPlayersReady 那一条上，等超时移除或房主踢掉
-        const seatedPlayers = this.players.size + this._aiSeatCount();
-        startBtn.disabled = seatedPlayers < 2 || !allPlayersReady;
-    }
-
-    /** 房间设置里的 AI 座位数 */
-    _aiSeatCount() {
-        const aiPlayers = this.currentRoom && this.currentRoom.settings && this.currentRoom.settings.aiPlayers;
-        return Array.isArray(aiPlayers) ? aiPlayers.length : 0;
+        // 至少要 2 个真人（AI 不算）：服务端 handleStartGame 的 room.players 也只算真人
+        const realPlayers = Array.from(this.players.values()).filter((p) => !p.isAI).length;
+        startBtn.disabled = realPlayers < 2 || !allPlayersReady;
     }
 
     // 检查是否所有玩家都准备好了
@@ -4013,10 +4004,9 @@ class MultiplayerManager {
     startGame() {
         if (!this.isHost || !this.wsClient) return;
 
-        // 计算座位数（真人 + AI），与服务端 createGameSession 的口径一致
-        const seatedPlayers = this.players.size + this._aiSeatCount();
-        if (seatedPlayers < 2) {
-            this.showError('至少需要2名玩家才能开始游戏');
+        const realPlayers = Array.from(this.players.values()).filter((p) => !p.isAI).length;
+        if (realPlayers < 2) {
+            this.showError('至少需要2个真人玩家才能开始游戏');
             return;
         }
 

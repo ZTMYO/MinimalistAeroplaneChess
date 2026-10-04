@@ -257,10 +257,7 @@ async function playBeat(event) {
 async function playCollide(event) {
     const { player, targetPlayer, chesses } = event;
     const energy = beatDisplayEnergy(event);
-    // 引擎给的 chesses 是叠子上每颗的 { player, index }（同一叠同属一家），兼容纯索引的老写法
-    const victims = (Array.isArray(chesses) ? chesses : []).map((entry) => (
-        entry && typeof entry === 'object' ? { player: entry.player ?? targetPlayer, index: entry.index } : { player: targetPlayer, index: entry }
-    ));
+    const victims = chesses;
     gameInfo.addStackCollision(player, targetPlayer, true);
     if (silentReplay) {
         // 回放只补战报文本，积分随快照对齐
@@ -296,9 +293,8 @@ async function playReset(event, diceValue = 0) {
         diceDisplay.className = 'dice-icon dice-penalty-warning rolled dice-glowing';
     }
 
-    // 事件里给的是实际回基地的棋子编号（已到终点的不算）；老事件没带就退回全部
-    const count = gameState.pieceCount || 4;
-    const moved = Array.isArray(pieces) ? pieces : Array.from({ length: count }, (_, index) => index);
+    // 事件里给的是实际回基地的棋子编号（已到终点的不算）
+    const moved = pieces;
     if (moved.length) audioManager.playBeatSound();
     moved.forEach((index) => animation.moveChessToStart(player, index, null, true));
     await sleep(FINISH_DELAY);

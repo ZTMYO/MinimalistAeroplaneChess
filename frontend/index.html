@@ -69,16 +69,13 @@
                     </div>
                     <span class="menu-btn-text">本地多人</span>
                 </button>
-                <button class="menu-card-btn" id="menuRulesBtn">
+                <button class="menu-card-btn" id="menuStatsBtn">
                     <div class="menu-btn-icon">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="16" x2="12" y2="12"></line>
-                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        <svg class="icon" viewBox="0 0 1280 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="28" height="28">
+                            <path d="M298.666667 576c-58.88 0-106.666667 47.786667-106.666667 106.666667l0 213.333333c0 58.88 47.786667 106.666667 106.666667 106.666667s106.666667-47.786667 106.666667-106.666667l0-213.333333C405.333333 623.786667 357.546667 576 298.666667 576zM640 21.333333c-58.88 0-106.666667 47.786667-106.666667 106.666667l0 768c0 58.88 47.786667 106.666667 106.666667 106.666667s106.666667-47.786667 106.666667-106.666667L746.666667 128C746.666667 69.12 698.88 21.333333 640 21.333333zM981.333333 362.666667c-58.88 0-106.666667 47.786667-106.666667 106.666667l0 426.666667c0 58.88 47.786667 106.666667 106.666667 106.666667s106.666667-47.786667 106.666667-106.666667L1088 469.333333C1088 410.453333 1040.213333 362.666667 981.333333 362.666667z" fill="currentColor"></path>
                         </svg>
                     </div>
-                    <span class="menu-btn-text">游戏规则</span>
+                    <span class="menu-btn-text">统计数据</span>
                 </button>
             </div>
 
@@ -623,17 +620,6 @@
                                 </div>
                             </div>
 
-                            <!-- 对局回放 -->
-                            <div class="replay-config" id="replayConfig" style="display: none;">
-                                <div class="player-setup-panel">
-                                    <div class="replay-config-body">
-                                        <p class="replay-config-hint">最近5场对局会留在这里，点击即可查看回放</p>
-                                        <label class="control-btn replay-config-choose" for="replayFilePicker">上传回放文件</label>
-                                        <input type="file" id="replayFilePicker" accept=".json,.json.gz,.gz" hidden>
-                                        <div class="recent-replay-list" id="recentReplayList"></div>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -925,7 +911,7 @@
         </div>
 
         <div class="index-footer">
-            <div class="footer-feedback"><button class="footer-replay-link" id="footerReplayBtn" type="button">对局回放</button><span class="footer-split">|</span>Bug反馈QQ群：<span class="qq-group-number">1097294452</span></div>
+            <div class="footer-feedback"><button class="footer-link" id="footerRulesBtn" type="button">游戏规则</button><span class="footer-split">|</span>Bug反馈QQ群：<span class="qq-group-number">1097294452</span></div>
             <div class="footer-copyright">© 2026 极简飞行棋 Made with <a href="/admin" class="heart" target="_blank"><svg
                         t="1777825177386" class="icon" viewBox="0 0 1024 1024" version="1.1"
                         xmlns="http://www.w3.org/2000/svg" p-id="6361" width="14" height="14">
@@ -933,7 +919,7 @@
                             d="M95.2 600.8l361.4 337.4c15 14 34.8 21.8 55.4 21.8s40.4-7.8 55.4-21.8l361.4-337.4c60.8-56.6 95.2-136 95.2-219v-11.6c0-139.8-101-259-238.8-282-91.2-15.2-184 14.6-249.2 79.8l-24 24-24-24c-65.2-65.2-158-95-249.2-79.8C101 111.2 0 230.4 0 370.2v11.6c0 83 34.4 162.4 95.2 219z"
                             p-id="6362" fill="#f2687b"></path>
                     </svg></a> by <a href="https://github.com/ZTMYO/MinimalistAeroplaneChess" target="_blank">@ZTMYO</a></div>
-            <div class="footer-version">v1.1.0</div>
+            <div class="footer-version">v1.2.0</div>
         </div>
     </div>
 

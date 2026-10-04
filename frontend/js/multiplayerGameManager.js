@@ -1189,7 +1189,7 @@ class MultiplayerGameManager {
      * 心跳与回前台对齐都跳过，免得暂停时日志一直刷「请求全量快照」
      */
     _isFrozenByPause() {
-        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const gs = gameState;
         return Boolean(gs && typeof gs.getIsPaused === 'function' && gs.getIsPaused());
     }
 
@@ -1235,7 +1235,7 @@ class MultiplayerGameManager {
     }
 
     async _applyGameSnapshot(data, { skipAnimation = false } = {}) {
-        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const gs = gameState;
         if (!gs) return;
 
         if (typeof gs.setIsOnlineMultiplayer === 'function') {
@@ -1264,8 +1264,7 @@ class MultiplayerGameManager {
         if (!skipAnimation && !isOwnPreview) {
             for (const event of events) {
                 if (event.type === 'dice' && !event.item) {
-                    (this.gameInstance && this.gameInstance.gameInfo || window.gameInfo || gameInfo)
-                        ?.addDiceRoll?.(event.player, event.value, true);
+                    gameInfo.addDiceRoll(event.player, event.value, true);
                 }
             }
         }
@@ -1481,7 +1480,7 @@ class MultiplayerGameManager {
      * 这里依据权威快照推断对局是否已经推进，并补回该标志。
      */
     _syncOfficiallyStartedFromSnapshot(snapshot) {
-        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const gs = gameState;
         if (!gs || typeof gs.setGameOfficiallyStarted !== 'function' || gs.getGameOfficiallyStarted()) {
             return;
         }
@@ -1510,7 +1509,7 @@ class MultiplayerGameManager {
      * projectTo 只写数据不动 DOM，刷新重连时必须显式落位，否则棋盘停在初始布局。
      */
     _renderAllChess(gs) {
-        const animation = this.gameInstance?.animation || window.gameInstance?.animation;
+        const animation = this.gameInstance?.animation;
         if (!animation || typeof animation.updateChessPosition !== 'function') return;
         const pieceCount = gs.pieceCount || 4;
         for (let player = 1; player <= 4; player++) {
@@ -1526,7 +1525,7 @@ class MultiplayerGameManager {
      * 房主或当前玩家本人持有超时回调，其余客户端只驱动进度条展示。
      */
     _startTurnProgressBar(playerNumber, gamePhase, phaseChanged = true) {
-        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const gs = gameState;
         const ui = this.gameInstance?.uiUpdater;
 
         // 同一阶段的补帧：只推进度条，不动计时器与颜色归属。
@@ -1581,7 +1580,7 @@ class MultiplayerGameManager {
      */
     handleIntentRejected(data) {
         console.warn('[意图被拒]', data.reason, data.intent);
-        const gs = (this.gameInstance && this.gameInstance.gameState) || window.gameState || gameState;
+        const gs = gameState;
         if (!gs) return;
 
         // 投掷意图被拒后不会再有对应的骰子事件，标记必须清掉，
@@ -2318,7 +2317,7 @@ class MultiplayerGameManager {
             // 同时调用gameInstance的pauseGame方法来设置游戏阶段
             this.gameInstance.pauseGame();
             // 道具界面（传送门图标/数字牌/选点面板）统一按暂停态收起并登记恢复
-            this._renderItemState(this.gameInstance.gameState || window.gameState);
+            this._renderItemState(gameState);
         }
     }
 
@@ -2547,8 +2546,7 @@ class MultiplayerGameManager {
      */
     async applyGameInfoHistory(data) {
         if (!data) return;
-        const gameInfo = this.gameInstance?.gameInfo || window.gameInfo;
-        if (!gameInfo || !gameInfo.infoContainer) return;
+        if (!gameInfo.infoContainer) return;
 
         const events = Array.isArray(data.events) ? data.events : [];
         const chatList = Array.isArray(data.chat) ? data.chat : [];
@@ -3443,7 +3441,7 @@ class MultiplayerGameManager {
                 this.gameInstance.resumeGame();
             }
             // 暂停期间道具界面被统一收起过，这里按同一份权威状态重画（刷新回来的 DOM 是空的）
-            this._renderItemState(this.gameInstance.gameState || window.gameState);
+            this._renderItemState(gameState);
             // 更新按钮文本
             if (window.eventHandler) {
                 window.eventHandler.updatePauseButtonText();

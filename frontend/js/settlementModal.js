@@ -4,7 +4,9 @@ import { reconnectManager } from './reconnectManager.js';
 import { titleManager } from './titleManager.js';
 import { aiTakeoverManager } from './aiTakeoverManager.js';
 import { engineAdapter } from './engineAdapter.js';
-import { buildReplayHref, addRecentReplay, clearCurrentLocalGame } from './replayShare.js';
+import { energyManager } from './energyManager.js';
+import { buildReplayHref, addRecentReplay, clearCurrentLocalGame, currentGameMode } from './replayShare.js';
+import { recordGame, attachReplayId } from './statsStore.js';
 import { decodeArchive } from '../../shared/replayCodec.mjs';
 
 function getDisplayName(player) {
@@ -149,6 +151,7 @@ class SettlementModal {
 
         // 渲染排名列表
         this.renderRankings(rankingsData);
+        this._lastRankings = rankingsData; // 记战绩时要用名次里的完成度
 
         // 结算弹框模式标记
         this._settleLocalGame();
@@ -227,6 +230,7 @@ class SettlementModal {
 
         // 渲染排名列表
         this.renderRankings(rankingsData);
+        this._lastRankings = rankingsData; // 记战绩时要用名次里的完成度
 
         // 结算弹框模式标记
         this._settleLocalGame();
@@ -567,7 +571,8 @@ class SettlementModal {
             : null;
         if (archive) {
             // 单机这局顺手记进「最近对局」，首页面板里能直接重看
-            addRecentReplay(archive);
+            const replayId = addRecentReplay(archive);
+            attachReplayId(this._recordedGame, replayId);
         } else if (sessionId) {
             // 联机这局得把服务端档案取回来再入库，否则列表里查不到它
             this.cacheRemoteReplay(sessionId);
@@ -588,12 +593,117 @@ class SettlementModal {
             if (!response.ok) return;
             const packed = await response.json();
             packed.mode = 'online_multiplayer'; // 服务端档案不带模式，入库前补上
-            addRecentReplay(decodeArchive(packed));
+            const replayId = addRecentReplay(decodeArchive(packed));
+            attachReplayId(this._recordedGame, replayId);
         } catch (error) { }
+    }
+
+    /**
+     * 落一笔本机战绩（人机 / 本地多人 / 联机都记）。
+     * 只统计「这台机器上的玩家」那几席：联机与本机在局里就一个颜色，本地多人是同一台机器上的所有真人。
+     */
+    recordFinishedGame() {
+        if (this._recordedGame) return;
+        const gs = this.gameState;
+        if (!gs) return;
+
+        const seats = this.localSeats();
+        if (!seats.length) return;
+
+        const config = (() => {
+            try {
+                return JSON.parse(sessionStorage.getItem('gameConfig') || '{}');
+            } catch (error) {
+                return {};
+            }
+        })();
+        const online = Boolean(window.multiplayerGameManager?.gameSessionId)
+            || Boolean(gs.getIsOnlineMultiplayer && gs.getIsOnlineMultiplayer());
+        const mode = online ? 'online' : (config.mode === 'local_multiplayer' ? 'local' : 'ai');
+        const modeKey = { online: 'online_multiplayer', local: 'local_multiplayer', ai: 'ai_battle' }[mode];
+
+        const sumOf = (map) => seats.reduce((total, seat) => total + (Number(map?.[seat]) || 0), 0);
+
+        // 进阶称号按「同一件事升级」看：够到高阶就算这一局也够过了它的低阶，
+        // 否则统计页里低阶永远灰着、看着像没拿到过
+        const expandTitles = (list) => {
+            const expanded = new Set();
+            (list || []).forEach((title) => {
+                if (!title || !title.id) return;
+                expanded.add(title.id);
+                const family = titleManager.FAMILIES.find((item) => item.levels.some((level) => level.id === title.id));
+                if (!family) return;
+                const reached = family.levels.findIndex((level) => level.id === title.id);
+                family.levels.slice(0, reached).forEach((level) => expanded.add(level.id));
+            });
+            return [...expanded];
+        };
+
+        // 逐人一份：结算详情要按玩家列名字、完成度、击败与称号。
+        // 顺序就用结算名次（不是座位号）——统计页的「第N名」和详情卡片都按它排
+        const rankingOf = new Map((this._lastRankings || []).map((item) => [item.player, item]));
+        const orderedSeats = [...rankingOf.keys(), ...activePlayerManager.getActivePlayers()]
+            .filter((seat, index, list) => list.indexOf(seat) === index);
+        const seatsDetail = orderedSeats.map((seat) => {
+            const ranking = rankingOf.get(seat);
+            const seatConfigData = seatConfig(seat);
+            return {
+                seat,
+                rank: (ranking && ranking.position) || 0,
+                name: getDisplayName(seat),
+                isAI: Boolean(seatConfigData && seatConfigData.isAI),
+                emoji: (seatConfigData && seatConfigData.emoji && seatConfigData.emoji.key) || null,
+                progress: Math.round((ranking && ranking.progress) || 0),
+                finished: (ranking && ranking.finishedCount) || 0,
+                defeatCounts: (ranking && ranking.defeatCounts) || {},
+                titles: expandTitles(this.playerTitles?.[seat])
+            };
+        });
+        const titles = new Set();
+        seats.forEach((seat) => {
+            (this.playerTitles?.[seat] || []).forEach((title) => {
+                expandTitles([title]).forEach((titleId) => titles.add(titleId));
+            });
+        });
+
+        const winner = Number(gs.winner || gs.getWinner?.() || 0);
+        const progress = (this._lastRankings || [])
+            .filter((item) => seats.includes(item.player))
+            .reduce((best, item) => Math.max(best, item.progress || 0), 0);
+        const startAt = Number(gs.gameStartTime || 0);
+        const endAt = Number(gs.gameEndTime || Date.now());
+
+        this._recordedGame = recordGame({
+            mode,
+            modeKey,
+            players: seatsDetail,
+            pieces: gs.pieceCount || 4,
+            kind: `${gs.isSkillModeEnabled?.() ? '道具' : ''}${gs.isHappyMode?.() ? '欢乐' : ''}` || '经典',
+            nickname: window.playerIdManager?.getSavedNickname?.() || '',
+            mySeat: seats[0] || 0,
+            won: seats.includes(winner),
+            winner,
+            turns: gs.currentRound || 0,
+            hands: engineAdapter?.actions?.length || 0,
+            seconds: startAt && endAt > startAt ? Math.round((endAt - startAt) / 1000) : 0,
+            kills: sumOf(gs.defeatCounts),
+            distance: sumOf(gs.totalDistance),
+            progress: Math.round(progress),
+            titles: [...titles]
+        });
+    }
+
+    /** 这台机器上的席位：联机/人机就本机那个颜色；本地多人没有单一归属，取所有真人席位 */
+    localSeats() {
+        const localColor = window.gameInstance?.localPlayerColor;
+        if (localColor) return [localColor];
+        const gs = this.gameState;
+        return activePlayerManager.getActivePlayers().filter((color) => !(gs && gs.isBotPlayer?.(color)));
     }
 
     /** 把回放入口摆到面板底部按钮区：数据分析的左边 */
     mountReplayEntry() {
+        this.recordFinishedGame();
         const footer = this.modal?.querySelector('.modal-footer');
         if (!footer) return;
         footer.querySelectorAll('.replay-entry-btn').forEach((element) => element.remove());
@@ -794,9 +904,8 @@ class SettlementModal {
      * 仅在道具模式下显示
      */
     renderSkillStatistics() {
-        // 从 window 或 gameInstance 获取 energyManager（观战模式 vs 游戏模式）
-        const energyMgr = window.energyManager || window.gameInstance?.energyManager;
-        if (!this.gameState || !energyMgr || !energyMgr.isSkillModeEnabled()) return '';
+        const energyMgr = energyManager;
+        if (!this.gameState || !energyMgr.isSkillModeEnabled()) return '';
 
         const activePlayers = activePlayerManager.getActivePlayers();
         const gameState = this.gameState;
@@ -1326,15 +1435,10 @@ class SettlementModal {
             if (roomCode) {
                 window.location.replace(`/?room=${roomCode}`);
             } else {
-                // 根据当前游戏模式设置 sessionStorage 标志，以便在主页自动恢复对应面板
-                if (this.gameState && this.gameState.gameMode) {
-                    if (this.gameState.gameMode === 'ai_battle') {
-                        sessionStorage.setItem('lastGameMode', 'ai');
-                    } else if (this.gameState.gameMode === 'local_multiplayer') {
-                        sessionStorage.setItem('lastGameMode', 'local');
-                    }
-                }
-                window.location.replace('/');
+                // 单机：带着模式回首页，首页会直接翻到对应设置面板（参数只服务这一跳）
+                const mode = currentGameMode();
+                const param = mode === 'ai_battle' ? 'ai' : (mode === 'local_multiplayer' ? 'local' : null);
+                window.location.replace(param ? `/?mode=${param}` : '/');
             }
         }, 50);
     }

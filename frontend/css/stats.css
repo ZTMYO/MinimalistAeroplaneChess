@@ -1,0 +1,451 @@
+/* 统计数据页：沿用站内面板的语言（bg-soft + 2px border-light + radius-base + modal-shadow） */
+.stats-body {
+    display: block; /* 站内 body 是 flex（留给首页/对局），这页要普通的块级布局 */
+    margin: 0;
+    padding: 20px;
+    background: var(--bg-light-1);
+    color: var(--text-primary);
+    min-height: 100vh;
+}
+
+.stats-page {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* ---------- 头部 ---------- */
+.stats-top {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+/* 模式切换（人机 / 联机）：选中的那一档用对应模式的色，和列表里的模式 tag 同色 */
+.stats-mode-toggle {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    flex: none;
+}
+
+.stats-mode-btn {
+    padding: 4px 14px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--text-gray);
+    background: none;
+    border: 1.5px solid var(--border-soft);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.stats-mode-btn:hover {
+    border-color: var(--border-medium);
+}
+
+.stats-mode-btn.is-active[data-mode="ai"] {
+    color: var(--on-color-ink-strong);
+    background: var(--player-4-color);
+    border-color: transparent;
+}
+
+.stats-mode-btn.is-active[data-mode="online"] {
+    color: var(--on-color-ink-strong);
+    background: var(--player-3-color);
+    border-color: transparent;
+}
+
+/* 返回按钮直接沿用站内 .back-btn（hover 出现圆形边框），这里只把它从绝对定位里放回文档流 */
+.stats-back {
+    position: static;
+    transform: none;
+    flex: none;
+    text-decoration: none;
+}
+
+.stats-top-text {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 标题与模式切换同一行：宽度怎么变都对齐 */
+.stats-title-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stats-top-text h1 {
+    margin: 0;
+    font-size: 22px;
+    text-shadow: none;
+}
+
+.stats-player {
+    margin: 4px 0 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 14px;
+}
+
+.stats-player span {
+    font-weight: bold;
+}
+
+.stats-player em {
+    font-style: normal;
+    font-size: 12px;
+    color: var(--text-gray);
+}
+
+/* ---------- 卡片 ---------- */
+.stats-card {
+    background: var(--bg-soft);
+    border: 2px solid var(--border-light);
+    border-radius: var(--radius-base);
+    box-shadow: var(--modal-shadow);
+    padding: 16px;
+}
+
+.stats-card-title {
+    margin: 0 0 14px;
+    font-size: 16px;
+    font-weight: 500;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-shadow: none;
+}
+
+.stats-card-title em {
+    font-style: normal;
+    font-size: 12px;
+    font-weight: normal;
+    color: var(--text-gray);
+}
+
+/* ---------- 总览格 ---------- */
+.stats-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+}
+
+.stats-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-base);
+    background: var(--bg-faint);
+}
+
+.stats-tile em {
+    font-style: normal;
+    font-size: 12px;
+    color: var(--text-gray);
+}
+
+.stats-tile b {
+    font-size: 16px;
+    text-shadow: none;
+}
+
+/* 「今日」小标题：跟在总览下面 */
+.stats-sub-title {
+    margin: 18px 0 10px;
+    font-size: 14px;
+    font-weight: 500;
+    text-shadow: none;
+}
+
+/* ---------- 称号 ---------- */
+.stats-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.stats-title-group h3 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-shadow: none;
+}
+
+.stats-title-group h3 em {
+    font-style: normal;
+    font-size: 12px;
+    font-weight: normal;
+    color: var(--text-gray);
+}
+
+.stats-title-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.stats-title-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-base);
+    background: var(--bg-faint);
+}
+
+.stats-title-item.is-locked {
+    opacity: 0.6;
+}
+
+.stats-title-times {
+    font-size: 12px;
+    color: var(--text-gray);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.stats-title-item:not(.is-locked) .stats-title-times {
+    color: var(--text-primary);
+    font-weight: bold;
+}
+
+/* 未获得：chip 也一起中性化，别残留档位配色 */
+.title-chip.is-locked,
+.title-chip.is-locked::before,
+.title-chip.is-locked::after {
+    color: var(--text-gray) !important;
+    background: var(--bg-light-2) !important;
+    border-color: var(--border-soft) !important;
+    filter: grayscale(1);
+    animation: none !important;
+}
+
+/* ---------- 历史战绩 ---------- */
+/* 导入按钮跟在标题右侧 */
+.stats-card-title .stats-import-btn {
+    margin-left: auto;
+}
+
+.stats-import-btn {
+    padding: 6px 12px;
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--text-primary);
+    background: none;
+    border: 1.5px solid var(--border-light);
+    border-radius: var(--radius-base);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-shadow: none;
+}
+
+.stats-import-btn:hover {
+    box-shadow: 0 1px 3px var(--shadow-2);
+}
+
+.stats-games {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.stats-games::-webkit-scrollbar {
+    width: 6px;
+}
+
+.stats-games::-webkit-scrollbar-track {
+    background: var(--bg-faint);
+    border-radius: 3px;
+}
+
+.stats-games::-webkit-scrollbar-thumb {
+    background: var(--border-soft);
+    border-radius: 3px;
+}
+
+.stats-games::-webkit-scrollbar-thumb:hover {
+    background: var(--border-medium);
+}
+
+.stats-game-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-base);
+    background: var(--bg-faint);
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.stats-game-row:hover {
+    background: var(--bg-light-2);
+    border-color: var(--border-medium);
+}
+
+/* 第一行：名次 + 标签在左，回放/下载两个图标在右 */
+.stats-game-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stats-game-tags {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* 名次：第一名绿、其余红，摆在整行最左侧 */
+.stats-game-rank {
+    font-size: 12px;
+    font-weight: bold;
+    padding: 1px 8px;
+    border-radius: var(--radius-base);
+    color: #c0453c;
+    background: #f9dedb;
+    border: 1px solid rgba(192, 69, 60, 0.4);
+}
+
+.stats-game-rank.is-first {
+    color: #4b8a63;
+    background: #e3f1e8;
+    border-color: rgba(75, 138, 99, 0.4);
+}
+
+.stats-game-meta {
+    font-size: 12px;
+    color: var(--text-gray);
+}
+
+.stats-game-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+/* ---------- 单局详情（框体与卡片复用站内结算模态框的类） ---------- */
+.stats-detail {
+    max-width: 620px;
+    max-height: 82vh;
+    overflow-y: auto;
+    padding: 20px 18px;
+}
+
+.stats-detail-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-gray);
+    background: none;
+    border: none;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.stats-detail-close:hover {
+    color: var(--text-primary);
+}
+
+.stats-detail-title {
+    margin: 0 0 4px;
+    font-size: 17px;
+    text-shadow: none;
+}
+
+.stats-detail-meta {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: var(--text-gray);
+}
+
+
+.stats-empty {
+    margin: 10px 0;
+    font-size: 14px;
+    color: var(--text-gray);
+    text-align: center;
+}
+
+/* 行内两个小图标按钮：无边框，hover 放大一点 */
+.stats-game-actions .recent-replay-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-base);
+    background: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.stats-game-actions .recent-replay-icon:hover {
+    transform: scale(1.2);
+}
+
+@media (max-width: 520px) {
+    .stats-body {
+        padding: 14px 10px;
+    }
+
+    /* 窄屏：标题行（标题 + 切换）保持一行，名字与提示各占各的行 */
+    .stats-top {
+        gap: 10px;
+    }
+
+    .stats-title-line {
+        gap: 8px;
+    }
+
+    .stats-top-text h1 {
+        font-size: 19px;
+    }
+
+    .stats-player {
+        flex-wrap: wrap;
+        gap: 2px 8px;
+    }
+
+    .stats-player em {
+        flex: 1 0 100%;
+    }
+}
+
+/* 触屏设备（手机/平板）称号只排一列；桌面端无论缩放多少都按宽度自动多列 */
+@media (hover: none) and (pointer: coarse) {
+    .stats-title-grid {
+        grid-template-columns: 1fr;
+    }
+}
