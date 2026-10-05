@@ -40,6 +40,7 @@ function collectClientState() {
         diceStatistics: gameState.diceStatistics || null,
         progressHistory: gameState.progressHistory || null,
         gameStartTime: gameState.gameStartTime || null,
+        playedMs: gameState.snapshotPlayedMs ? gameState.snapshotPlayedMs() : 0,
         gameConfig: sessionStorage.getItem('gameConfig'),
         totalEnergyGained: gameState.totalEnergyGained || null,
         skillUsage: gameState.skillUsage || null
@@ -53,6 +54,8 @@ function restoreClientState(client) {
     if (client.diceStatistics) gameState.diceStatistics = client.diceStatistics;
     if (Array.isArray(client.progressHistory)) gameState.progressHistory = client.progressHistory;
     if (client.gameStartTime) gameState.gameStartTime = client.gameStartTime;
+    gameState.playedMs = Number(client.playedMs) || 0;
+    gameState.playResumedAt = Date.now();
     if (client.gameConfig) {
         try {
             sessionStorage.setItem('gameConfig', client.gameConfig);

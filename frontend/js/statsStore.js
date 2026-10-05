@@ -63,6 +63,7 @@ export function recordGame(entry) {
         nickname: entry.nickname || '',
         mySeat: entry.mySeat || 0,
         won: Boolean(entry.won),
+        finished: Boolean(entry.finished),
         winner: entry.winner || 0,
         turns: entry.turns || 0,
         hands: entry.hands || 0,
@@ -74,8 +75,10 @@ export function recordGame(entry) {
     };
 
     // 这一模式的累计合计
-    bucket.totals.games += 1;
-    if (game.won) bucket.totals.wins += 1;
+    if (game.finished) {
+        bucket.totals.games += 1;
+        if (game.won) bucket.totals.wins += 1;
+    }
     bucket.totals.seconds += game.seconds;
     bucket.totals.distance += game.distance;
     bucket.totals.kills += game.kills;

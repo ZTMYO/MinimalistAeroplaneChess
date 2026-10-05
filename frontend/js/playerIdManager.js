@@ -74,6 +74,15 @@ class PlayerIdManager {
             localStorage.setItem(this.nicknameKey(mode), nickname.trim());
             console.log('保存昵称到本地存储:', nickname.trim());
         }
+        this.syncNicknameInputs(nickname);
+    }
+
+    syncNicknameInputs(nickname) {
+        const value = nickname == null ? '' : String(nickname);
+        ['playerUsername', 'multiplayerPlayerUsername'].forEach((id) => {
+            const input = document.getElementById(id);
+            if (input && input.value !== value) input.value = value;
+        });
     }
 
     /**
@@ -81,7 +90,12 @@ class PlayerIdManager {
      * @returns {string|null} 存储的昵称，如果不存在则返回null
      */
     getSavedNickname() {
-        return localStorage.getItem('aeroplaneChess_playerNickname');
+        const saved = localStorage.getItem('aeroplaneChess_playerNickname');
+        if (saved) return saved;
+        const legacy = ['ai_battle', 'local_multiplayer']
+            .map((mode) => localStorage.getItem(this.nicknameKey(mode)))
+            .find((value) => value);
+        return legacy || null;
     }
 
     /**

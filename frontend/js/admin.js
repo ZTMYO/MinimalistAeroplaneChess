@@ -282,20 +282,13 @@ class AdminPanel {
 
 
     formatDuration(timestamp) {
-        const now = Date.now();
-        const diff = now - timestamp;
+        const diff = Date.now() - timestamp;
 
-        const seconds = Math.floor(diff / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-
-        if (hours > 0) {
-            return `${hours}小时${minutes % 60}分`;
-        } else if (minutes > 0) {
-            return `${minutes}分${seconds % 60}秒`;
-        } else {
-            return `${seconds}秒`;
-        }
+        const totalSeconds = Math.max(0, Math.floor(diff / 1000));
+        const seconds = String(totalSeconds % 60).padStart(2, '0');
+        const minutes = Math.floor(totalSeconds / 60);
+        if (minutes < 60) return `${minutes}:${seconds}`;
+        return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
     }
 
     getGameStateText(room) {

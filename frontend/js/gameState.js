@@ -85,6 +85,8 @@ class GameState {
         // 游戏时间记录
         this.gameStartTime = null; // 游戏开始时间
         this.gameEndTime = null;   // 游戏结束时间
+        this.playedMs = 0;
+        this.playResumedAt = null;
 
         // 骰子投掷统计（用于数据分析）
         this.diceStatistics = {
@@ -343,6 +345,8 @@ class GameState {
         // 重置游戏时间记录
         this.gameStartTime = null;
         this.gameEndTime = null;
+        this.playedMs = 0;
+        this.playResumedAt = null;
 
         // 重置总前进距离统计
         for (let player = 1; player <= 4; player++) {
@@ -1202,6 +1206,7 @@ class GameState {
             this.gamePhaseBeforePause = this.gamePhase;
             this.currentPlayerBeforePause = this.currentPlayer;
             this.pauseStartTime = Date.now();
+            this.stopPlayClock();
             // 暂停思考计时器，不清除状态
             this.pauseThinkingTimer();
             // 强制清除AI决策状态
@@ -1215,6 +1220,7 @@ class GameState {
                 this.pausedThinkingTime += (Date.now() - this.pauseStartTime);
                 this.pauseStartTime = null;
             }
+            if (!this.gameEndTime) this.playResumedAt = Date.now();
             // 注意：恢复思考计时器由 gameMain.js 中的 resumeGame 方法处理
             
             // 隐藏暂停提示
@@ -1315,27 +1321,40 @@ class GameState {
     // 记录游戏开始时间
     recordGameStartTime() {
         this.gameStartTime = Date.now();
+        this.playedMs = 0;
+        this.playResumedAt = this.gameStartTime;
     }
 
     // 记录游戏结束时间
     recordGameEndTime() {
         this.gameEndTime = Date.now();
+        this.stopPlayClock();
+    }
+
+    stopPlayClock() {
+        if (!this.playResumedAt) return;
+        this.playedMs += Date.now() - this.playResumedAt;
+        this.playResumedAt = null;
+    }
+
+    snapshotPlayedMs() {
+        return this.playedMs + (this.playResumedAt ? Date.now() - this.playResumedAt : 0);
     }
 
     // 获取游戏持续时间（毫秒）
     getGameDuration() {
         if (!this.gameStartTime) return 0;
+        if (this.playResumedAt !== null || this.playedMs > 0) return this.snapshotPlayedMs();
         const endTime = this.gameEndTime || Date.now();
         return endTime - this.gameStartTime;
     }
 
-    // 格式化游戏持续时间为 "分'秒''" 格式
     getFormattedGameDuration() {
-        const duration = this.getGameDuration();
-        const totalSeconds = Math.floor(duration / 1000);
+        const totalSeconds = Math.floor(this.getGameDuration() / 1000);
+        const seconds = String(totalSeconds % 60).padStart(2, '0');
         const minutes = Math.floor(totalSeconds / 60);
-        const seconds = totalSeconds % 60;
-        return `${minutes}'${seconds.toString().padStart(2, '0')}''`;
+        if (minutes < 60) return `${minutes}:${seconds}`;
+        return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
     }
 
     // 电脑玩家配置相关方法

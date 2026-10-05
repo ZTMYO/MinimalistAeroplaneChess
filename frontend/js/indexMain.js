@@ -140,15 +140,9 @@ class GameTipsCarousel {
 const INITIAL_ENERGY_STEPS = [0, 15, 30, 50, 70, 100];
 
 class PlayerSetup {
-    persistMode() {
-        if (this.currentMode === 'ai') return 'ai_battle';
-        if (this.currentMode === 'local') return 'local_multiplayer';
-        return null;
-    }
-
     enterAIConfig() {
         this.currentMode = 'ai';
-        const savedName = window.playerIdManager && window.playerIdManager.getSavedNickname('ai_battle');
+        const savedName = window.playerIdManager && window.playerIdManager.getSavedNickname();
         const nameInput = document.getElementById('playerUsername');
         if (savedName && nameInput) {
             nameInput.value = savedName;
@@ -1378,7 +1372,7 @@ class PlayerSetup {
                 this.playerUsername = e.target.value.trim();
                 // 持久化保存到 localStorage
                 if (window.playerIdManager) {
-                    window.playerIdManager.saveNickname(this.playerUsername, this.persistMode());
+                    window.playerIdManager.saveNickname(this.playerUsername);
                 }
             });
         }
@@ -1399,7 +1393,7 @@ class PlayerSetup {
                     this.playerUsername = randomNickname;
                     // 持久化保存到 localStorage
                     if (window.playerIdManager) {
-                        window.playerIdManager.saveNickname(randomNickname, this.persistMode());
+                        window.playerIdManager.saveNickname(randomNickname);
                     }
                 }
             });
@@ -1834,7 +1828,7 @@ class PlayerSetup {
             happyMode: happyMode,
             initialEnergy: gameConfig.initialEnergy
         };
-        sessionStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
+        localStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
 
         // 跳转到游戏页面
         window.location.href = '/game';
@@ -1923,7 +1917,7 @@ class PlayerSetup {
             happyMode: happyMode,
             initialEnergy: localGameConfig.initialEnergy
         };
-        sessionStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
+        localStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
 
         // 跳转到游戏页面
         window.location.href = '/game';
@@ -1931,7 +1925,7 @@ class PlayerSetup {
 
     // 恢复AI配置详细信息
     restoreAIConfig() {
-        const lastAIConfig = sessionStorage.getItem('lastAIConfig');
+        const lastAIConfig = localStorage.getItem('lastAIConfig');
         if (lastAIConfig) {
             try {
                 const config = JSON.parse(lastAIConfig);
@@ -1963,7 +1957,7 @@ class PlayerSetup {
                 }
 
                 // 恢复AI玩家配置
-                if (config.activeBots && config.activeBots.length > 0) {
+                if (config.activeBots) {
                     // 确保恢复的activeBots中不包含当前选中的人类玩家
                     const filteredBots = config.activeBots.filter(bot => bot !== this.selectedPlayer);
                     this.activeBots = new Set(filteredBots);
@@ -1999,7 +1993,6 @@ class PlayerSetup {
                     }
                 }
 
-                sessionStorage.removeItem('lastAIConfig');
             } catch (error) {
                 console.error('恢复AI配置失败:', error);
             }
@@ -2008,7 +2001,7 @@ class PlayerSetup {
 
     // 恢复本地多人配置详细信息
     restoreLocalConfig() {
-        const lastLocalConfig = sessionStorage.getItem('lastLocalConfig');
+        const lastLocalConfig = localStorage.getItem('lastLocalConfig');
         if (lastLocalConfig) {
             try {
                 const config = JSON.parse(lastLocalConfig);
@@ -2080,7 +2073,6 @@ class PlayerSetup {
                     }
                 }
 
-                sessionStorage.removeItem('lastLocalConfig');
             } catch (error) {
                 console.error('恢复本地多人配置失败:', error);
             }

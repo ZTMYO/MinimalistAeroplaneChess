@@ -118,6 +118,17 @@ class FlyingChessGame extends FlyingChessGameBase {
         aiTakeoverManager.updateToggleButton();
     }
 
+    startElapsedTicker() {
+        const render = () => {
+            const element = document.getElementById('progressElapsed');
+            if (!element) return;
+            element.textContent = gameState.gameStartTime ? gameState.getFormattedGameDuration() : '';
+        };
+        render();
+        if (this.elapsedInterval) clearInterval(this.elapsedInterval);
+        this.elapsedInterval = setInterval(render, 1000);
+    }
+
     // 初始化游戏
     initializeGame() {
         try {
@@ -196,7 +207,8 @@ class FlyingChessGame extends FlyingChessGameBase {
             if (resumePending) engineAdapter.reapplyClientState();
 
             // 10. 记录游戏开始时间
-            gameState.recordGameStartTime();
+            if (!resumePending) gameState.recordGameStartTime();
+            this.startElapsedTicker();
 
             // 10.5 设置游戏正式开始状态（单机/本地多人直接开始）
             if (!isOnlineMode) {

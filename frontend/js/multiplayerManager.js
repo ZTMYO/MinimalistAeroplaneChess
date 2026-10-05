@@ -1,5 +1,6 @@
 import { reconnectManager } from './reconnectManager.js';
 import { nicknameGenerator } from './nicknameGenerator.js';
+import { modeStats } from './statsStore.js';
 
 // 本地乐观改动（AI 名单）最多压这么久：服务端一直没回声就别再挡着权威名单
 const AI_OP_TTL_MS = 4000;
@@ -25,6 +26,7 @@ class MultiplayerManager {
         this.publicRooms = [];
         this.roomSearchQuery = '';
         this.publicRoomsRefreshInterval = null;
+        this._statsSentRoom = null;
 
         // 重连相关配置
         this.reconnectAttempts = 0;
@@ -1165,6 +1167,20 @@ class MultiplayerManager {
         });
     }
 
+    syncPlayerStats() {
+        const code = this.roomCode || this.currentRoom?.code;
+        if (!code || this._statsSentRoom === code) return;
+        this._statsSentRoom = code;
+        try {
+            const totals = modeStats('online').totals;
+            this.wsClient?.sendMessage('player_stats', {
+                stats: { games: totals.games || 0, wins: totals.wins || 0, titles: totals.titles || 0 }
+            });
+        } catch (error) {
+            this._statsSentRoom = null;
+        }
+    }
+
     /**
      * 房间设置 → 配置面板勾选状态。
      * 建房、加入、重进房间、房主改设置都走这里，避免某条路径漏掉某个开关
@@ -1308,6 +1324,7 @@ class MultiplayerManager {
                 if (data.room) {
                     this.currentRoom = data.room;
                     this.roomCode = data.room.code;
+                    this._statsSentRoom = null;
 
                     // 更新玩家列表
                     this.players = new Map(data.room.players.map(p => [p.id, p]));
@@ -1325,6 +1342,7 @@ class MultiplayerManager {
                     this.showRoomConfig();
                     this.updateRoomInfo();
                     this.updatePlayerDisplay();
+                    this.syncPlayerStats();
 
                     if (this.isHost) {
                         this.showHostSettings();
@@ -1361,6 +1379,7 @@ class MultiplayerManager {
 
                     // 保存房间号到重连管理器（房主也需要保存）
                     reconnectManager.updateRoomCode(this.roomCode);
+                    this.syncPlayerStats();
 
                     // 同步道具/欢乐模式复选框状态
                     this.applyRoomSettingsToControls(roomData.settings);
@@ -1512,6 +1531,7 @@ class MultiplayerManager {
                 // 从房间的玩家列表中找到当前玩家
                 this.currentPlayer = data.room.players.find(p => p.id === this.wsClient.playerId);
                 this.players = new Map(data.room.players.map(p => [p.id, p]));
+                this.syncPlayerStats();
 
                 // 保存房间号到重连管理器
                 reconnectManager.updateRoomCode(this.roomCode);
@@ -4056,6 +4076,7 @@ class MultiplayerManager {
                 color: player.color,
                 nickname: player.nickname,
                 emoji: player.emoji,
+                stats: player.stats || null,
                 isAI: false
             });
         });
@@ -4164,6 +4185,7 @@ class MultiplayerManager {
                 color: player.color,
                 nickname: player.nickname,
                 emoji: player.emoji,
+                stats: player.stats || null,
                 isAI: false
             });
         });

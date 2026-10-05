@@ -243,9 +243,13 @@ async function stepForward() {
         // 掷骰：闪一段再定格（点数取事件里的，不重新摇）
         const diceEvent = (events || []).find((event) => event.type === 'dice' && event.value);
         if (diceEvent) {
-            await enginePlayback.playRollAnimation?.(diceEvent.value);
-            const diceDisplay = document.getElementById('diceDisplay');
-            if (diceDisplay) diceDisplay.classList.toggle('remote-dice', diceEvent.item === 'remote-dice');
+            if (diceEvent.item === 'polyhedral-dice') {
+                window.gameInstance?.skillManager?.showPolyhedralDice?.(diceEvent.value);
+            } else {
+                await enginePlayback.playRollAnimation?.(diceEvent.value);
+                const diceDisplay = document.getElementById('diceDisplay');
+                if (diceDisplay) diceDisplay.classList.toggle('remote-dice', diceEvent.item === 'remote-dice');
+            }
             uiUpdater.updateDiceDisplay?.(diceEvent.value, diceEvent.player);
         }
 

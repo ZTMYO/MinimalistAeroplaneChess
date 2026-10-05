@@ -202,21 +202,21 @@ function grantBeatEnergy(event, { animate = true } = {}) {
 
 /** 欢乐模式的碰撞：不送人回家，报一行碰撞奖励 + 按敌方棋子数给积分，随后由事件流继续播奖励步数 */
 async function playCollisionBonus(event) {
-    const { player, targetPlayer, targetChess, energy } = event;
+    const { player, targetPlayer, targetChess, energy, reward, steps } = event;
     const targets = Number.isInteger(targetChess) ? targetChess : null;
+    const shown = Number.isFinite(reward) ? reward : (energy || 0);
     // 欢乐模式没有 beat 事件，碰撞按击败计入「第一滴血」
     gameState.recordFirstBeater(player);
     const collided = event.enemyCount || 1;
     moveCollisions.set(player, (moveCollisions.get(player) || 0) + collided);
     if (silentReplay) {
-        gameInfo.addCollisionBonus(player, targetPlayer, true);
-        // 道具模式下面板会过滤掉上面这行，实时看到的是积分行，静默回放按同一套规则补出来
+        gameInfo.addCollisionBonus(player, targetPlayer, true, shown, steps || 0, energy || 0);
         if (energy) energyManager.addEnergyLine(player, energy, 'happy_bonus', targetPlayer, targets);
         return;
     }
 
     audioManager.playBeatSound();
-    gameInfo.addCollisionBonus(player, targetPlayer, true);
+    gameInfo.addCollisionBonus(player, targetPlayer, true, shown, steps || 0, energy || 0);
     if (energy) energyManager.addEnergy(player, energy, 'happy_bonus', targetPlayer, targets, 0, true);
     await sleep(COLLISION_BONUS_DELAY);
 }

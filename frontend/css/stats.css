@@ -1,6 +1,6 @@
-/* 统计数据页：沿用站内面板的语言（bg-soft + 2px border-light + radius-base + modal-shadow） */
+/* 统计数据页：沿用站内面板的视觉语言（bg-soft + 2px border-light + radius-base + modal-shadow） */
 .stats-body {
-    display: block; /* 站内 body 是 flex（留给首页/对局），这页要普通的块级布局 */
+    display: block;
     margin: 0;
     padding: 20px;
     background: var(--bg-light-1);
@@ -16,7 +16,6 @@
     gap: 16px;
 }
 
-/* ---------- 头部 ---------- */
 .stats-top {
     display: flex;
     align-items: center;
@@ -73,7 +72,6 @@
     min-width: 0;
 }
 
-/* 标题与模式切换同一行：宽度怎么变都对齐 */
 .stats-title-line {
     display: flex;
     align-items: center;
@@ -104,7 +102,6 @@
     color: var(--text-gray);
 }
 
-/* ---------- 卡片 ---------- */
 .stats-card {
     background: var(--bg-soft);
     border: 2px solid var(--border-light);
@@ -130,7 +127,6 @@
     color: var(--text-gray);
 }
 
-/* ---------- 总览格 ---------- */
 .stats-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -158,7 +154,6 @@
     text-shadow: none;
 }
 
-/* 「今日」小标题：跟在总览下面 */
 .stats-sub-title {
     margin: 18px 0 10px;
     font-size: 14px;
@@ -166,7 +161,6 @@
     text-shadow: none;
 }
 
-/* ---------- 称号 ---------- */
 .stats-titles {
     display: flex;
     flex-direction: column;
@@ -234,8 +228,6 @@
     animation: none !important;
 }
 
-/* ---------- 历史战绩 ---------- */
-/* 导入按钮跟在标题右侧 */
 .stats-card-title .stats-import-btn {
     margin-left: auto;
 }
@@ -300,7 +292,6 @@
     border-color: var(--border-medium);
 }
 
-/* 第一行：名次 + 标签在左，回放/下载两个图标在右 */
 .stats-game-head {
     display: flex;
     align-items: center;
@@ -316,7 +307,6 @@
     gap: 6px;
 }
 
-/* 名次：第一名绿、其余红，摆在整行最左侧 */
 .stats-game-rank {
     font-size: 12px;
     font-weight: bold;
@@ -345,7 +335,7 @@
     flex: 0 0 auto;
 }
 
-/* ---------- 单局详情（框体与卡片复用站内结算模态框的类） ---------- */
+/* 框体与卡片复用站内结算模态框的类 */
 .stats-detail {
     max-width: 620px;
     max-height: 82vh;
@@ -386,7 +376,6 @@
     color: var(--text-gray);
 }
 
-
 .stats-empty {
     margin: 10px 0;
     font-size: 14px;
@@ -394,7 +383,6 @@
     text-align: center;
 }
 
-/* 行内两个小图标按钮：无边框，hover 放大一点 */
 .stats-game-actions .recent-replay-icon {
     display: inline-flex;
     align-items: center;
@@ -420,7 +408,6 @@
         padding: 14px 10px;
     }
 
-    /* 窄屏：标题行（标题 + 切换）保持一行，名字与提示各占各的行 */
     .stats-top {
         gap: 10px;
     }

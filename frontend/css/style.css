@@ -3400,14 +3400,50 @@ use[href="#checkmark"] {
     color: var(--text-primary);
 }
 
+.player-profile-stats {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 0;
+    margin-bottom: 10px;
+}
+
+.player-profile-item {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+.player-profile-item:first-child {
+    padding-left: 0;
+}
+
+.player-profile-item + .player-profile-item {
+    border-left: 1px solid var(--border-soft);
+}
+
+.player-profile-item em {
+    font-style: normal;
+    font-size: 10px;
+    color: var(--ui-default-color);
+}
+
+.player-profile-item b {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+}
+
 /* 完成进度面板样式 */
 .progress-panel {
     display: flex;
     flex-direction: column;
     background: var(--bg-soft);
     border: 2px solid var(--border-light);
-    border-radius: var(--radius-base);
-    min-height: 100px;
+    border-radius: var(--radius-base);    min-height: 100px;
     max-height: 250px;
     overflow: hidden;
     box-shadow: none;
@@ -3421,6 +3457,13 @@ use[href="#checkmark"] {
     padding: 10px;
     background: linear-gradient(to right, var(--border-soft) 60%, transparent 40%) repeat-x 0 100%;
     background-size: 13px 1px;
+}
+
+.progress-elapsed {
+    font-size: 14px;
+    font-weight: 500;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
 }
 
 .progress-content {

@@ -670,8 +670,9 @@ class SettlementModal {
         const progress = (this._lastRankings || [])
             .filter((item) => seats.includes(item.player))
             .reduce((best, item) => Math.max(best, item.progress || 0), 0);
-        const startAt = Number(gs.gameStartTime || 0);
-        const endAt = Number(gs.gameEndTime || Date.now());
+        const playedSeconds = Math.max(0, Math.round((gs.getGameDuration?.() || 0) / 1000));
+        const localHands = engineAdapter?.actions?.length || 0;
+        const hands = localHands || Number(window.multiplayerGameManager?.getHandCount?.() || 0);
 
         this._recordedGame = recordGame({
             mode,
@@ -682,10 +683,11 @@ class SettlementModal {
             nickname: window.playerIdManager?.getSavedNickname?.() || '',
             mySeat: seats[0] || 0,
             won: seats.includes(winner),
+            finished: Boolean(winner),
             winner,
             turns: gs.currentRound || 0,
-            hands: engineAdapter?.actions?.length || 0,
-            seconds: startAt && endAt > startAt ? Math.round((endAt - startAt) / 1000) : 0,
+            hands,
+            seconds: playedSeconds,
             kills: sumOf(gs.defeatCounts),
             distance: sumOf(gs.totalDistance),
             progress: Math.round(progress),
@@ -1303,7 +1305,7 @@ class SettlementModal {
 
         if (timestampElement) {
             // 显示完成时间
-            const now = new Date();
+            const now = new Date(this.gameState?.gameEndTime || Date.now());
             const timeString = now.toLocaleString('zh-CN', {
                 year: 'numeric',
                 month: '2-digit',

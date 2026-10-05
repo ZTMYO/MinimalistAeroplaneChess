@@ -24,10 +24,10 @@ function escapeHtml(text) {
 function formatDuration(seconds) {
     const total = Math.max(0, Math.round(Number(seconds) || 0));
     if (!total) return '—';
-    if (total < 60) return `${total} 秒`;
+    const secondsPart = String(total % 60).padStart(2, '0');
     const minutes = Math.floor(total / 60);
-    if (minutes < 60) return `${minutes} 分 ${total % 60} 秒`;
-    return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+    if (minutes < 60) return `${minutes}:${secondsPart}`;
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${secondsPart}`;
 }
 
 /** 大数转小：1000 起走 K，百万起走 M（1234 → 1.2K，123456 → 123K，1234567 → 1.2M） */
@@ -116,11 +116,12 @@ function renderTotals(bucket) {
 function renderToday(mode) {
     const today = new Date().toDateString();
     const games = listGames(mode).filter((game) => new Date(game.at).toDateString() === today);
+    const finished = games.filter((game) => game.finished);
 
     const sum = (key) => games.reduce((total, game) => total + (Number(game[key]) || 0), 0);
     $('statsToday').innerHTML = tilesHtml(statTiles({
-        games: games.length,
-        wins: games.filter((game) => game.won).length,
+        games: finished.length,
+        wins: finished.filter((game) => game.won).length,
         seconds: sum('seconds'),
         kills: sum('kills'),
         distance: sum('distance')

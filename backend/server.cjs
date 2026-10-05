@@ -1224,6 +1224,9 @@ function handleMessage(ws, playerId, message) {
       case 'update_emoji':
         handleUpdateEmoji(ws, playerId, message);
         break;
+      case 'player_stats':
+        handlePlayerStats(ws, playerId, message);
+        break;
       case 'teleportIcon':
       case 'diceReset':
         relayDisplay(message.type, playerId, message);
@@ -1659,7 +1662,7 @@ function applyPlayerProfileUpdate(playerId, mutate) {
     const player = gameSession.players.get(playerId);
     gameSession.broadcast({
       type: 'playerUpdated',
-      player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji }
+      player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji, stats: player.stats || null }
     });
     return true;
   }
@@ -1671,7 +1674,7 @@ function applyPlayerProfileUpdate(playerId, mutate) {
       mutate(player);
       room.broadcast({
         type: 'playerUpdated',
-        player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji },
+        player: { id: player.id, nickname: player.nickname, color: player.color, emoji: player.emoji, stats: player.stats || null },
         room: room.toJSON()
       });
     }
@@ -1730,8 +1733,23 @@ function handleNicknameChange(ws, playerId, message) {
   });
 }
 
-function handleUpdateEmoji(ws, playerId, message) {
+/** 玩家本机战绩（联机模式的对局数、胜率、称号数，只统计打完的局）：进入联机时上报，随玩家数据转给其他人 */
+function handlePlayerStats(ws, playerId, message) {
   try {
+    const raw = message.stats || {};
+    const games = Math.max(0, Math.floor(Number(raw.games) || 0));
+    const wins = Math.max(0, Math.min(games, Math.floor(Number(raw.wins) || 0)));
+    const titles = Math.max(0, Math.floor(Number(raw.titles) || 0));
+    const updated = applyPlayerProfileUpdate(playerId, (player) => {
+      player.stats = { games, wins, titles };
+    });
+    if (!updated) console.log(`玩家 ${playerId} 上报战绩 ${wins}/${games}（不在房间中，已忽略）`);
+  } catch (error) {
+    console.error('更新战绩失败:', error);
+  }
+}
+
+function handleUpdateEmoji(ws, playerId, message) {  try {
     const emoji = message.emoji;
     const updated = applyPlayerProfileUpdate(playerId, (player) => {
       player.emoji = emoji;

@@ -13,10 +13,8 @@ const START_GRACE_MS = 1500;
 
 /** 刚产生的这一段演出大约要多久（与客户端行动条同一份时长表） */
 let paceOf = () => 0;
-let itemThinkMs = 0;
-timingPromise.then(({ eventsDuration, ITEM_THINK_MS }) => {
+timingPromise.then(({ eventsDuration }) => {
     paceOf = eventsDuration;
-    itemThinkMs = ITEM_THINK_MS;
 }).catch(() => {});
 
 class BotDriver {
@@ -106,12 +104,9 @@ class BotDriver {
             ? Boolean(await this.deps.settled(gameSession, applied.seq))
             : false;
         const pace = acked ? 0 : paceOf(events);
-        // 「思考」只看下一手是什么：要选子就停一下（看着像在挑棋子），要掷骰就不停——
-        // 换手即掷、连投 6 奖励也立刻再掷。用道具同样要停一拍：掷骰有闪烁顶着，
-        // 道具没演出，不停就会像凭空蹦出来
-        const isItemAction = Boolean(action && action.type === 'item');
-        const think = session.state.phase === 'selecting' ? paceOf(events)
-            : (isItemAction ? itemThinkMs : this.thinkDelay());
+        // 「思考」只看下一手是什么：要选子就停一下（看着像在挑棋子），要掷骰/用道具就不停——
+        // 换手即出手，连投 6 奖励也立刻再掷
+        const think = session.state.phase === 'selecting' ? paceOf(events) : this.thinkDelay();
         this.schedule(gameSession, pace + think);
     }
 

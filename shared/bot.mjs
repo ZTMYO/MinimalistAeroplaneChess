@@ -112,12 +112,11 @@ function hasChessOnTrack(state, player) {
     return state.players[player].chesses.some((chess) => !chess.finished && chess.pos >= 0 && chess.pos < TRACK_END);
 }
 
-/** 传送门：挑自己最靠前、还在主轨道上的那颗，落点交给引擎摇 */
 function teleportPick(state, player) {
     const chess = state.players[player].chesses
         .map((item, index) => ({ item, index }))
         .filter(({ item }) => !item.finished && item.pos >= 0 && item.pos < 51)
-        .sort((a, b) => b.item.pos - a.item.pos)[0];
+        .sort((a, b) => a.item.pos - b.item.pos)[0];
     if (!chess) return null;
     if (!teleportSpots(state, player, chess.item.pos).length) return null;
     return { chessIndex: chess.index };

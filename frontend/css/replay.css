@@ -30,8 +30,6 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* 窄屏：只把间距收一收，给「击败/称号」这种两个字的按钮让出空间，
-   按钮本身的尺寸一个都不动 */
 @media (max-width: 520px) {
     .replay-bar-fixed {
         padding: 8px 8px 0;
@@ -50,7 +48,6 @@
     left: 0;
     right: 0;
     bottom: 0;
-    /* 压在棋盘与各控制面板之上，但要在弹窗（.modal-overlay = 1000）之下 */
     z-index: 900;
     padding: 8px 14px 0;
     background: var(--bg-medium);
@@ -133,7 +130,6 @@ body.bar-collapsed .replay-bar-handle {
     background: transparent;
 }
 
-/* 滚动条复刻战报面板（.game-info-content）那条：轨道透明、滑块 shadow-3，悬停加深 */
 .replay-track::-webkit-scrollbar {
     height: 5px;
 }
@@ -172,41 +168,34 @@ body.bar-collapsed .replay-bar-handle {
     transition: box-shadow 0.15s ease;
 }
 
-/* 一格里的每一段代表一手，段越密说明这一回合走得越久 */
 .replay-hand {
-    /* 每段等宽，不随格子伸缩 */
     flex: 0 0 3px;
     border-radius: 1px;
     background: var(--bg-light-1);
     transition: background 0.15s ease;
 }
 
-/* 已播放：主题灰与轨道底色混出的中间色，压住存在感，把红 / 紫让出来 */
 .replay-hand.is-done {
     background: color-mix(in srgb, var(--text-gray) 40%, var(--bg-light-1));
 }
 
-/* 标记段（击败）：直接把那一段染成战报里「击败」那支红 */
 .replay-hand.is-mark {
     background: #f26969;
 }
 
-/* 切到称号视图：同一段转成浅紫 */
 .replay-track.mode-title .replay-hand.is-mark {
     background: #b895e6;
 }
 
-/* 切到道具视图：同一段转成浅蓝 */
 .replay-track.mode-item .replay-hand.is-mark {
     background: #8ab7e8;
 }
 
-/* 标记模式的开关：文字跟标记同色，比普通按钮收一圈 */
 .replay-mark-toggle {
     padding: 3px 8px;
     font-size: 11px;
     font-weight: 600;
-    white-space: nowrap;   /* 两个字的按钮不许折行 */
+    white-space: nowrap;
     color: #f26969;
 }
 
@@ -228,7 +217,6 @@ body.bar-collapsed .replay-bar-handle {
     box-shadow: 0 0 0 1px var(--ui-default-color);
 }
 
-/* 末尾那格「结算」：不是一回合的格子，做成小标签 */
 .replay-cell.is-final {
     flex: 0 0 auto;
     align-items: center;
@@ -240,7 +228,6 @@ body.bar-collapsed .replay-bar-handle {
     white-space: nowrap;
 }
 
-/* 回放模式：只有骰子不接管点击，界面按钮照常可点 */
 body.replay-mode .dice-container {
     pointer-events: none;
 }

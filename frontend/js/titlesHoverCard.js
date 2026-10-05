@@ -26,13 +26,38 @@ function trendPoints(player) {
         .filter((value) => typeof value === 'number' && Number.isFinite(value));
 }
 
+function profileHtml(player) {
+    if (!gameState.getIsOnlineMultiplayer || !gameState.getIsOnlineMultiplayer()) return '';
+
+    const profiles = gameState.playerProfiles
+        || (window.multiplayerGameManager && window.multiplayerGameManager.playerProfiles);
+    const profile = profiles && profiles[player];
+    const isAI = profile ? profile.isAI : Boolean(gameState.isBotPlayer && gameState.isBotPlayer(player));
+    if (isAI) return '';
+    const seated = gameState.getPlayerChess ? gameState.getPlayerChess()[player] : null;
+    if (!profile && !seated) return '';
+
+    const stats = profile && profile.stats;
+    const total = stats && Number(stats.games) > 0 ? Number(stats.games) : 0;
+    const wins = total ? Math.min(total, Number(stats.wins) || 0) : 0;
+    const rate = total ? `${Math.round((wins / total) * 100)}%` : '—';
+    const titles = stats && Number(stats.titles) > 0 ? Math.floor(Number(stats.titles)) : 0;
+
+    return '<div class="titles-hover-body player-profile-stats">'
+        + `<span class="player-profile-item"><em>总局数</em><b>${total || '—'}</b></span>`
+        + `<span class="player-profile-item"><em>胜率</em><b>${rate}</b></span>`
+        + `<span class="player-profile-item"><em>称号数</em><b>${titles || '—'}</b></span>`
+        + '</div>';
+}
+
 function cardHtml(player) {
     const titles = titleManager.currentTitles(player, gameState);
     const body = titles.length
         ? titles.map((title) => `<span class="title-chip tier-${title.tier}">${title.name}</span>`).join('')
         : '<span class="titles-hover-empty">暂无称号</span>';
 
-    return '<div class="titles-hover-head">本局完成度</div>'
+    return profileHtml(player)
+        + '<div class="titles-hover-head">本局完成度</div>'
         + '<canvas class="titles-hover-trend"></canvas>'
         + '<div class="titles-hover-head">本局称号</div>'
         + `<div class="titles-hover-body">${body}</div>`;

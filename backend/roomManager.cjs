@@ -211,6 +211,12 @@ class Room {
     }
   }
 
+  /** 玩家本机上报的联机战绩（只统计打完的局）：房间/对局里都随玩家数据带给其他人 */
+  setPlayerStats(playerId, stats) {
+    const player = this.players.get(playerId);
+    if (player) player.stats = stats;
+  }
+
   removePlayer(playerId) {
     const player = this.players.get(playerId);
     if (!player) return { wasHost: false, newHost: this.host };
@@ -355,6 +361,7 @@ class Room {
         color: p.color,
         playerNumber: p.color,
         emoji: p.emoji,
+        stats: p.stats || null,
         isHost: p.id === this.host.id,
         isAI: !!p.isAI,
         isReady: this.playerReadyStatus.get(p.id) || false,

@@ -272,39 +272,73 @@ function beatAtCell(state, cell, byPlayer, events, { allowCross = false } = {}) 
 /** 欢乐模式允许的连锁次数上限，避免极端情况下绕不完 */
 const HAPPY_CHAIN_LIMIT = 32;
 
+/** 某个「停下」的格子上的碰撞：有人就记账（击败、积分）并给出一条事件，没有返回 null */
+function takeHappyCollision(state, player, rel) {
+    const cell = cellOf(player, rel);
+    const enemies = enemiesAtCell(state, cell, player);
+    if (!enemies.length) return null;
+
+    state.players[player].defeats += enemies.length;
+    // 撞几颗给几份积分：reward 是规则该得的分（封顶前），energy 是实际入账，各端战报读 reward；
+    // 遥控骰子指定的点数撞到人一律不给分（和常规击败同一口径）
+    const reward = state.skillMode && state.diceItem !== 'remote-dice'
+        ? HAPPY_BONUS_PER_ENEMY * enemies.length
+        : 0;
+    return {
+        type: 'collision_bonus',
+        player,
+        targetPlayer: enemies[0].player,
+        targetChess: enemies[0].index,
+        cell,
+        enemyCount: enemies.length,
+        steps: Math.max(2, enemies.length * 2),
+        reward,
+        energy: reward > 0 ? grantEnergy(state, player, reward) : 0,
+    };
+}
+
 /**
- * 欢乐模式的碰撞结算：落在对手棋子上不送人回基地，改为按敌方棋子数奖励前进
- * （每颗 2 步，至少 2 步），走完再看落点能否跳子/飞棋、是否又是一次碰撞（连锁）。
+ * 欢乐模式的落点结算：不送人回基地，改为[碰撞奖励]——落点、跳子终点、飞棋终点
+ * 每个「停下」的格子各判一次（每颗敌方棋子 2 步，至少 2 步），奖励步数攒到
+ * 跳子/飞棋走完之后一起走，走到的新落点上再撞就继续连锁。
+ * 碰撞事件就报在撞上的那一刻，粒子不会等跳子/飞棋演完才冒出来。
  */
 function happyCollision(state, player, index, events) {
     for (let guard = 0; guard < HAPPY_CHAIN_LIMIT; guard++) {
         const chess = state.players[player].chesses[index];
         if (chess.finished) return;
 
-        const cell = cellOf(player, chess.pos);
-        const enemies = enemiesAtCell(state, cell, player);
-        if (!enemies.length) return;
+        let steps = 0;
+        const landed = takeHappyCollision(state, player, state.players[player].chesses[index].pos);
+        if (landed) {
+            events.push(landed);
+            steps += landed.steps;
+        }
 
-        const steps = Math.max(2, enemies.length * 2);
-        state.players[player].defeats += enemies.length;
-        // 撞几颗给几份积分，数值由引擎算给各端（战报行直接读它）
-        const gain = grantEnergy(state, player, HAPPY_BONUS_PER_ENEMY * enemies.length);
-        events.push({
-            type: 'collision_bonus',
-            player,
-            targetPlayer: enemies[0].player,
-            targetChess: enemies[0].index,
-            cell,
-            enemyCount: enemies.length,
-            steps,
-            energy: gain,
-        });
-
-        const finished = walk(state, player, index, { fromRel: chess.pos, forward: steps, back: 0 }, events);
-        if (finished) return;
-
-        // 奖励步数的落点若是起跳点/飞棋点，照常触发（其内部的击败检测在欢乐模式下已被禁用）
+        const mark = events.length;
         handleSpecialPositions(state, player, index, state.players[player].chesses[index].pos, events);
+
+        // 跳子终点、飞棋终点上的碰撞，补在把棋子送过去的那条动作后面。
+        // 记账按「停下」的先后顺序（积分封顶要看先后），事件倒着插回去，免得搅乱已经记下的下标
+        const stops = [];
+        for (let i = mark; i < events.length; i += 1) {
+            const event = events[i];
+            if (event.type === 'jump' || event.type === 'fly') stops.push({ at: i, rel: event.to });
+        }
+        for (const stop of stops) {
+            const hit = takeHappyCollision(state, player, stop.rel);
+            if (!hit) continue;
+            stop.hit = hit;
+            steps += hit.steps;
+        }
+        for (let i = stops.length - 1; i >= 0; i -= 1) {
+            if (stops[i].hit) events.splice(stops[i].at + 1, 0, stops[i].hit);
+        }
+
+        if (!steps) return;
+
+        const fromRel = state.players[player].chesses[index].pos;
+        if (walk(state, player, index, { fromRel, forward: steps, back: 0 }, events)) return;
     }
 }
 
@@ -450,9 +484,16 @@ function resolveMove(state, player, index, events) {
         return;
     }
 
+    // 欢乐模式整条落点链路（落点/跳子终点/飞棋终点逐个判碰撞 + 奖励步数 + 连锁）都由 happyCollision 走完
+    if (state.happy) {
+        happyCollision(state, player, index, events);
+        emitStack(state, player, state.players[player].chesses[index].pos, events);
+        return;
+    }
+
+    beatAtCell(state, cellOf(player, chess.pos), player, events);
     handleSpecialPositions(state, player, index, chess.pos, events);
-    if (state.happy) happyCollision(state, player, index, events);
-    else beatAtCell(state, cellOf(player, chess.pos), player, events);
+    beatAtCell(state, cellOf(player, chess.pos), player, events);
     emitStack(state, player, chess.pos, events);
 }
 

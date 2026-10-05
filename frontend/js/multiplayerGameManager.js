@@ -95,6 +95,10 @@ class MultiplayerGameManager {
         this._localMovePlayback = playback || null;
     }
 
+    getHandCount() {
+        return Math.max(0, this._snapshotGate ? this._snapshotGate.seq : 0);
+    }
+
     stopDiceFlashing() {
         // 停止骰子闪烁动画（如果正在进行）
         if (this.currentFlashInterval) {
@@ -282,6 +286,17 @@ class MultiplayerGameManager {
         this.isFreshStart = !multiplayerGameData.isReconnecting; // 标记是否为全新正常开局
         // 每次页面加载只拉一次历史，避免普通断线重连时把面板里已有的消息再叠一遍
         this._historyRequested = false;
+
+        this.playerProfiles = {};
+        (multiplayerGameData.players || []).forEach((player) => {
+            if (!player || !player.color) return;
+            this.playerProfiles[player.color] = {
+                name: player.nickname || '',
+                isAI: Boolean(player.isAI),
+                stats: player.stats || null
+            };
+        });
+        if (window.gameState) window.gameState.playerProfiles = this.playerProfiles;
 
         // 无论是否观战，都确保 audioManager 处于正确模式
         if (window.audioManager) {
@@ -2043,9 +2058,11 @@ class MultiplayerGameManager {
                 if (data.gameStartTime) {
                     if (this.gameInstance.gameState) {
                         this.gameInstance.gameState.gameStartTime = data.gameStartTime;
+                        this.gameInstance.gameState.playResumedAt = data.gameStartTime;
                     }
                     if (window.gameState) {
                         window.gameState.gameStartTime = data.gameStartTime;
+                        window.gameState.playResumedAt = data.gameStartTime;
                     }
                 }
             } catch (e) {
@@ -2169,9 +2186,11 @@ class MultiplayerGameManager {
                 if (data.gameStartTime) {
                     if (this.gameInstance.gameState) {
                         this.gameInstance.gameState.gameStartTime = data.gameStartTime;
+                        this.gameInstance.gameState.playResumedAt = data.gameStartTime;
                     }
                     if (window.gameState) {
                         window.gameState.gameStartTime = data.gameStartTime;
+                        window.gameState.playResumedAt = data.gameStartTime;
                     }
                 }
             } catch (e) {

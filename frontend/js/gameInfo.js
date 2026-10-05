@@ -20,6 +20,7 @@ class GameInfo {
         this.silentMode = false;
         // 最近一条「选择了棋子」的记录，连续动作（跳子/飞棋/奖励）并进它
         this._lastMoveLine = null;
+        this._pendingCollisionBonus = null;
         this._skillLine = null;
         this.init();
     }
@@ -172,12 +173,8 @@ class GameInfo {
             isSkipList = true;
         }
 
-        // 道具欢乐模式：碰撞奖励消息不再重复显示，由 energy_gain 代替
-        if (type === 'collision_bonus') {
-            const isSkillModeForList = window.gameInstance?.energyManager?.isSkillModeEnabled();
-            if (isSkillModeForList) {
-                isSkipList = true;
-            }
+        if (type === 'energy_gain' && messageData.data.source === 'happy_bonus') {
+            isSkipList = true;
         }
 
         if (type === 'skill_usage' && messageData.data.skillName === '盲盒') {
@@ -208,9 +205,14 @@ class GameInfo {
             }
         }
 
+        const isCollisionBeat = type === 'collision_bonus'
+            || (type === 'energy_gain' && messageData.data.source === 'happy_bonus');
         // 连续动作的合并只认紧邻的上一条，别的消息一来就断开
-        if (type !== 'chess_move') {
+        if (type !== 'chess_move' && !isCollisionBeat) {
             this._lastMoveLine = null;
+        }
+        if (type !== 'chess_move' && !isCollisionBeat) {
+            this._pendingCollisionBonus = null;
         }
         const isSkillFollowUp = type === 'skill_result'
             || (type === 'energy_gain' && messageData.data.source === 'mysteryBox')
@@ -253,25 +255,12 @@ class GameInfo {
         } else if (type === 'chess_beat' && this._beatEnergyGain(messageData.data) > 0) {
             notificationText = '';
         } else if (type === 'collision_bonus') {
-            // 欢乐模式碰撞奖励通知（道具模式下由 energy_gain 显示，这里不重复）
-            const isSkillMode = window.gameInstance?.energyManager?.isSkillModeEnabled();
-            if (!isSkillMode) {
-                notificationText = this.formatCollisionBonus(player, messageData.data);
-            } else {
-                notificationText = '';
-            }
+            notificationText = messageData.data.energy > 0
+                ? ''
+                : this.formatCollisionAlert(player, messageData.data.targetPlayer, messageData.data.reward);
         } else if (type === 'energy_gain') {
             if (messageData.data.source === 'happy_bonus') {
-                // 道具欢乐模式：碰撞 + 积分，格式同击杀，只是"击败"换成"碰撞"
-                const amountStr = Number.isInteger(messageData.data.amount) ? messageData.data.amount : messageData.data.amount.toFixed(1);
-                const playerName = this.getPlayerName(player);
-                const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
-                const energySpan = `<span class="energy-value-text">+${amountStr}积分</span>`;
-                const targetPlayer = messageData.data.targetPlayer;
-                const hasTarget = targetPlayer !== undefined && targetPlayer !== null;
-                const targetName = hasTarget ? this.getPlayerName(targetPlayer) : '对手';
-                const targetSpan = hasTarget ? `<span class="player-text player-${targetPlayer}">${targetName}</span>` : `<span class="action-text">对手</span>`;
-                notificationText = `${playerSpan}<span class="beat-text"> 碰撞 </span>${targetSpan} ${energySpan}`;
+                notificationText = this.formatCollisionAlert(player, messageData.data.targetPlayer, messageData.data.amount);
             } else if (messageData.data.source !== 'kill' && messageData.data.source !== 'mysteryBox' && !isNonLocal) {
                 notificationText = '';
             } else {
@@ -372,7 +361,7 @@ class GameInfo {
                 return this.formatConsecutiveBonus(player);
 
             case 'collision_bonus':
-                return this.formatCollisionBonus(player, data);
+                return this.formatCollisionBonus(player, data.targetPlayer, data.reward);
 
             case 'stack_formation':
                 return this.formatStackFormation(player);
@@ -456,12 +445,18 @@ class GameInfo {
     }
 
     /** 一颗棋子的连续动作并成一条：跳子→飞棋→奖励 */
-    formatChainedMove(player, chessIndex, moveTypes) {
+    formatChainedMove(player, chessIndex, moveTypes, bonusSteps = 0) {
         const playerName = this.getPlayerName(player);
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
-        const actionSpan = `<span class="action-text"> 选择了棋子${chessIndex + 1} </span>`;
         const arrow = `<span class="action-text">→</span>`;
-        return `${playerSpan}${actionSpan}${moveTypes.map((type) => this.moveTypeSpan(type)).join(arrow)}`;
+        if (bonusSteps > 0) {
+            const rest = (moveTypes[0] === 'move' ? moveTypes.slice(1) : moveTypes)
+                .map((type) => this.moveTypeSpan(type)).join(arrow);
+            const head = `<span class="action-text"> 的棋子${chessIndex + 1} 获得</span><span class="collision-bonus">[碰撞奖励 ${bonusSteps} 格]</span>`;
+            return `${playerSpan}${head}${rest ? arrow + rest : ''}`;
+        }
+        const head = `<span class="action-text"> 选择了棋子${chessIndex + 1} </span>`;
+        return `${playerSpan}${head}${moveTypes.map((type) => this.moveTypeSpan(type)).join(arrow)}`;
     }
 
     moveTypeSpan(moveType) {
@@ -693,14 +688,34 @@ class GameInfo {
         return `${playerSpan}${actionSpan}${bonusSpan}`;
     }
 
-    // 格式化碰撞奖励消息
-    formatCollisionBonus(player) {
+    formatCollisionAlert(player, targetPlayer, reward) {
         const playerName = this.getPlayerName(player);
         const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
-        const actionSpan = `<span class="action-text"> 获得</span>`;
-        const bonusSpan = `<span class="collision-bonus"> [碰撞奖励]</span>`;
+        const hasTarget = targetPlayer !== undefined && targetPlayer !== null;
+        const targetName = hasTarget ? this.getPlayerName(targetPlayer) : '对手';
+        const targetSpan = hasTarget
+            ? `<span class="player-text player-${targetPlayer}">${targetName}</span>`
+            : `<span class="action-text">对手</span>`;
+        const amountStr = Number.isInteger(reward) ? reward : Number(reward).toFixed(1);
+        const energySpan = reward > 0 ? ` <span class="energy-value-text">+${amountStr}积分</span>` : '';
 
-        return `${playerSpan}${actionSpan}${bonusSpan}`;
+        return `${playerSpan}<span class="beat-text"> 碰撞 </span>${targetSpan}${energySpan}`;
+    }
+
+    // 格式化碰撞奖励消息
+    formatCollisionBonus(player, targetPlayer = null, reward = 0) {
+        const playerName = this.getPlayerName(player);
+        const playerSpan = `<span class="player-text player-${player}">${playerName}</span>`;
+        const hasTarget = targetPlayer !== undefined && targetPlayer !== null;
+        const targetName = hasTarget ? this.getPlayerName(targetPlayer) : '对手';
+        const targetSpan = hasTarget
+            ? `<span class="player-text player-${targetPlayer}">${targetName}</span>`
+            : `<span class="action-text"> 对手 </span>`;
+        const energySpan = reward > 0
+            ? `<span class="action-text">！获得 </span><span class="energy-value-text">${reward}</span><span class="action-text"> 点积分</span>`
+            : '';
+
+        return `${playerSpan}<span class="beat-text"> 碰撞 </span>${targetSpan}${energySpan}`;
     }
 
     // 格式化叠子形成消息
@@ -779,16 +794,25 @@ class GameInfo {
         if (CHAINED_MOVE_TYPES.has(moveType) && last && last.player === player && last.chessIndex === chessIndex
             && last.element && last.element.isConnected) {
             last.moveTypes.push(moveType);
-            last.element.innerHTML = this.formatChainedMove(player, chessIndex, last.moveTypes);
+            last.element.innerHTML = this.formatChainedMove(player, chessIndex, last.moveTypes, last.bonus);
             return;
         }
+
+        const pending = moveType === 'move' && this._pendingCollisionBonus && this._pendingCollisionBonus.player === player
+            ? this._pendingCollisionBonus
+            : null;
+        if (moveType === 'move') this._pendingCollisionBonus = null;
+        const bonusSteps = pending ? pending.steps : 0;
 
         const element = this.addMessage({
             type: 'chess_move',
             player: player,
             data: { chessIndex, moveType, fromPosition, toPosition }
         }, skipSync);
-        this._lastMoveLine = { player, chessIndex, moveTypes: [moveType], element };
+        this._lastMoveLine = { player, chessIndex, moveTypes: [moveType], element, bonus: bonusSteps };
+        if (bonusSteps > 0 && element) {
+            element.innerHTML = this.formatChainedMove(player, chessIndex, [moveType], bonusSteps);
+        }
     }
 
     // 便捷方法：添加棋子击败信息
@@ -880,11 +904,16 @@ class GameInfo {
     }
 
     // 便捷方法：添加欢乐模式碰撞奖励信息
-    addCollisionBonus(player, targetPlayer = null, skipSync = false) {
+    addCollisionBonus(player, targetPlayer = null, skipSync = false, reward = 0, steps = 0, energy = 0) {
+        const pending = this._pendingCollisionBonus;
+        this._pendingCollisionBonus = {
+            player,
+            steps: (pending && pending.player === player ? pending.steps : 0) + steps
+        };
         this.addMessage({
             type: 'collision_bonus',
             player,
-            data: { targetPlayer }
+            data: { targetPlayer, reward, energy }
         }, skipSync);
     }
 
