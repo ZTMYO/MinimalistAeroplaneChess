@@ -43,9 +43,6 @@ export class FlyingChessGameBase {
         this.dice.animation = this.animation;
         this.dice.uiUpdater = this.uiUpdater;
 
-        botController.setChessPiece(this.chessPiece);
-        botController.setUtils(this.utils);
-
         this.settlementModal.setDependencies(this.gameState, this.defeatCountDisplay, this.progressDisplay);
 
         this.eventHandler.setGameInstance(this);
@@ -54,7 +51,6 @@ export class FlyingChessGameBase {
 
         window.playerNameManager = playerNameManager;
         window.activePlayerManager = activePlayerManager;
-        window.animation = this.animation;
         window.energyManager = this.energyManager;
         window.energyDisplay = this.energyDisplay;
         window.skillManager = this.skillManager;
@@ -444,19 +440,6 @@ export class FlyingChessGameBase {
         await debugSetDice(value);
     }
 
-    // 获取模块实例（用于调试和扩展）
-    getModules() {
-        return {
-            gameState,
-            dice,
-            chessPiece: this.chessPiece,
-            animation,
-            uiUpdater,
-            eventHandler,
-            utils
-        };
-    }
-
     // 销毁游戏实例
     async destroy() {
         try {
@@ -511,9 +494,7 @@ export function createGameRuntime(GameClass) {
 
             gameInstance = new GameClass();
 
-            window.game = gameInstance;
             window.main = gameInstance;
-            window.gameModules = gameInstance.getModules();
             window.eventHandler = gameInstance.eventHandler;
 
             window.gameState = gameState;

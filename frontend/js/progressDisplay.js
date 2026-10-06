@@ -181,18 +181,6 @@ class ProgressDisplay {
             }
         });
     }
-
-
-    // 检查是否有玩家获胜（进度达到100%）
-    checkWinner(gameState) {
-        for (let player = 1; player <= 4; player++) {
-            const progress = this.calculatePlayerProgress(player, gameState);
-            if (progress >= 100) {
-                return player;
-            }
-        }
-        return null;
-    }
 }
 
 // 创建全局实例

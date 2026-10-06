@@ -141,6 +141,7 @@ const INITIAL_ENERGY_STEPS = [0, 15, 30, 50, 70, 100];
 
 class PlayerSetup {
     enterAIConfig() {
+        this.pushPanelHistory('ai');
         this.currentMode = 'ai';
         const savedName = window.playerIdManager && window.playerIdManager.getSavedNickname();
         const nameInput = document.getElementById('playerUsername');
@@ -162,6 +163,7 @@ class PlayerSetup {
     }
 
     enterLocalConfig() {
+        this.pushPanelHistory('local');
         this.currentMode = 'local';
         const configTitle = document.getElementById('configTitle');
         const mainMenuContainer = document.getElementById('mainMenuContainer');
@@ -1082,6 +1084,7 @@ class PlayerSetup {
         const footerRulesBtn = document.getElementById('footerRulesBtn');
         if (footerRulesBtn) {
             footerRulesBtn.addEventListener('click', () => {
+                playerSetup.pushPanelHistory('rules');
                 resetTitlesViews();
                 if (mainMenuContainer) mainMenuContainer.style.display = 'none';
                 if (rulesPanelWrapper) rulesPanelWrapper.style.display = 'block';
@@ -1306,7 +1309,16 @@ class PlayerSetup {
     }
 
     // 显示在线联机配置
+    pushPanelHistory(panel) {
+        try {
+            history.pushState({ panel }, '');
+        } catch (error) {
+            // ignore
+        }
+    }
+
     showOnlineMultiplayerConfig() {
+        this.pushPanelHistory('online');
         const mainMenuContainer = document.getElementById('mainMenuContainer');
         const playerConfigWrapper = document.getElementById('playerConfigWrapper');
         const playerConfigPanel = document.getElementById('playerConfigPanel');
@@ -1349,6 +1361,7 @@ class PlayerSetup {
             // 让多人联机管理器处理返回逻辑
             window.multiplayerManager.handleBackButton();
         } else {
+            this.resetConfigsToDefaults();
             this.showMainMenu();
         }
     }
@@ -1817,18 +1830,8 @@ class PlayerSetup {
         sessionStorage.setItem('gameConfig', JSON.stringify(gameConfig));
 
         // 保存当前游戏模式状态和详细配置
-        const aiConfigState = {
-            selectedPlayer: this.selectedPlayer,
-            selectedEmoji: this.selectedEmoji,
-            selectedPieceCount: this.selectedPieceCount,
-            activeBots: Array.from(this.activeBots),
-            botDifficulties: Object.fromEntries(this.botDifficulties),
-            username: username,
-            skillMode: skillMode,
-            happyMode: happyMode,
-            initialEnergy: gameConfig.initialEnergy
-        };
-        localStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
+        const aiConfigState = this.collectAIConfig();
+        sessionStorage.setItem('lastAIConfig', JSON.stringify(aiConfigState));
 
         // 跳转到游戏页面
         window.location.href = '/game';
@@ -1899,36 +1902,73 @@ class PlayerSetup {
 
         // 保存当前游戏模式状态和详细配置
         // 保存本地多人配置，包含道具模式状态
-        const localConfigState = {
-            playerCount: this.localMultiplayerConfig.playerCount,
-            pieceCount: this.localMultiplayerConfig.pieceCount,
-            players: this.localMultiplayerConfig.players,
-            bots: this.localMultiplayerConfig.players.filter(p => p.isAI).map(p => p.id),
-            botDifficulties: (() => {
-                const result = {};
-                if (this.localMultiplayerConfig && this.localMultiplayerConfig.botDifficulties) {
-                    for (const [id, diff] of this.localMultiplayerConfig.botDifficulties.entries()) {
-                        result[id] = diff;
-                    }
-                }
-                return result;
-            })(),
-            skillMode: skillMode,
-            happyMode: happyMode,
-            initialEnergy: localGameConfig.initialEnergy
-        };
-        localStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
+        const localConfigState = this.collectLocalConfig();
+        sessionStorage.setItem('lastLocalConfig', JSON.stringify(localConfigState));
 
         // 跳转到游戏页面
         window.location.href = '/game';
     }
 
+    collectAIConfig() {
+        const checked = (id) => {
+            const element = document.getElementById(id);
+            return element ? element.checked : false;
+        };
+        return {
+            selectedPlayer: this.selectedPlayer,
+            selectedEmoji: this.selectedEmoji,
+            selectedPieceCount: this.selectedPieceCount,
+            activeBots: Array.from(this.activeBots),
+            botDifficulties: Object.fromEntries(this.botDifficulties),
+            username: (document.getElementById('playerUsername') || { value: '' }).value.trim() || '玩家',
+            skillMode: checked('aiSkillModeCheckbox'),
+            happyMode: checked('aiHappyModeCheckbox'),
+            initialEnergy: this.readInitialEnergy('aiInitialEnergySlider', 'aiSkillModeCheckbox')
+        };
+    }
+
+    collectLocalConfig() {
+        const checked = (id) => {
+            const element = document.getElementById(id);
+            return element ? element.checked : false;
+        };
+        const difficulties = {};
+        if (this.localMultiplayerConfig && this.localMultiplayerConfig.botDifficulties) {
+            for (const [id, diff] of this.localMultiplayerConfig.botDifficulties.entries()) {
+                difficulties[id] = diff;
+            }
+        }
+        return {
+            playerCount: this.localMultiplayerConfig.playerCount,
+            pieceCount: this.localMultiplayerConfig.pieceCount,
+            players: this.localMultiplayerConfig.players,
+            bots: this.localMultiplayerConfig.players.filter(p => p.isAI).map(p => p.id),
+            botDifficulties: difficulties,
+            skillMode: checked('localSkillModeCheckbox'),
+            happyMode: checked('localHappyModeCheckbox'),
+            initialEnergy: this.readInitialEnergy('localInitialEnergySlider', 'localSkillModeCheckbox')
+        };
+    }
+
+    captureDefaultConfigs() {
+        this.defaultAIConfig = this.collectAIConfig();
+        this.defaultLocalConfig = this.collectLocalConfig();
+    }
+
+    resetConfigsToDefaults() {
+        sessionStorage.removeItem('lastAIConfig');
+        sessionStorage.removeItem('lastLocalConfig');
+        const aiConfig = this.defaultAIConfig ? { ...this.defaultAIConfig, username: '' } : null;
+        this.restoreAIConfig(aiConfig);
+        this.restoreLocalConfig(this.defaultLocalConfig || null);
+    }
+
     // 恢复AI配置详细信息
-    restoreAIConfig() {
-        const lastAIConfig = localStorage.getItem('lastAIConfig');
-        if (lastAIConfig) {
+    restoreAIConfig(fallback = null) {
+        const raw = fallback ? JSON.stringify(fallback) : sessionStorage.getItem('lastAIConfig');
+        if (raw) {
             try {
-                const config = JSON.parse(lastAIConfig);
+                const config = JSON.parse(raw);
                 console.log('恢复AI配置:', config);
 
                 // 恢复选中的玩家颜色
@@ -2000,11 +2040,11 @@ class PlayerSetup {
     }
 
     // 恢复本地多人配置详细信息
-    restoreLocalConfig() {
-        const lastLocalConfig = localStorage.getItem('lastLocalConfig');
-        if (lastLocalConfig) {
+    restoreLocalConfig(fallback = null) {
+        const raw = fallback ? JSON.stringify(fallback) : sessionStorage.getItem('lastLocalConfig');
+        if (raw) {
             try {
-                const config = JSON.parse(lastLocalConfig);
+                const config = JSON.parse(raw);
                 console.log('恢复本地多人配置:', config);
 
                 // 恢复玩家数量
@@ -2133,6 +2173,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const playerSetup = new PlayerSetup();
+    window.playerSetup = playerSetup;
+    playerSetup.captureDefaultConfigs();
+
+    // 面板都是页内视图，浏览器返回本来会直接退出站点：压过历史的面板里按「返回」逐步回退
+    window.addEventListener('popstate', () => {
+        const mainMenu = document.getElementById('mainMenuContainer');
+        if (!mainMenu || mainMenu.style.display !== 'none') return;
+        const roomConfig = document.getElementById('roomConfig');
+        if (roomConfig && window.getComputedStyle(roomConfig).display !== 'none') return;
+        playerSetup.handleBackButton();
+    });
 
     if (roomCode) {
         playerSetup.showOnlineMultiplayerConfig();
@@ -2153,16 +2204,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // 首页一律落在主菜单：以前会按上次的模式自动翻进配置面板，
     // 对局中途从浏览器后退回来就会落到面板上，点一下开始游戏就把存档冲了
     playerSetup.showModeSelection();
+    // 落到主菜单就忘掉上一局的配置，只有结算「返回房间」带 ?mode= 的那一跳才留着
+    const returnMode = urlParams.get('mode');
+    const keepLastConfig = returnMode === 'ai' || returnMode === 'local';
+    if (!keepLastConfig) {
+        playerSetup.resetConfigsToDefaults();
+    }
     // 后退返回时页面是从 BFCache 整页还原的，上面这段初始化不会重跑，
     // 还原出来的还是离开前的配置面板，所以这里再压一次
     window.addEventListener('pageshow', (event) => {
-        if (event.persisted) playerSetup.showModeSelection();
+        if (!event.persisted) return;
+        playerSetup.showModeSelection();
+        playerSetup.resetConfigsToDefaults();
     });
 
     // 结算面板的「返回房间」带着模式回来（?mode=ai/local）：直接翻到那一页设置面板。
     // 只认这一跳——用完就把参数抹掉，刷新和后退仍旧落主菜单
-    const returnMode = urlParams.get('mode');
-    if (returnMode === 'ai' || returnMode === 'local') {
+    if (keepLastConfig) {
         const enterPanel = () => (returnMode === 'ai' ? playerSetup.enterAIConfig() : playerSetup.enterLocalConfig());
         const saveKey = returnMode === 'ai' ? 'ai_battle' : 'local_multiplayer';
         if (!playerSetup.askResumeFirst(saveKey, enterPanel)) enterPanel();

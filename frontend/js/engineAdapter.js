@@ -15,16 +15,10 @@ import {
     emptyDefeatMatrix,
     countBeats,
     toSnapshot,
-    isJumpRel,
     makeRng,
     ENGINE_VERSION,
-    PLAYERS,
-    BASE,
-    LAUNCH,
-    TRACK_END
+    PLAYERS
 } from '../../shared/engine.mjs';
-
-export { BASE, LAUNCH, TRACK_END, PLAYERS, isJumpRel };
 
 const PHASE_TO_UI = {
     rolling: 'rolling',

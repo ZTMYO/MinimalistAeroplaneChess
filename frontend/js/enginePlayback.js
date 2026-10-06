@@ -8,7 +8,7 @@ import { gameInfo } from './gameInfo.js';
 import { audioManager } from './audioManager.js';
 import { energyManager } from './energyManager.js';
 import { titleManager } from './titleManager.js';
-import { DICE_SYMBOLS, calculateChessProgress } from './utils.js';
+import { DICE_SYMBOLS } from './utils.js';
 import { RUNWAY_BASE, CROSS_BASE } from '../../shared/engine.mjs';
 
 const STEP_DELAY = 190;

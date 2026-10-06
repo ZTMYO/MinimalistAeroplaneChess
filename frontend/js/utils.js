@@ -82,24 +82,6 @@ export function getAbsolutePosition(player, relativePosition) {
     return relativePosition; // 默认返回原位置
 }
 
-// 计算单个棋子的完成度（百分比），供积分结算用
-export function calculateChessProgress(chess, player) {
-    if (chess.finished) return 100;
-    if (chess.position === -1) return 0;
-
-    // 外圈轨道 0-50 + 终点航道 51-56，共 57 格
-    const totalSteps = 57;
-    let currentSteps = 0;
-    if (chess.position >= 0 && chess.position <= 50) {
-        currentSteps = chess.position;
-    } else if (chess.position >= 51 && chess.position <= 56) {
-        currentSteps = 51 + (chess.position - 51);
-    }
-
-    const progress = (currentSteps / totalSteps) * 100;
-    return Math.min(100, Math.max(0, progress));
-}
-
 // 判断指定绝对位置是否为叠子（同一玩家的两个或多个棋子在同一位置）
 export function isStackAtAbsolutePosition(absolutePosition, gameState) {
     if (absolutePosition === -1 || absolutePosition < 0) return null;

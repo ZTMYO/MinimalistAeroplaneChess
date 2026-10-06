@@ -354,13 +354,6 @@ class ChessPiece {
     }
 
     /**
-     * 检查胜利条件
-     */
-    checkWinner() {
-        return this.gameState.playerChess[this.gameState.currentPlayer].every(chess => chess.finished);
-    }
-
-    /**
      * 调试方法：移动指定棋子一格
      * @param {number} player - 玩家编号 (1-4)
      * @param {number} chessIndex - 棋子索引 (0-3)

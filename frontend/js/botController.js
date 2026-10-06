@@ -18,10 +18,6 @@ class BotController {
         this.botDifficulties = {};
     }
 
-    // 旧接口保留：单机 AI 不再直接操作棋子与工具对象，调用方不用改
-    setChessPiece() {}
-    setUtils() {}
-
     setBotDifficulties(difficulties = {}) {
         this.botDifficulties = { ...this.botDifficulties, ...difficulties };
     }

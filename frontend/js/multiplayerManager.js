@@ -1033,6 +1033,10 @@ class MultiplayerManager {
             this.handleWebSocketMessage(message);
         });
 
+        this.wsClient.onMessageType('roomPrivacyUpdated', (message) => {
+            this.handleWebSocketMessage(message);
+        });
+
         this.wsClient.onMessageType('gameStarted', (message) => {
             this.handleWebSocketMessage(message);
         });
@@ -1046,6 +1050,10 @@ class MultiplayerManager {
         });
 
         this.wsClient.onMessageType('aiPlayerRemoved', (message) => {
+            this.handleWebSocketMessage(message);
+        });
+
+        this.wsClient.onMessageType('aiDifficultyUpdated', (message) => {
             this.handleWebSocketMessage(message);
         });
 
@@ -2410,6 +2418,7 @@ class MultiplayerManager {
         document.getElementById('roomSelection').style.display = 'none';
         document.getElementById('roomConfig').style.display = 'flex';
         this.updateRoomChatVisibility(true);
+        this.enableRoomBackGuard();
 
         // 设置临时房间信息，显示加载状态
         this.roomCode = '创建中...';
@@ -4404,8 +4413,6 @@ class MultiplayerManager {
 
     // 清理联机配置页面的color-circle中的表情残留
     clearMultiplayerColorCircles() {
-        // 清理sessionStorage中的人机模式相关配置
-        sessionStorage.removeItem('lastAIConfig');
         sessionStorage.removeItem('gameConfig');
 
         // 清理联机配置页面的color-circle，同时清理全局状态防止混乱
@@ -4660,6 +4667,4 @@ class MultiplayerManager {
     }
 }
 
-// 导出类
 export { MultiplayerManager };
-window.MultiplayerManager = MultiplayerManager;

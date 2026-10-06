@@ -71,5 +71,4 @@ class AiTurnTrigger {
     }
 }
 
-export { AiTurnTrigger };
 export const aiTurnTrigger = new AiTurnTrigger();

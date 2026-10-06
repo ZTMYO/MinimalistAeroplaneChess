@@ -17,7 +17,6 @@ class GameState {
         this.isRemoteDice = false; // 标记是否是遥控骰子（6点不触发连投）
         this.isPaused = false; // 游戏暂停状态
         this.isAITakeover = false; // AI托管状态
-        this.aiDecisionInProgress = false; // AI决策进行中状态
         this.chessMoving = false; // 棋子移动中状态
         this.gamePhaseBeforePause = null; // 暂停前的游戏阶段
         this.currentPlayerBeforePause = null; // 暂停前的当前玩家
@@ -1209,8 +1208,6 @@ class GameState {
             this.stopPlayClock();
             // 暂停思考计时器，不清除状态
             this.pauseThinkingTimer();
-            // 强制清除AI决策状态
-            this.setAIDecisionInProgress(false);
             // 显示暂停提示
             this.showPauseIndicator();
         } else {
@@ -1378,15 +1375,6 @@ class GameState {
     setAITakeover(takeover) {
         this.isAITakeover = takeover;
         console.log(`AI托管${takeover ? '开启' : '关闭'}`);
-    }
-
-    // AI决策进行中状态管理
-    getAIDecisionInProgress() {
-        return this.aiDecisionInProgress;
-    }
-    // 设置AI决策状态
-    setAIDecisionInProgress(inProgress) {
-        this.aiDecisionInProgress = inProgress;
     }
 
     // 三次6惩罚状态管理

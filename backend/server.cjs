@@ -11,7 +11,6 @@ const {
   Player,
   Room,
   GameSession,
-  RoomManager,
   roomManager,
   ROOM_LIFECYCLE,
   configureRoomManager
@@ -258,17 +257,6 @@ function colorOfPlayer(gameSession, playerId) {
   return player ? player.color : null;
 }
 
-/**
- * 解析这次意图真正代表谁。
- * 托管玩家与 AI 电脑玩家的回合由房主浏览器代理执行，此时 message.playerId 才是被代理者；
- * 普通玩家只能代表自己，防止伪造他人身份。
- */
-// 意图只能由玩家本人发起：AI 与托管回合现在由服务端自己驱动（botDriver），
-// 房主不再代打，所以没有「替别人发意图」这回事
-function resolveIntentActor(gameSession, senderId, requestedId) {
-  return senderId;
-}
-
 // 旧协议中会直接改写服务端棋面的消息类型
 const LEGACY_BOARD_REPORTS = new Set([
   'diceRoll', 'playerTurnChange', 'pieceMove', 'chessMove',
@@ -326,8 +314,7 @@ function handleIntent(ws, playerId, message) {
   const session = getAuthoritySession(gameSession.gameSessionId);
   if (!session) throw new Error('本局尚未由服务端接管');
 
-  const actorId = resolveIntentActor(gameSession, playerId, message.playerId);
-  const color = colorOfPlayer(gameSession, actorId);
+  const color = colorOfPlayer(gameSession, playerId);
   if (color === null) throw new Error('玩家不属于本局');
 
   const intent = message.intent || { type: message.action };
